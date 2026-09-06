@@ -1,0 +1,28 @@
+RenewBoard / 订阅簿
+Copyright (c) 2026 RenewBoard contributors
+Original project code and documentation: MIT License (see LICENSE).
+Third-party components retain their original licenses and copyright notices.
+
+AndroidX / Jetpack / Compose / Material icons: The Android Open Source Project,
+Apache License 2.0.
+Kotlin: JetBrains s.r.o. and respective authors and developers, Apache 2.0.
+kotlinx.serialization / kotlinx.coroutines / kotlinx.atomicfu: JetBrains s.r.o.
+and contributors, Apache 2.0. See upstream notices in assets/licenses.
+OkHttp / Okio / MockWebServer: Square, Inc. and contributors, Apache 2.0.
+Guava / ListenableFuture: Google Inc. and contributors, Apache 2.0.
+JetBrains annotations: JetBrains s.r.o., Apache 2.0.
+Gradle wrapper: Gradle Inc. and contributors, Apache 2.0; the upstream Gradle
+LICENSE also identifies separately licensed components of its distribution.
+KSP: Google LLC and contributors, Apache 2.0.
+JUnit 4 (tests): Eclipse Public License 1.0.
+Hamcrest (tests): BSD 3-Clause; retained copyright in Hamcrest-LICENSE.txt.
+
+Full license texts and upstream notices are distributed in
+app/src/main/assets/licenses/ and packaged as assets/licenses/ in the APK.
+See docs/licenses.md for dependency scope, source URLs, and verification limits.
+This notice is attribution, not a statement of endorsement by upstream authors.
+
+Product inspiration: the developer's April 10, 2020 introduction of 有数鸟 at
+https://meta.appinn.net/t/topic/15300 was a historical functional reference only.
+No claim of hands-on testing, current feature parity, affiliation, or endorsement
+is made. Its brand, artwork, screenshots, and proprietary code are not included.

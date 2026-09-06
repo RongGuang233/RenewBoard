@@ -1,0 +1,10 @@
+.gradle/
+.kotlin/
+**/build/
+local.properties
+*.jks
+*.keystore
+signing.properties
+.DS_Store
+artifacts/
+docs/android-environment.md

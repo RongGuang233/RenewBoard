@@ -1,0 +1,31 @@
+订阅簿 / RenewBoard — 开源许可
+
+原创代码：MIT，Copyright (c) 2026 RenewBoard contributors。
+请阅读 RenewBoard-MIT.txt 和 NOTICE.txt。
+
+运行组件与许可证文件：
+• AndroidX / Compose / Material 3 / Material icons / Activity / Lifecycle /
+  Room / WorkManager / SQLite / core / collection / startup 等：
+  AndroidX-LICENSE.txt（Apache-2.0）。
+• Kotlin stdlib：Kotlin-LICENSE.txt（Apache-2.0）。
+• kotlinx.serialization JSON / core 1.8.1：Serialization-LICENSE.txt。
+• kotlinx.coroutines 1.7.3：Coroutines-LICENSE.txt（Apache-2.0）。
+• OkHttp 4.12.0：OkHttp-LICENSE.txt；Okio：Okio-LICENSE.txt。
+• Guava ListenableFuture：Guava-LICENSE.txt（Apache-2.0）。
+• JSpecify 1.0.0：JSpecify-LICENSE.txt（Apache-2.0）。
+• JetBrains annotations 23.0.0：JetBrains-Annotations-LICENSE.txt（Apache-2.0）。
+
+构建工具（不是应用运行功能）：
+• Kotlin compiler / 插件：Kotlin-LICENSE.txt、Kotlin-NOTICE.txt。
+• KSP：KSP-LICENSE.txt；AGP：Apache-2.0.txt。
+• Gradle wrapper / distribution：Gradle-LICENSE.txt（包含附加许可说明）。
+
+仅测试 / 调试组件：
+• JUnit 4：JUnit-LICENSE.txt（Eclipse Public License 1.0）。
+• Hamcrest：Hamcrest-LICENSE.txt（BSD 3-Clause）。
+• MockWebServer：OkHttp-LICENSE.txt（Apache-2.0）。
+• AndroidX Test / Compose UI Test / Work testing 2.10.1：AndroidX-LICENSE.txt。
+
+此目录保留构建和测试许可便于源码分发，不表示这些工具打入 release APK。
+完整版本声明、官方来源和解析边界见项目 docs/licenses.md。
+各组件保留其原作者权利，本项目 MIT 不替代第三方许可。
