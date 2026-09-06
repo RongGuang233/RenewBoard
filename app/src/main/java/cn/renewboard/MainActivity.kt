@@ -4,9 +4,12 @@ import android.Manifest
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -52,12 +55,12 @@ class MainActivity: ComponentActivity() {
     }
 }
 @Composable private fun Section(text: String) { Text(text,fontSize=19.sp,fontWeight=FontWeight.SemiBold,modifier=Modifier.padding(top=20.dp,bottom=8.dp)) }
-@Composable private fun Field(label: String, value: String, change: (String)->Unit, modifier: Modifier = Modifier, secret: Boolean=false) {
+@Composable private fun Field(label: String, value: String, change: (String)->Unit, modifier: Modifier = Modifier, secret: Boolean=false, dateField: Boolean=false) {
     if(secret) OutlinedTextField(value,change,label={Text(label)},modifier=modifier.fillMaxWidth(),singleLine=true,visualTransformation=PasswordVisualTransformation())
     else {
         val c = LocalContext.current
         OutlinedTextField(value,change,label={Text(label)},modifier=modifier.fillMaxWidth(),singleLine=true,
-            trailingIcon=if(label.contains("YYYY-MM-DD")) {{ IconButton(onClick={
+            trailingIcon=if(dateField) {{ IconButton(onClick={
                 val date=runCatching { LocalDate.parse(value) }.getOrDefault(LocalDate.now())
                 android.app.DatePickerDialog(c,{_,y,m,d->change(LocalDate.of(y,m+1,d).toString())},date.year,date.monthValue-1,date.dayOfMonth).show()
             }) { Icon(Icons.Outlined.CalendarMonth,contentDescription="选择日期") } }} else null)
@@ -77,20 +80,39 @@ private fun money(totals: Map<String,BigDecimal>) = if(totals.isEmpty()) "暂无
     val snack = remember { SnackbarHostState() }; val scope = rememberCoroutineScope()
     fun message(s: String) { scope.launch { snack.showSnackbar(s) } }
     fun change(f: (Ledger)->Ledger) { scope.launch { try { repo.update(f) } catch(e: Exception) { message(e.message ?: "未能保存，请检查输入") } } }
-    Scaffold(snackbarHost={SnackbarHost(snack)}, bottomBar={ if(!creating && editId==null && detailId==null) NavigationBar(containerColor=Paper) {
+    val hasPreviousPage=creating || editId!=null || detailId!=null
+    fun goBack() {
+        when {
+            creating -> creating=false
+            editId!=null -> editId=null
+            else -> detailId=null
+        }
+    }
+    BackHandler(enabled=hasPreviousPage) { goBack() }
+    Scaffold(snackbarHost={SnackbarHost(snack)}, topBar={
+        if(hasPreviousPage) Surface(color=Paper) {
+            Row(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal=20.dp,vertical=8.dp)) {
+                FilledTonalButton(onClick=::goBack,modifier=Modifier.heightIn(min=48.dp)) {
+                    Icon(Icons.Outlined.ArrowBack,null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("返回",fontWeight=FontWeight.SemiBold,fontSize=16.sp)
+                }
+            }
+        }
+    }, bottomBar={ if(!creating && editId==null && detailId==null) NavigationBar(containerColor=Paper) {
         listOf("到期","订阅","账本","设置").forEachIndexed { i,s -> NavigationBarItem(selected=tab==i,onClick={tab=i},icon={Icon(listOf(Icons.Outlined.Event,Icons.Outlined.Bookmarks,Icons.Outlined.ReceiptLong,Icons.Outlined.Settings)[i],null)},label={Text(s)}) }
     } }) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).padding(horizontal=20.dp).imePadding().verticalScroll(rememberScrollState()).padding(bottom=96.dp)) {
             if(creating || editId!=null) {
-                PlanEditor(ledger,ledger.plans.find { it.id==editId },onClose={creating=false;editId=null}) { p,bs,initial ->
+                PlanEditor(ledger,ledger.plans.find { it.id==editId }) { p,bs,initial ->
                     scope.launch { try {
                         repo.update { old -> old.copy(plans=old.plans.filterNot { it.id==p.id }+p, benefits=old.benefits.filterNot { it.planId==p.id }+bs, payments=old.payments+listOfNotNull(initial)) }
-                        creating=false; editId=null; message("已保存")
+                        creating=false; editId=null; detailId=null; message("已保存")
                     } catch(e: Exception) { message(e.message ?: "输入无效") } }
                 }
             } else if(detailId!=null) {
                 val p = ledger.plans.find { it.id==detailId }
-                if(p==null) { detailId=null } else Detail(ledger,p,onBack={detailId=null},onEdit={editId=p.id;detailId=null},change=::change,onDeleted={detailId=null})
+                if(p==null) { detailId=null } else Detail(ledger,p,onEdit={editId=p.id},change=::change,onDeleted={detailId=null})
             } else when(tab) {
                 0 -> Overview(ledger,onAdd={creating=true}) { detailId=it }
                 1 -> Subscriptions(ledger,onAdd={creating=true}) { detailId=it }
@@ -216,7 +238,7 @@ private fun money(totals: Map<String,BigDecimal>) = if(totals.isEmpty()) "暂无
     }},confirmButton={TextButton(close){Text("自定义 / 返回")}})
 }
 
-@Composable private fun PlanEditor(l: Ledger, existing: Plan?, onClose: ()->Unit, save: (Plan,List<Benefit>,Payment?)->Unit) {
+@Composable private fun PlanEditor(l: Ledger, existing: Plan?, save: (Plan,List<Benefit>,Payment?)->Unit) {
     val id=remember { existing?.id ?: newId() }
     var name by rememberSaveable { mutableStateOf(existing?.name ?: "") }; var amount by rememberSaveable { mutableStateOf(existing?.amount ?: "") }
     var currency by rememberSaveable { mutableStateOf(existing?.currency ?: "CNY") }; var cycle by remember { mutableStateOf(existing?.cycle ?: Cycle.MONTH) }
@@ -225,30 +247,47 @@ private fun money(totals: Map<String,BigDecimal>) = if(totals.isEmpty()) "暂无
     var note by rememberSaveable { mutableStateOf(existing?.note ?: "") }; var paid by rememberSaveable { mutableStateOf(existing==null) }
     var error by remember { mutableStateOf("") }
     var picker by remember { mutableStateOf(false) }
+    var cycleMenu by remember { mutableStateOf(false) }
+    var benefitsExpanded by rememberSaveable { mutableStateOf(false) }
     var cnyAmount by rememberSaveable { mutableStateOf("") }
     var benefits by remember { mutableStateOf(l.benefits.filter { it.planId==id }.ifEmpty { listOf(Benefit(planId=id,name="",anchor=LocalDate.now().plusMonths(1).toString())) }) }
-    TextButton(onClose) { Text("返回") }; Title(if(existing==null) "记一笔订阅" else "编辑订阅")
+    Title(if(existing==null) "记一笔订阅" else "编辑订阅")
     if(existing==null) {
         OutlinedButton({picker=true},Modifier.fillMaxWidth()) { Icon(Icons.Outlined.GridView,null); Spacer(Modifier.width(8.dp)); Text("选择常见会员") }
         if(picker) ServicePicker({picker=false}) { preset-> name=preset.name;currency=preset.currency;benefits=benefits.mapIndexed { i,b->if(i==0)b.copy(name=preset.name) else b };picker=false }
     }
     if(name.isNotBlank()) ServiceIcon(name,modifier=Modifier.padding(vertical=12.dp),size=56.dp)
     Field("订阅 / 套餐名称",name,{name=it}); Field("套餐价格",amount,{amount=it}); Field("币种，如 CNY / USD",currency,{currency=it.trim().uppercase()})
-    Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) { Cycle.entries.forEach { v -> FilterChip(cycle==v,{cycle=v},label={Text(v.label)}) } }
-    Field("周期倍数",interval,{interval=it})
+    Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(12.dp),verticalAlignment=Alignment.CenterVertically) {
+        OutlinedTextField(interval,{interval=it},label={Text("周期")},singleLine=true,
+            keyboardOptions=KeyboardOptions(keyboardType=KeyboardType.Number),modifier=Modifier.weight(1f))
+        Box {
+            OutlinedButton({cycleMenu=true},Modifier.height(56.dp).semantics { contentDescription="选择周期单位" }) {
+                Text(cycle.label); Spacer(Modifier.width(12.dp)); Icon(Icons.Outlined.ExpandMore,null)
+            }
+            DropdownMenu(expanded=cycleMenu,onDismissRequest={cycleMenu=false}) {
+                Cycle.entries.forEach { v -> DropdownMenuItem(text={Text(v.label)},onClick={cycle=v;cycleMenu=false}) }
+            }
+        }
+    }
     Row(verticalAlignment=Alignment.CenterVertically) { Switch(auto,{auto=it}); Text("自动续费",Modifier.padding(start=12.dp)) }
-    Field("原始扣款日期 YYYY-MM-DD",anchor,{anchor=it})
-    Section("包含的权益")
+    Field("扣款日期",anchor,{anchor=it},dateField=true)
+    TextButton({benefitsExpanded=!benefitsExpanded},Modifier.fillMaxWidth().padding(top=12.dp)) {
+        Text("包含的权益",fontSize=19.sp,fontWeight=FontWeight.SemiBold,modifier=Modifier.weight(1f))
+        Icon(if(benefitsExpanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore,if(benefitsExpanded) "收起权益" else "展开权益")
+    }
+    if(benefitsExpanded) {
     benefits.forEachIndexed { i,b ->
         key(b.id) { Card(Modifier.fillMaxWidth().padding(vertical=6.dp)) { Column(Modifier.padding(16.dp)) {
             Field("权益 ${i+1} 名称",b.name,{v->benefits=benefits.map { if(it.id==b.id) it.copy(name=v) else it }})
             val p=existing?.copy(cycle=cycle,interval=interval.toIntOrNull()?.coerceIn(1,120) ?: 1)
             val date=if(p!=null) runCatching { Book.expiry(b,p).toString() }.getOrDefault(b.anchor) else b.anchor
-            Field("到期日期 YYYY-MM-DD",date,{v->benefits=benefits.map { if(it.id==b.id) it.copy(anchor=v,renewals=0,giftDays=0) else it }})
+            Field("到期日期",date,{v->benefits=benefits.map { if(it.id==b.id) it.copy(anchor=v,renewals=0,giftDays=0) else it }},dateField=true)
             if(benefits.size>1) TextButton({benefits=benefits.filterNot { it.id==b.id }}) { Text("移除此权益") }
         } } }
     }
     TextButton({benefits=benefits+Benefit(planId=id,name="",anchor=LocalDate.now().plusMonths(1).toString())}) { Text("＋ 添加联合权益") }
+    }
     if(existing==null) Row(verticalAlignment=Alignment.CenterVertically) { Checkbox(paid,{paid=it}); Text("同时记录首次付款") }
     if(existing==null && paid && currency!="CNY") { Field("人民币实付金额",cnyAmount,{cnyAmount=it}); Hint("填写付款当天的人民币金额，保存后固定。") }
     Field("备注",note,{note=it})
@@ -266,10 +305,10 @@ private fun money(totals: Map<String,BigDecimal>) = if(totals.isEmpty()) "暂无
     } catch(e: Exception) { error="请检查名称、金额、周期和日期：${e.message ?: "格式错误"}" } },modifier=Modifier.fillMaxWidth().padding(top=16.dp)) { Text("保存订阅") }
 }
 
-@Composable private fun Detail(l: Ledger,p: Plan,onBack:()->Unit,onEdit:()->Unit,change:((Ledger)->Ledger)->Unit,onDeleted:()->Unit) {
+@Composable private fun Detail(l: Ledger,p: Plan,onEdit:()->Unit,change:((Ledger)->Ledger)->Unit,onDeleted:()->Unit) {
     var renewing by remember { mutableStateOf(false) }; var deleting by remember { mutableStateOf(false) }
     var giftId by remember { mutableStateOf<String?>(null) }; var gift by remember { mutableStateOf("7") }
-    TextButton(onBack) { Text("返回") }; ServiceIcon(p.name,size=64.dp); Title(p.name,if(p.autoRenew) "每 ${p.interval} ${p.cycle.label} · ${p.currency} ${p.amount}" else "一次性 / 手动续费 · ${p.currency} ${p.amount}")
+    ServiceIcon(p.name,size=64.dp); Title(p.name,if(p.autoRenew) "每 ${p.interval} ${p.cycle.label} · ${p.currency} ${p.amount}" else "一次性 / 手动续费 · ${p.currency} ${p.amount}")
     if(p.autoRenew) Hint("下次预计扣款 ${Book.nextCharge(p,LocalDate.now())}")
     l.benefits.filter { it.planId==p.id }.forEach { b -> Card(Modifier.fillMaxWidth().padding(vertical=6.dp)) { Column(Modifier.padding(20.dp)) { Text(b.name,fontSize=20.sp,fontWeight=FontWeight.SemiBold); Text("${Book.expiry(b,p)} 到期",modifier=Modifier.padding(top=8.dp)); if(b.giftDays>0) Hint("含赠送 ${b.giftDays} 天"); TextButton({giftId=b.id}) { Text("增加赠送时长") } } } }
     if(p.note.isNotBlank()) Hint(p.note)
@@ -288,7 +327,7 @@ private fun money(totals: Map<String,BigDecimal>) = if(totals.isEmpty()) "暂无
     var cnyAmount by remember { mutableStateOf("") }
     var selected by remember { mutableStateOf(l.benefits.filter { it.planId==p.id }.map { it.id }.toSet()) }; var error by remember { mutableStateOf("") }
     AlertDialog(onDismissRequest=close,title={Text("记录实际付款")},text={Column(Modifier.verticalScroll(rememberScrollState())) {
-        Field("付款金额 ${p.currency}",amount,{amount=it}); Field("付款日期 YYYY-MM-DD",date,{date=it}); Field("付款备注",note,{note=it})
+        Field("付款金额 ${p.currency}",amount,{amount=it}); Field("付款日期 YYYY-MM-DD",date,{date=it},dateField=true); Field("付款备注",note,{note=it})
         if(p.currency!="CNY") { Field("人民币实付金额",cnyAmount,{cnyAmount=it}); Hint("以付款当天账单为准，保存后固定。") }
         Hint("选择续费权益 · 延长 ${p.interval} ${p.cycle.label}")
         l.benefits.filter { it.planId==p.id }.forEach { b->Row(verticalAlignment=Alignment.CenterVertically) { Checkbox(b.id in selected,{selected=if(it)selected+b.id else selected-b.id}); Text(b.name) } }

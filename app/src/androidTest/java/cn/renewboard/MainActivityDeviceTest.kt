@@ -39,7 +39,8 @@ class MainActivityDeviceTest {
     }
 
     private fun click(text: String) {
-        compose.onNodeWithText(text).performScrollTo().performClick()
+        if(text=="返回") compose.onNodeWithText(text).performClick()
+        else compose.onNodeWithText(text).performScrollTo().performClick()
     }
 
     private fun awaitLedger(predicate: (Ledger) -> Boolean): Ledger {
@@ -55,9 +56,10 @@ class MainActivityDeviceTest {
         compose.onNodeWithContentDescription("记一笔订阅").performClick()
         fill("订阅 / 套餐名称", "设备录入套餐")
         fill("套餐价格", "36.80")
-        fill("原始扣款日期 YYYY-MM-DD", "2026-09-01")
+        fill("扣款日期", "2026-09-01")
+        click("包含的权益")
         fill("权益 1 名称", "设备录入权益")
-        fill("到期日期 YYYY-MM-DD", "2026-10-01")
+        fill("到期日期", "2026-10-01")
         fill("备注", "设备测试备注")
         click("保存订阅")
         val created = awaitLedger { it.plans.size == 1 && it.payments.size == 1 }
@@ -70,8 +72,9 @@ class MainActivityDeviceTest {
         click("编辑订阅与到期日")
         fill("订阅 / 套餐名称", "已编辑套餐")
         fill("套餐价格", "48.00")
+        click("包含的权益")
         fill("权益 1 名称", "已编辑权益")
-        fill("到期日期 YYYY-MM-DD", "2026-11-15")
+        fill("到期日期", "2026-11-15")
         click("保存订阅")
         val edited = awaitLedger { it.plans.singleOrNull()?.name == "已编辑套餐" }
         assertEquals(created.plans.single().id, edited.plans.single().id)
@@ -101,9 +104,10 @@ class MainActivityDeviceTest {
         compose.onNodeWithContentDescription("记一笔订阅").performClick()
         fill("订阅 / 套餐名称", "月末续费套餐")
         fill("套餐价格", "30.00")
-        fill("原始扣款日期 YYYY-MM-DD", "2024-01-31")
+        fill("扣款日期", "2024-01-31")
+        click("包含的权益")
         fill("权益 1 名称", "月末权益")
-        fill("到期日期 YYYY-MM-DD", "2024-02-29")
+        fill("到期日期", "2024-02-29")
         click("保存订阅")
         val created = awaitLedger { it.plans.size == 1 && it.payments.size == 1 }
         assertEquals("2024-02-29", Book.expiry(created.benefits.single(), created.plans.single()).toString())
@@ -129,6 +133,67 @@ class MainActivityDeviceTest {
         assertEquals(renewed.payments, gifted.payments)
         assertEquals(renewed.plans, gifted.plans)
         compose.onNodeWithText("2024-04-07 到期").assertExists()
+    }
+
+    @Test fun systemBackAndVisibleBackReturnOneLevel() {
+        compose.onNodeWithContentDescription("记一笔订阅").performClick()
+        compose.waitForIdle()
+        androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
+        compose.waitForIdle()
+        compose.onNodeWithText("还没有需要记挂的到期日").assertExists()
+        val plan=Plan(name="返回测试",amount="10",billingAnchor="2026-09-01")
+        runBlocking { app.repository.update { Ledger(plans=listOf(plan),benefits=listOf(Benefit(planId=plan.id,name=plan.name,anchor="2026-10-01"))) } }
+        compose.waitForIdle()
+        compose.onNodeWithText("订阅",substring=false).performClick()
+        click("返回测试")
+        click("编辑订阅与到期日")
+        compose.onNode(hasText("备注") and hasSetTextAction()).performScrollTo()
+        compose.onNodeWithText("返回",substring=false).assertIsDisplayed()
+        compose.waitForIdle()
+        androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
+        compose.waitForIdle()
+        compose.onNodeWithText("编辑订阅与到期日").assertExists()
+        assertEquals("",runBlocking { app.repository.read() }.plans.single().note)
+        click("编辑订阅与到期日")
+        compose.activityRule.scenario.recreate(); compose.waitForIdle()
+        compose.onNodeWithText("返回",substring=false).performClick()
+        compose.onNodeWithText("编辑订阅与到期日").assertExists()
+        click("记录付款 / 提前续费")
+        compose.waitForIdle()
+        androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
+        compose.waitForIdle()
+        compose.onNodeWithText("记录实际付款").assertDoesNotExist()
+        compose.onNodeWithText("编辑订阅与到期日").assertExists()
+        compose.waitForIdle()
+        androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
+        compose.waitForIdle()
+        compose.onNodeWithText("订阅",substring=false).assertExists()
+        compose.onNodeWithContentDescription("记一笔订阅").performClick()
+        compose.onNodeWithText("返回",substring=false).performClick()
+        compose.onNodeWithText("订阅",substring=false).assertExists()
+    }
+
+    @Test fun compactCycleSelectorAndCollapsedBenefitsPreserveInput() {
+        compose.onNodeWithContentDescription("记一笔订阅").performClick()
+        compose.onNodeWithText("权益 1 名称").assertDoesNotExist()
+        compose.onNodeWithText("到期日期").assertDoesNotExist()
+        fill("订阅 / 套餐名称","双周套餐")
+        fill("套餐价格","12")
+        fill("周期","2")
+        compose.onNodeWithContentDescription("选择周期单位").performScrollTo().performClick()
+        compose.onNodeWithText("周",substring=false).performClick()
+        fill("扣款日期","2026-09-01")
+        click("包含的权益")
+        compose.onAllNodesWithContentDescription("选择日期").assertCountEquals(2)
+        fill("到期日期","2026-09-15")
+        click("包含的权益")
+        compose.onNodeWithText("到期日期").assertDoesNotExist()
+        screenshot("compact-editor")
+        click("保存订阅")
+        val saved=awaitLedger { it.plans.size==1 }
+        assertEquals(2,saved.plans.single().interval)
+        assertEquals(Cycle.WEEK,saved.plans.single().cycle)
+        assertEquals("2026-09-15",Book.expiry(saved.benefits.single(),saved.plans.single()).toString())
     }
 
     @Test fun invalidFormRemainsEditableAndDoesNotWriteAnyLedgerRecords() {
