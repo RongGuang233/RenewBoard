@@ -97,6 +97,119 @@ class DomainTest {
         money("30", Book.forecast(l, date("2024-02-01"), date("2024-03-01"))["CNY"])
     }
 
+    @Test fun cnyForecastCombinesCurrenciesAndScalesChangedPricesAcrossOccurrences() {
+        val cny = plan().copy(billingAnchor = "2024-01-01")
+        val usd = cny.copy(id = "usd", currency = "USD", amount = "30")
+        val payment = Payment(planId = "usd", planName = "USD", amount = "20", currency = "USD", date = "2024-01-01", cnyAmount = "140")
+        val l = Ledger(plans = listOf(cny, usd), payments = listOf(payment), settings = Settings(rates = mapOf("USD" to "99")))
+        money("480", Book.forecastCny(l, date("2024-02-01"), date("2024-04-01")))
+        money("140", Book.paidCny(l))
+        assertEquals(payment, l.payments.single())
+    }
+
+    @Test fun cnyForecastIsUnknownWhenAnActiveForeignPlanHasNoUsableSettlement() {
+        val usd = plan().copy(currency = "USD", billingAnchor = "2024-01-01")
+        val payment = Payment(planId = "p", planName = "USD", amount = "20", currency = "USD", date = "2024-01-01", cnyAmount = "140")
+        listOf(emptyList(), listOf(payment.copy(cnyAmount = null)), listOf(payment.copy(amount = "0")),
+            listOf(payment.copy(planId = "other")), listOf(payment.copy(currency = "EUR"))).forEach { payments ->
+            assertNull(Book.forecastCny(Ledger(plans = listOf(usd), payments = payments,
+                settings = Settings(rates = mapOf("USD" to "7"))), date("2024-02-01"), date("2024-03-01")))
+        }
+    }
+
+    @Test fun cnyForecastIgnoresPlansWithoutChargesAndFreeForeignPlansNeedNoRatio() {
+        val usd = plan().copy(currency = "USD", billingAnchor = "2024-01-01")
+        val l = Ledger(plans = listOf(usd.copy(archived = true), usd.copy(id = "manual", autoRenew = false),
+            usd.copy(id = "later", paidCycles = 12), usd.copy(id = "free", amount = "0")))
+        money("0", Book.forecastCny(l, date("2024-02-01"), date("2024-03-01")))
+        money("0", Book.forecastCny(Ledger(), date("2024-02-01"), date("2024-03-01")))
+        money("0", Book.forecastCny(Ledger(plans = listOf(usd)), date("2024-02-01"), date("2024-02-01")))
+        money("30", Book.forecastCny(l.copy(plans = l.plans + usd.copy(id = "cny", currency = "CNY")),
+            date("2024-02-01"), date("2024-03-01")))
+    }
+
+    @Test fun cnyForecastUsesLatestEligibleDateAndLastEntryOnTheSameDay() {
+        val usd = plan().copy(currency = "USD", amount = "20", billingAnchor = "2024-01-01")
+        val payment = Payment(planId = "p", planName = "USD", amount = "20", currency = "USD", date = "2024-02-01", cnyAmount = "140")
+        val l = Ledger(plans = listOf(usd), payments = listOf(payment,
+            payment.copy(id = "same-day-last", cnyAmount = "144"),
+            payment.copy(id = "older", date = "2024-01-01", cnyAmount = "130"),
+            payment.copy(id = "future", date = "2024-02-02", cnyAmount = "160")))
+        money("144", Book.forecastCny(l, date("2024-02-01"), date("2024-03-01")))
+        assertNull(Book.forecastCny(l.copy(payments = listOf(l.payments.last())),
+            date("2024-02-01"), date("2024-03-01")))
+    }
+
+    @Test fun settledForeignPaymentsDoNotChangeWhenRatesOrPlanChange() {
+        val original = ledger(plan().copy(currency = "USD"))
+        val first = Book.renew(original, "p", "20", date("2024-02-01"), setOf("b"), "", cnyAmount = "144.25")
+        val second = Book.renew(first, "p", "20", date("2024-03-01"), setOf("b"), "", cnyAmount = "145.60")
+        money("289.85", Book.paidCny(second))
+        val changed = second.copy(
+            plans = second.plans.map { it.copy(amount = "50", currency = "EUR") },
+            settings = Settings(rates = mapOf("USD" to "9", "EUR" to "10"))
+        )
+        money("289.85", Book.paidCny(changed))
+        money("144.25", Book.paidCny(changed, date("2024-02-01"), date("2024-03-01")))
+        money("40", Book.paid(changed)["USD"])
+    }
+
+    @Test fun legacyForeignPaymentsRemainUnknownEvenWithExchangeRates() {
+        val l = ledger().copy(payments = listOf(
+            Payment(planId = "p", planName = "旧外币付款", amount = "10", currency = "USD", date = "2024-01-31"),
+            Payment(planId = "p", planName = "人民币付款", amount = "20", currency = "CNY", date = "2024-02-01")
+        ), settings = Settings(rates = mapOf("USD" to "7")))
+        Book.validate(l)
+        assertNull(Book.paidCny(l))
+        money("20", Book.paidCny(l, date("2024-02-01"), date("2024-03-01")))
+        money("0", Book.paidCny(l, date("2025-01-01")))
+    }
+
+    @Test fun backupPreservesFrozenAmountsAndReadsOldVersionOneReceipts() {
+        val l = ledger(plan().copy(currency = "USD"))
+        val renewed = Book.renew(l, "p", "20", date("2024-02-01"), setOf("b"), "", cnyAmount = "144.25")
+        val restored = Book.decode(Book.encode(renewed)).data
+        assertEquals(renewed, restored)
+        money("144.25", Book.paidCny(restored))
+        val oldBackup = Book.encode(renewed).replace(",\"cnyAmount\":\"144.25\"", "")
+        assertFalse(oldBackup.contains("cnyAmount"))
+        val legacy = Book.decode(oldBackup).data
+        assertNull(legacy.payments.single().cnyAmount)
+        assertNull(Book.paidCny(legacy))
+        rejects { Book.decode(oldBackup.replace("\"benefitIds\":[\"b\"]", "\"unused\":[]")) }
+    }
+
+    @Test fun foreignRenewalRequiresExplicitValidSettlementAmount() {
+        val l = ledger(plan().copy(currency = "USD"))
+        val error = assertThrows(IllegalArgumentException::class.java) {
+            Book.renew(l, "p", "20", date("2024-02-01"), setOf("b"), "")
+        }
+        assertEquals("请填写付款当天的实际人民币金额", error.message)
+        listOf("", " ", "-1", "1e2", "1.12345").forEach { amount ->
+            rejects { Book.renew(l, "p", "20", date("2024-02-01"), setOf("b"), "", cnyAmount = amount) }
+        }
+        money("0", Book.paidCny(Book.renew(l, "p", "0", date("2024-02-01"), setOf("b"), "", cnyAmount = "0")))
+        assertTrue(l.payments.isEmpty())
+    }
+
+    @Test fun cnyPaymentsAlwaysUseTheirOriginalAmount() {
+        val renewed = Book.renew(ledger(), "p", "29.50", date("2024-02-01"), setOf("b"), "")
+        money("29.50", Book.paidCny(renewed))
+        assertNull(renewed.payments.single().cnyAmount)
+        val redundantSettlement = renewed.copy(payments = renewed.payments.map { it.copy(cnyAmount = "100") })
+        money("29.50", Book.paidCny(redundantSettlement))
+        money("0", Book.paidCny(Ledger()))
+    }
+
+    @Test fun invalidFrozenAmountsAreRejectedDuringBackupValidation() {
+        val payment = Payment(planId = "p", planName = "外币付款", amount = "20", currency = "USD", date = "2024-02-01", cnyAmount = "144.25")
+        val l = ledger().copy(payments = listOf(payment))
+        listOf("", "-1", "NaN", "1.12345").forEach { amount ->
+            rejects { Book.encode(l.copy(payments = listOf(payment.copy(cnyAmount = amount)))) }
+        }
+        rejects { Book.decode(Book.encode(l).replace("\"cnyAmount\":\"144.25\"", "\"cnyAmount\":\"-1\"")) }
+    }
+
     @Test fun archivedAndManualPlansHaveNoForecastAndArchiveSuppressesReminders() {
         val l = ledger(plan().copy(archived = true))
         assertTrue(Book.forecast(l, date("2024-01-01"), date("2025-01-01")).isEmpty())

@@ -1,0 +1,127 @@
+# 图标来源
+
+2026-09-06 通过 Apple 应用目录核对名称和开发者。图标归各品牌所有，用于识别对应服务。
+
+- bilibili: [哔哩哔哩-弹幕番剧直播高清视频](https://apps.apple.com/cn/app/%E5%93%94%E5%93%A9%E5%93%94%E5%93%A9-%E5%BC%B9%E5%B9%95%E7%95%AA%E5%89%A7%E7%9B%B4%E6%92%AD%E9%AB%98%E6%B8%85%E8%A7%86%E9%A2%91/id736536022?uo=4) · bilibili
+  - 原图：https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/11/db/0f/11db0f86-e5a4-3c6a-1946-698346e63d44/AppIcon-0-0-1x_U007epad-0-1-0-sRGB-85-220.png/512x512bb.jpg
+- netease: [网易云音乐-数亿音乐畅听](https://apps.apple.com/cn/app/%E7%BD%91%E6%98%93%E4%BA%91%E9%9F%B3%E4%B9%90-%E6%95%B0%E4%BA%BF%E9%9F%B3%E4%B9%90%E7%95%85%E5%90%AC/id590338362?uo=4) · 杭州网易云音乐科技有限公司
+  - 原图：https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/99/a0/6a/99a06a86-d5e5-9d5b-16a2-19109827bcde/appIconNew-0-0-1x_U007epad-0-1-0-85-220.png/512x512bb.jpg
+- qqmusic: [QQ音乐 - 听我想听](https://apps.apple.com/cn/app/qq%E9%9F%B3%E4%B9%90-%E5%90%AC%E6%88%91%E6%83%B3%E5%90%AC/id414603431?uo=4) · Tencent Technology (Shenzhen) Company Limited
+  - 原图：https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/b4/74/61/b4746141-3bda-28c4-ca20-a7a9baf55492/AppIcon-0-0-1x_U007ephone-0-0-0-1-0-0-sRGB-85-220.png/512x512bb.jpg
+- youtube: [YouTube](https://apps.apple.com/us/app/youtube/id544007664?uo=4) · Google
+  - 原图：https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/36/99/dd/3699dde2-2561-d256-afcc-23a67f0cebe3/logo_youtube_2024_q4_color-0-0-1x_U007emarketing-0-0-0-7-0-0-0-85-220.png/512x512bb.jpg
+- netflix: [Netflix](https://apps.apple.com/us/app/netflix/id363590051?uo=4) · Netflix, Inc.
+  - 原图：https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/e4/0b/eb/e40bebc0-460a-2d76-e82d-5e46512beb82/AppIcon-0-0-1x_U007epad-0-1-0-sRGB-0-85-220.png/512x512bb.jpg
+- hello: [哈啰-骑车顺风车打车租车](https://apps.apple.com/cn/app/%E5%93%88%E5%95%B0-%E9%AA%91%E8%BD%A6%E9%A1%BA%E9%A3%8E%E8%BD%A6%E6%89%93%E8%BD%A6%E7%A7%9F%E8%BD%A6/id1165227346?uo=4) · 上海哈啰普惠科技有限公司
+  - 原图：https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/14/f2/93/14f2938a-bd3c-61a4-d57d-bbafd557ef27/AppIcon-0-0-1x_U007emarketing-0-8-0-0-85-220.png/512x512bb.jpg
+- telecom: [中国电信-全国统一官方服务平台](https://apps.apple.com/cn/app/%E4%B8%AD%E5%9B%BD%E7%94%B5%E4%BF%A1-%E5%85%A8%E5%9B%BD%E7%BB%9F%E4%B8%80%E5%AE%98%E6%96%B9%E6%9C%8D%E5%8A%A1%E5%B9%B3%E5%8F%B0/id513836029?uo=4) · CHINA TELECOM Corporation Ltd.
+  - 原图：https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/cb/93/30/cb933065-42ae-3492-5e14-4c8b48e2a624/AppIcon-0-0-1x_U007ephone-0-1-0-0-sRGB-85-220.png/512x512bb.jpg
+- mobile: [中国移动（手机营业厅）](https://apps.apple.com/cn/app/%E4%B8%AD%E5%9B%BD%E7%A7%BB%E5%8A%A8-%E6%89%8B%E6%9C%BA%E8%90%A5%E4%B8%9A%E5%8E%85/id583700738?uo=4) · 中移在线
+  - 原图：https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/49/60/a8/4960a82a-0e58-1026-a010-1d9fd72b0823/AppIcon-0-0-1x_U007epad-0-1-0-0-sRGB-85-220.png/512x512bb.jpg
+- baidu: [百度网盘](https://apps.apple.com/cn/app/%E7%99%BE%E5%BA%A6%E7%BD%91%E7%9B%98/id547166701?uo=4) · Beijing Duyou Science and Technology Co.,Ltd.
+  - 原图：https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/0b/1c/5e/0b1c5e7f-358c-3f7a-f104-944d05f08227/AppIcon-0-0-1x_U007ephone-0-1-0-0-sRGB-85-220.png/512x512bb.jpg
+- onedrive: [Microsoft OneDrive](https://apps.apple.com/us/app/microsoft-onedrive/id477537958?uo=4) · Microsoft Corporation
+  - 原图：https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/06/58/7b/06587b3c-eba9-e45a-6e47-48fd32cae813/AppIcon-0-0-1x_U007epad-0-1-0-85-220.png/512x512bb.jpg
+- googleone: [Google One](https://apps.apple.com/us/app/google-one/id1451784328?uo=4) · Google
+  - 原图：https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/37/08/80/37088054-edfc-6988-279f-af5c342af75a/logo_one_color-0-0-1x_U007emarketing-0-0-0-7-0-0-0-0-85-220.png/512x512bb.jpg
+- dropbox: [Dropbox: Cloud Storage Backup](https://apps.apple.com/us/app/dropbox-cloud-storage-backup/id327630330?uo=4) · Dropbox, Inc.
+  - 原图：https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/88/34/b1/8834b1df-c7df-c2db-fd3e-cd6754a64417/AppIcon-0-0-1x_U007emarketing-0-8-0-85-220.png/512x512bb.jpg
+- applemusic: [Apple Music](https://apps.apple.com/us/app/apple-music/id1108187390?uo=4) · Apple
+  - 原图：https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/31/6c/c3/316cc33a-5e7d-8902-58eb-f4e16c5d9440/music-0-0-1x_U007epad-0-1-0-sRGB-85-220.png/512x512bb.jpg
+- spotify: [Spotify: Music and Podcasts](https://apps.apple.com/us/app/spotify-music-and-podcasts/id324684580?uo=4) · Spotify
+  - 原图：https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/74/e1/e7/74e1e75a-49d0-ff5c-6ec2-64a2540ac7c7/AppIcon-0-0-1x_U007epad-0-1-0-0-sRGB-85-220.png/512x512bb.jpg
+- tencent: [腾讯视频-《灵境行者》独播](https://apps.apple.com/cn/app/%E8%85%BE%E8%AE%AF%E8%A7%86%E9%A2%91-%E7%81%B5%E5%A2%83%E8%A1%8C%E8%80%85-%E7%8B%AC%E6%92%AD/id458318329?uo=4) · Tencent Technology (Shenzhen) Company Limited
+  - 原图：https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/78/47/e3/7847e3eb-304b-3306-acae-8322a2aa8098/AppIcon-0-0-1x_U007epad-0-1-0-0-sRGB-85-220.png/512x512bb.jpg
+- iqiyi: [爱奇艺-《生逢其时》双喜临门下饭剧](https://apps.apple.com/cn/app/%E7%88%B1%E5%A5%87%E8%89%BA-%E7%94%9F%E9%80%A2%E5%85%B6%E6%97%B6-%E5%8F%8C%E5%96%9C%E4%B8%B4%E9%97%A8%E4%B8%8B%E9%A5%AD%E5%89%A7/id393765873?uo=4) · Beijing Qiyi Century Science & Technology Co.,LTD.
+  - 原图：https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/70/52/93/705293a9-e8ad-33e2-3425-ca731c2706ad/AppIcon-0-1x_U007epad-0-0-0-1-0-0-sRGB-85-220-0.png/512x512bb.jpg
+- chatgpt: [ChatGPT](https://apps.apple.com/us/app/chatgpt/id6448311069?uo=4) · OpenAI OpCo, LLC
+  - 原图：https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/33/ae/7b/33ae7b77-258b-f4ae-1056-fce248dca3a0/AppIcon-0-0-1x_U007epad-0-0-0-1-0-P3-85-220.png/512x512bb.jpg
+- iCloud+: [Apple 官方页面](https://www.apple.com/icloud/)
+  - 原图：https://www.apple.com/v/icloud/aj/images/overview/hero_icloud__e5pazz6xmweq_small_2x.png
+
+哔哩哔哩大会员与充电共用哔哩哔哩应用图标；机场 VPN、游戏加速器未指定应用，保留分类图形。
+
+## 扩充目录
+
+- aliyun: [阿里云盘](https://apps.apple.com/cn/app/%E9%98%BF%E9%87%8C%E4%BA%91%E7%9B%98/id1494661473?uo=4) · Hangzhou DuanquNetwork Media Technology Co., Ltd.
+  - 原图：https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/31/26/44/31264422-aa70-ad85-98c2-6c5036abe374/AppIcon-0-1x_U007epad-0-1-0-85-220-0.png/512x512bb.jpg
+- quark: [夸克网盘-Live图无损，极速无广](https://apps.apple.com/cn/app/%E5%A4%B8%E5%85%8B%E7%BD%91%E7%9B%98-live%E5%9B%BE%E6%97%A0%E6%8D%9F-%E6%9E%81%E9%80%9F%E6%97%A0%E5%B9%BF/id6755949705?uo=4) · 广州市动悦信息技术有限公司
+  - 原图：https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/93/37/a0/9337a0e6-fcb4-f26d-9e8c-9b9fe4cfc046/AppIcon-0-0-1x_U007epad-0-1-sRGB-85-220.png/512x512bb.jpg
+- 115: [115生活](https://apps.apple.com/cn/app/115%E7%94%9F%E6%B4%BB/id1446829613?uo=4) · Guangdong 115 Technology Co., Ltd.
+  - 原图：https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/0c/21/b7/0c21b705-ab28-87c4-b3bb-53fe7fc3deff/AppIcon-0-0-1x_U007emarketing-0-8-0-sRGB-85-220.png/512x512bb.jpg
+- tianyi: [天翼云盘-家庭云•相册共享•云回看](https://apps.apple.com/cn/app/%E5%A4%A9%E7%BF%BC%E4%BA%91%E7%9B%98-%E5%AE%B6%E5%BA%AD%E4%BA%91-%E7%9B%B8%E5%86%8C%E5%85%B1%E4%BA%AB-%E4%BA%91%E5%9B%9E%E7%9C%8B/id507944293?uo=4) · 天翼数字生活科技有限公司
+  - 原图：https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/d5/c0/60/d5c060e7-f768-3749-1dc5-61c6c7ee9f2d/AppIcon-0-0-1x_U007emarketing-0-8-0-sRGB-85-220.png/512x512bb.jpg
+- cmcloud: [中国移动云盘-全民不限速](https://apps.apple.com/cn/app/%E4%B8%AD%E5%9B%BD%E7%A7%BB%E5%8A%A8%E4%BA%91%E7%9B%98-%E5%85%A8%E6%B0%91%E4%B8%8D%E9%99%90%E9%80%9F/id1618137934?uo=4) · China Mobile Internet Company Limited
+  - 原图：https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/92/7c/e3/927ce381-9993-b747-ec3e-45de5f7f11df/AppIcon-0-0-1x_U007ephone-0-5-0-85-220-0.png/512x512bb.jpg
+- weiyun: [腾讯微云-智能网盘](https://apps.apple.com/cn/app/%E8%85%BE%E8%AE%AF%E5%BE%AE%E4%BA%91-%E6%99%BA%E8%83%BD%E7%BD%91%E7%9B%98/id522700349?uo=4) · Tencent Technology (Shanghai) Company Limited
+  - 原图：https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/61/22/90/6122901b-52e5-c54c-14af-60bf24fa09d3/AppIcon-0-0-1x_U007emarketing-0-11-0-sRGB-85-220.png/512x512bb.jpg
+- jianguo: [坚果云-团队必备办公网盘](https://apps.apple.com/cn/app/%E5%9D%9A%E6%9E%9C%E4%BA%91-%E5%9B%A2%E9%98%9F%E5%BF%85%E5%A4%87%E5%8A%9E%E5%85%AC%E7%BD%91%E7%9B%98/id444442371?uo=4) · Yicun Network Technology Co. Ltd.
+  - 原图：https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/5d/db/d2/5ddbd2d9-c133-7e18-89a0-8fdbd3c1230d/AppIconLiquid-0-0-1x_U007epad-0-1-0-0-sRGB-85-220.png/512x512bb.jpg
+- xunlei: [迅雷-高速传输,网盘,4K原画](https://apps.apple.com/cn/app/%E8%BF%85%E9%9B%B7-%E9%AB%98%E9%80%9F%E4%BC%A0%E8%BE%93-%E7%BD%91%E7%9B%98-4k%E5%8E%9F%E7%94%BB/id1503466530?uo=4) · 深圳市迅雷网络技术有限公司
+  - 原图：https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/30/3f/7c/303f7c27-491c-6883-0d3c-fd3a2805f0a4/AppIcon-0-0-1x_U007emarketing-0-8-0-85-220.png/512x512bb.jpg
+- mega: [MEGA: Encrypted Cloud Storage](https://apps.apple.com/us/app/mega-encrypted-cloud-storage/id706857885?uo=4) · Mega Networks LLC
+  - 原图：https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/33/e4/55/33e45580-7348-c930-e4d2-ba4f216be3f9/AppIcon-0-0-1x_U007epad-0-1-sRGB-85-220.png/512x512bb.jpg
+- box: [Box: The power of Content + AI](https://apps.apple.com/us/app/box-the-power-of-content-ai/id290853822?uo=4) · Box, Inc.
+  - 原图：https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/a6/55/dc/a655dcf5-abf2-8bcf-2ec7-9aa4cb68e86d/AppIconAppStore-0-0-1x_U007emarketing-0-11-0-85-220.png/512x512bb.jpg
+- pcloud: [pCloud - Cloud Storage](https://apps.apple.com/us/app/pcloud-cloud-storage/id692002098?uo=4) · PCLOUD LTD
+  - 原图：https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/a9/b7/c6/a9b7c65e-29c2-68ea-bd96-68094ce52ea3/app_icon_classic-0-0-1x_U007epad-0-1-P3-85-220.png/512x512bb.jpg
+- claude: [Claude by Anthropic](https://apps.apple.com/us/app/claude-by-anthropic/id6473753684?uo=4) · Anthropic PBC
+  - 原图：https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/ee/65/f6/ee65f66e-1bac-b4cd-38fd-dc3776d21ae7/AppIcon-0-0-1x_U007epad-0-1-85-220.png/512x512bb.jpg
+- gemini: [Google Gemini](https://apps.apple.com/us/app/google-gemini/id6477489729?uo=4) · Google
+  - 原图：https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/04/eb/fb/04ebfb38-5dcb-babe-a092-0268a25ff40a/AppIcon-0-0-1x_U007epad-0-0-0-1-0-0-sRGB-0-0-85-220.png/512x512bb.jpg
+- perplexity: [Perplexity - AI Search & Chat](https://apps.apple.com/us/app/perplexity-ai-search-chat/id1668000334?uo=4) · Perplexity AI, Inc.
+  - 原图：https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/5d/5f/7f/5d5f7f30-d836-7ef0-c149-8b3c3d8985ac/AppIcon-0-0-1x_U007epad-0-0-0-1-0-0-P3-85-220.png/512x512bb.jpg
+- copilot: [Microsoft Copilot](https://apps.apple.com/us/app/microsoft-copilot/id541164041?uo=4) · Microsoft Corporation
+  - 原图：https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/46/2d/13/462d13fc-0345-03e4-1dec-d4531a21cfc6/AppIcon-0-0-1x_U007epad-0-1-0-0-sRGB-0-85-220.png/512x512bb.jpg
+- kimi: [Kimi](https://apps.apple.com/cn/app/kimi/id6474233312?uo=4) · Moonshot AI
+  - 原图：https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/7c/3b/6e/7c3b6e54-be90-1330-578b-cad7b64ea53e/AppIcon26-0-0-1x_U007epad-0-1-0-sRGB-85-220.png/512x512bb.jpg
+- grok: [Grok AI](https://apps.apple.com/us/app/grok-ai/id6670324846?uo=4) · X Corp.
+  - 原图：https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/e6/10/de/e610de72-12b4-d6c6-e2d1-21600b924548/AppIcon-0-0-1x_U007epad-0-0-0-1-0-0-P3-0-85-220.png/512x512bb.jpg
+- poe: [Poe – Fast AI Chat](https://apps.apple.com/us/app/poe-fast-ai-chat/id1640745955?uo=4) · Quora, Inc.
+  - 原图：https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/a7/31/1e/a7311e38-afcc-4c79-a8ef-5e76a3443c39/AppIcon_Poe-0-0-1x_U007emarketing-0-0-0-8-0-0-85-220.png/512x512bb.jpg
+- jimeng: [即梦AI - 抖音旗下AI图片和视频工具](https://apps.apple.com/cn/app/%E5%8D%B3%E6%A2%A6ai-%E6%8A%96%E9%9F%B3%E6%97%97%E4%B8%8Bai%E5%9B%BE%E7%89%87%E5%92%8C%E8%A7%86%E9%A2%91%E5%B7%A5%E5%85%B7/id6503676563?uo=4) · 深圳市脸萌科技有限公司
+  - 原图：https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/6a/53/1c/6a531c72-879f-eb13-5109-33d7f69a55d4/AppIcon-0-0-1x_U007ephone-0-1-P3-85-220.png/512x512bb.jpg
+- suno: [Suno - AI Songs, Music, Lyrics](https://apps.apple.com/us/app/suno-ai-songs-music-lyrics/id6480136315?uo=4) · Suno, Inc.
+  - 原图：https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/48/16/69/4816697c-eba3-03a7-cc6b-4030dd4d4ab7/AppIcon-0-0-1x_U007ephone-0-1-0-sRGB-85-220.png/512x512bb.jpg
+- uu: [UU加速器-不止快 还很稳](https://apps.apple.com/cn/app/uu%E5%8A%A0%E9%80%9F%E5%99%A8-%E4%B8%8D%E6%AD%A2%E5%BF%AB-%E8%BF%98%E5%BE%88%E7%A8%B3/id1319788668?uo=4) · Hangzhou Bobo Technology Co Ltd
+  - 原图：https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/95/97/ed/9597ed2c-cfb5-0345-41fb-d346f24c1e68/AppIcon.release-0-0-1x_U007epad-0-1-0-85-220.png/512x512bb.jpg
+- heihe: [小黑盒加速器](https://apps.apple.com/cn/app/%E5%B0%8F%E9%BB%91%E7%9B%92%E5%8A%A0%E9%80%9F%E5%99%A8/id1450920208?uo=4) · Qingfeng(Beijing)Technology Co., Ltd.
+  - 原图：https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/06/8f/07/068f076e-db0a-a8f9-e149-c8c907d9d5f0/AppIcon-0-0-1x_U007epad-0-1-85-220.png/512x512bb.jpg
+- leishen: [雷神加速器-上亿玩家加速首选](https://apps.apple.com/cn/app/%E9%9B%B7%E7%A5%9E%E5%8A%A0%E9%80%9F%E5%99%A8-%E4%B8%8A%E4%BA%BF%E7%8E%A9%E5%AE%B6%E5%8A%A0%E9%80%9F%E9%A6%96%E9%80%89/id1613506145?uo=4) · 武汉奥拉夫网络科技有限公司
+  - 原图：https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/8f/e3/fc/8fe3fc27-fc68-4ea3-3a43-47c2ea06f5c2/AppIcon-0-1x_U007emarketing-0-8-0-85-220-0.jpeg/512x512bb.jpg
+- xunyou: [迅游加速器 - 全球游戏网络加速助手](https://apps.apple.com/cn/app/%E8%BF%85%E6%B8%B8%E5%8A%A0%E9%80%9F%E5%99%A8-%E5%85%A8%E7%90%83%E6%B8%B8%E6%88%8F%E7%BD%91%E7%BB%9C%E5%8A%A0%E9%80%9F%E5%8A%A9%E6%89%8B/id1032660607?uo=4) · Sichuan Subao Network Technology Co., Ltd.
+  - 原图：https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/63/09/b6/6309b686-19b8-5f61-7302-d30a2d4c962d/AppIcon-0-0-1x_U007emarketing-0-8-0-85-220.png/512x512bb.jpg
+- qiyou: [奇游加速器 - 全球游戏畅玩](https://apps.apple.com/cn/app/%E5%A5%87%E6%B8%B8%E5%8A%A0%E9%80%9F%E5%99%A8-%E5%85%A8%E7%90%83%E6%B8%B8%E6%88%8F%E7%95%85%E7%8E%A9/id1395152179?uo=4) · Chengdu Junyun Technology Co., Ltd.
+  - 原图：https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/92/5e/62/925e62a0-fa0f-7d19-71df-3170952ca1c7/AppIcon-0-0-1x_U007emarketing-0-8-0-85-220.png/512x512bb.jpg
+- biubiu: [biubiu加速器- 全球手游专业加速器](https://apps.apple.com/cn/app/biubiu%E5%8A%A0%E9%80%9F%E5%99%A8-%E5%85%A8%E7%90%83%E6%89%8B%E6%B8%B8%E4%B8%93%E4%B8%9A%E5%8A%A0%E9%80%9F%E5%99%A8/id1452958918?uo=4) · 广州宁静海信息科技有限公司
+  - 原图：https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/dc/bd/bf/dcbdbf12-c53a-9045-5563-614b877cead9/AppIcon-0-1x_U007emarketing-0-8-0-85-220-0.png/512x512bb.jpg
+- youku: [优酷视频-《早春晴朗》全网独播](https://apps.apple.com/cn/app/%E4%BC%98%E9%85%B7%E8%A7%86%E9%A2%91-%E6%97%A9%E6%98%A5%E6%99%B4%E6%9C%97-%E5%85%A8%E7%BD%91%E7%8B%AC%E6%92%AD/id336141475?uo=4) · Youku.com Inc.
+  - 原图：https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/be/33/e2/be33e22a-d4e2-68e9-2b6d-e26e3bf450d9/AppIcon-0-0-1x_U007emarketing-0-9-0-0-85-220.png/512x512bb.jpg
+- mango: [芒果TV](https://apps.apple.com/cn/app/%E8%8A%92%E6%9E%9Ctv/id629774477?uo=4) · 快乐阳光
+  - 原图：https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/45/bd/7d/45bd7d40-7bf5-8eae-75c5-87cf3767393c/AppIcon-0-0-1x_U007ephone-0-1-0-0-0-85-220.png/512x512bb.jpg
+- disney: [Disney+](https://apps.apple.com/us/app/disney/id1446075923?uo=4) · Disney
+  - 原图：https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/5c/46/51/5c465139-5eea-4d4e-74cb-413d18ef8a3b/AppIcon-0-0-1x_U007emarketing-0-8-0-0-0-85-220.png/512x512bb.jpg
+- prime: [Amazon Prime Video](https://apps.apple.com/us/app/amazon-prime-video/id545519333?uo=4) · AMZN Mobile LLC
+  - 原图：https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/d1/2f/0a/d12f0ab1-af3f-7edf-33ce-5eb7cf726668/AppIcon-0-0-1x_U007epad-0-1-0-0-85-220.png/512x512bb.jpg
+- appletv: [Apple TV](https://apps.apple.com/us/app/apple-tv/id1174078549?uo=4) · Apple
+  - 原图：https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/41/88/af/4188af31-d75a-23c9-f97b-486ec1ff4897/tv-0-0-1x_U007epad-0-1-0-sRGB-85-220.png/512x512bb.jpg
+- wps: [WPS Office - 智能AI办公助手](https://apps.apple.com/cn/app/wps-office-%E6%99%BA%E8%83%BDai%E5%8A%9E%E5%85%AC%E5%8A%A9%E6%89%8B/id599852710?uo=4) · 金山办公软件
+  - 原图：https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/3a/b1/95/3ab19544-8745-f31d-d603-855770e470d0/AppIcon-0-0-1x_U007epad-0-1-0-sRGB-0-0-85-220.png/512x512bb.jpg
+- notion: [Notion: Notes, Tasks, AI](https://apps.apple.com/us/app/notion-notes-tasks-ai/id1232780281?uo=4) · Notion Labs, Incorporated
+  - 原图：https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/2e/aa/40/2eaa406d-99e0-e722-530a-ce20259f3834/AppIconProd-0-0-1x_U007epad-0-0-0-1-0-0-P3-85-220.png/512x512bb.jpg
+- canva: [Canva AI Photo & Video Editor](https://apps.apple.com/us/app/canva-ai-photo-video-editor/id897446215?uo=4) · Canva
+  - 原图：https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/78/26/b6/7826b612-9973-e381-1b11-f7fe8ec24f4e/AppIcon-0-0-1x_U007epad-0-11-0-85-220.png/512x512bb.jpg
+- adobe: [Acrobat Reader: PDF Editor](https://apps.apple.com/us/app/acrobat-reader-pdf-editor/id469337564?uo=4) · Adobe Inc.
+  - 原图：https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/0f/10/55/0f105586-d26a-1d8e-518a-5319b7f89cef/ReleaseAppIcon-0-0-1x_U007emarketing-0-8-0-sRGB-85-220.png/512x512bb.jpg
+- capcut: [剪映 - 抖音官方AI创作神器](https://apps.apple.com/cn/app/%E5%89%AA%E6%98%A0-%E6%8A%96%E9%9F%B3%E5%AE%98%E6%96%B9ai%E5%88%9B%E4%BD%9C%E7%A5%9E%E5%99%A8/id1458072671?uo=4) · 深圳市脸萌科技有限公司
+  - 原图：https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/a9/59/b6/a959b69f-0c24-915a-5a31-00de1aad3b7f/AppIcon-0-0-1x_U007emarketing-0-8-0-85-220.png/512x512bb.jpg
+- ximalaya: [喜马拉雅「听书社区」电台有声小说相声评书](https://apps.apple.com/cn/app/%E5%96%9C%E9%A9%AC%E6%8B%89%E9%9B%85-%E5%90%AC%E4%B9%A6%E7%A4%BE%E5%8C%BA-%E7%94%B5%E5%8F%B0%E6%9C%89%E5%A3%B0%E5%B0%8F%E8%AF%B4%E7%9B%B8%E5%A3%B0%E8%AF%84%E4%B9%A6/id876336838?uo=4) · Xi Da (Shanghai) Network Technology Co., Ltd.
+  - 原图：https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/34/20/88/342088d9-fbc1-020b-c0b8-454753a80936/AppIcon-0-0-1x_U007emarketing-0-8-0-sRGB-85-220.png/512x512bb.jpg
+- kugou: [酷狗音乐 - 就是歌多](https://apps.apple.com/cn/app/%E9%85%B7%E7%8B%97%E9%9F%B3%E4%B9%90-%E5%B0%B1%E6%98%AF%E6%AD%8C%E5%A4%9A/id472208016?uo=4) · Guangzhou KuGou Technology CO. , LTD
+  - 原图：https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/a8/91/db/a891dbd8-42b5-938b-af09-5535345daa0e/AppIcon-0-0-1x_U007ephone-0-1-85-220.png/512x512bb.jpg
+- bobo: [哔哩哔哩漫画-看漫画小说大全](https://apps.apple.com/cn/app/%E5%93%94%E5%93%A9%E5%93%94%E5%93%A9%E6%BC%AB%E7%94%BB-%E7%9C%8B%E6%BC%AB%E7%94%BB%E5%B0%8F%E8%AF%B4%E5%A4%A7%E5%85%A8/id1426252715?uo=4) · Shanghai Hehehe Culture Communication Co.,Ltd
+  - 原图：https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/07/d5/1f/07d51faa-78bc-c350-9eee-0a09528f0028/AppIcon-0-0-1x_U007emarketing-0-8-0-85-220.png/512x512bb.jpg
+- kling: [可灵AI - AI图片&视频创作工具](https://apps.apple.com/cn/app/%E5%8F%AF%E7%81%B5ai-ai%E5%9B%BE%E7%89%87-%E8%A7%86%E9%A2%91%E5%88%9B%E4%BD%9C%E5%B7%A5%E5%85%B7/id6670396916?uo=4) · Beijing Kwai Technology Co., Ltd.
+  - 原图：https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/61/5b/2a/615b2a1b-d8d7-a14d-4c08-67b9ece0d57a/AppIconKlingapp-0-0-1x_U007epad-0-1-0-sRGB-85-220.png/512x512bb.jpg
+- uuconsole: [UU主机加速器-完美支持NS/PS/Xbox/Steam加速](https://apps.apple.com/cn/app/uu%E4%B8%BB%E6%9C%BA%E5%8A%A0%E9%80%9F%E5%99%A8-%E5%AE%8C%E7%BE%8E%E6%94%AF%E6%8C%81ns-ps-xbox-steam%E5%8A%A0%E9%80%9F/id1440256574?uo=4) · Hangzhou Bobo Technology Co Ltd
+  - 原图：https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/cf/0b/50/cf0b5052-3b68-b69b-2474-5c076e8876e1/AppIcon-0-0-1x_U007ephone-0-11-0-85-220.png/512x512bb.jpg

@@ -54,7 +54,7 @@ class MainActivityDeviceTest {
         // The FAB has no scroll ancestor; other form controls do.
         compose.onNodeWithContentDescription("记一笔订阅").performClick()
         fill("订阅 / 套餐名称", "设备录入套餐")
-        fill("套餐价格（不分摊给权益）", "36.80")
+        fill("套餐价格", "36.80")
         fill("原始扣款日期 YYYY-MM-DD", "2026-09-01")
         fill("权益 1 名称", "设备录入权益")
         fill("到期日期 YYYY-MM-DD", "2026-10-01")
@@ -69,7 +69,7 @@ class MainActivityDeviceTest {
         click("设备录入套餐")
         click("编辑订阅与到期日")
         fill("订阅 / 套餐名称", "已编辑套餐")
-        fill("套餐价格（不分摊给权益）", "48.00")
+        fill("套餐价格", "48.00")
         fill("权益 1 名称", "已编辑权益")
         fill("到期日期 YYYY-MM-DD", "2026-11-15")
         click("保存订阅")
@@ -100,7 +100,7 @@ class MainActivityDeviceTest {
     @Test fun monthEndSubscriptionKeepsOriginalAnchorThroughEarlyRenewalAndGift() {
         compose.onNodeWithContentDescription("记一笔订阅").performClick()
         fill("订阅 / 套餐名称", "月末续费套餐")
-        fill("套餐价格（不分摊给权益）", "30.00")
+        fill("套餐价格", "30.00")
         fill("原始扣款日期 YYYY-MM-DD", "2024-01-31")
         fill("权益 1 名称", "月末权益")
         fill("到期日期 YYYY-MM-DD", "2024-02-29")
@@ -134,14 +134,97 @@ class MainActivityDeviceTest {
     @Test fun invalidFormRemainsEditableAndDoesNotWriteAnyLedgerRecords() {
         compose.onNodeWithContentDescription("记一笔订阅").performClick()
         fill("订阅 / 套餐名称", "无效金额测试")
-        fill("套餐价格（不分摊给权益）", "不是金额")
+        fill("套餐价格", "不是金额")
         click("保存订阅")
         compose.onNodeWithText("请检查名称、金额、周期和日期：", substring = true).assertExists()
         assertEquals(Ledger(), runBlocking { app.repository.read() })
-        fill("套餐价格（不分摊给权益）", "10.00")
+        fill("套餐价格", "10.00")
         click("保存订阅")
         val saved = awaitLedger { it.plans.size == 1 }
         assertEquals("10.00", saved.plans.single().amount)
         assertEquals(1, saved.payments.size)
     }
+    private fun screenshot(name: String) {
+        compose.waitForIdle()
+        android.os.SystemClock.sleep(400) // Let Android window/compositor animations settle before screenshot.
+        val bitmap=androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()
+        java.io.File(app.filesDir,"$name.png").outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG,100,it) }
+        bitmap.recycle()
+    }
+
+    @Test fun catalogForeignPaymentAndRenewalFreezeSeparateSettlementAmounts() {
+        compose.onNodeWithContentDescription("记一笔订阅").performClick()
+        click("选择常见会员")
+        screenshot("catalog")
+        compose.onNode(hasText("搜索会员") and hasSetTextAction()).performTextReplacement("ChatGPT")
+        compose.onNode(hasText("ChatGPT") and hasClickAction() and !hasSetTextAction()).performClick()
+        compose.onNode(hasText("订阅 / 套餐名称") and hasSetTextAction()).assertTextContains("ChatGPT")
+        fill("套餐价格","20")
+        click("保存订阅")
+        assertTrue(runBlocking { app.repository.read() }.payments.isEmpty())
+        fill("人民币实付金额","142.80")
+        click("保存订阅")
+        val saved=awaitLedger { it.payments.size==1 }
+        assertEquals("USD",saved.payments.single().currency)
+        assertEquals("142.80",saved.payments.single().cnyAmount)
+        compose.onNodeWithText("订阅",substring=false).performClick()
+        click("ChatGPT")
+        click("记录付款 / 提前续费")
+        fill("人民币实付金额","145.60")
+        compose.onNodeWithText("确认付款").performClick()
+        val renewed=awaitLedger { it.payments.size==2 }
+        assertEquals("142.80",renewed.payments.first().cnyAmount)
+        assertEquals("145.60",renewed.payments.last().cnyAmount)
+        runBlocking { app.repository.update { it.copy(settings=it.settings.copy(rates=mapOf("USD" to "99"))) } }
+        compose.activityRule.scenario.recreate();compose.waitForIdle()
+        click("返回")
+        compose.onNodeWithText("账本",substring=false).performClick()
+        compose.onNodeWithText("¥288.40",substring=false).assertExists()
+        screenshot("frozen-receipts")
+    }
+
+    @Test fun legacyPaymentCanBeCompletedOnceAndRestoredWithoutRateRecalculation() {
+        val payment=Payment(planId="deleted",planName="Netflix",amount="15",currency="USD",date=java.time.LocalDate.now().toString())
+        runBlocking { app.repository.update { Ledger(payments=listOf(payment),settings=Settings(rates=mapOf("USD" to "7"))) } }
+        compose.waitForIdle()
+        compose.onNodeWithText("账本",substring=false).performClick()
+        click("补录人民币")
+        compose.onNode(hasText("人民币实付金额") and hasSetTextAction()).performTextReplacement("108.50")
+        compose.onNodeWithText("保存金额").performClick()
+        val completed=awaitLedger { it.payments.singleOrNull()?.cnyAmount=="108.50" }
+        val restored=Book.decode(Book.encode(completed))
+        runBlocking { app.repository.restore(restored) }
+        compose.activityRule.scenario.recreate();compose.waitForIdle()
+        compose.onAllNodesWithText("¥108.50",substring=false).assertCountEquals(2)
+        compose.onNodeWithText("补录人民币").assertDoesNotExist()
+    }
+
+    @Test fun subscriptionRowsExposeServiceIconsAndExpiryWithCompactLayout() {
+        val today=java.time.LocalDate.now()
+        val names=listOf("哔哩哔哩大会员","网易云音乐","ChatGPT","哈啰单车","OneDrive")
+        val plans=names.mapIndexed { i,name->Plan(id="visual-$i",name=name,amount=listOf("25","18","20","15","10")[i],currency=if(i==2) "USD" else "CNY",billingAnchor=today.minusDays(27-i.toLong()).toString()) }
+        val benefits=plans.mapIndexed { i,p->Benefit(planId=p.id,name=p.name,anchor=today.plusDays(i*3L+1).toString()) }
+        runBlocking { app.repository.update { Ledger(plans=plans,benefits=benefits,payments=listOf(Payment(planId="visual-2",planName="ChatGPT",amount="20",currency="USD",date=today.minusDays(1).toString(),cnyAmount="142.80"))) } }
+        compose.waitForIdle()
+        compose.onNodeWithText("最近到期").assertExists()
+        compose.waitUntil(5000) { compose.onAllNodesWithText("哔哩哔哩大会员").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithText("¥210.80",substring=false).assertExists()
+        screenshot("overview-v1.1")
+        compose.onNodeWithText("订阅",substring=false).performClick()
+        compose.onNodeWithText("哔哩哔哩大会员").assertExists()
+        screenshot("subscriptions-v1.1")
+    }
+
+    @Test fun acceleratorCatalogHasRealEntriesAndFiltersByCategory() {
+        compose.onNodeWithContentDescription("记一笔订阅").performClick()
+        click("选择常见会员")
+        compose.onNode(hasText("游戏加速") and hasClickAction()).performClick()
+        compose.onNode(hasText("搜索会员") and hasSetTextAction()).performTextReplacement("小黑盒")
+        compose.onNode(hasText("小黑盒加速器") and hasClickAction() and !hasSetTextAction()).performClick()
+        compose.onNode(hasText("订阅 / 套餐名称") and hasSetTextAction()).assertTextContains("小黑盒加速器")
+        fill("套餐价格","15")
+        click("保存订阅")
+        awaitLedger { it.plans.singleOrNull()?.name=="小黑盒加速器" }
+    }
+
 }

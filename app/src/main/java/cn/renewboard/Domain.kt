@@ -7,6 +7,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonArray
 import java.math.BigDecimal
+import java.math.MathContext
 import java.time.Instant
 import java.time.LocalDate
 import java.util.Currency
@@ -25,7 +26,8 @@ fun newId() = UUID.randomUUID().toString()
 )
 @Serializable data class Payment(
     val id: String = newId(), val planId: String, val planName: String, val amount: String,
-    val currency: String, val date: String, val note: String = "", val benefitIds: List<String> = emptyList()
+    val currency: String, val date: String, val note: String = "", val benefitIds: List<String> = emptyList(),
+    val cnyAmount: String? = null
 )
 @Serializable data class Settings(val reminderDays: List<Int> = listOf(3, 0), val rates: Map<String, String> = emptyMap())
 @Serializable data class Ledger(val plans: List<Plan> = emptyList(), val benefits: List<Benefit> = emptyList(), val payments: List<Payment> = emptyList(), val settings: Settings = Settings())
@@ -59,15 +61,42 @@ object Book {
         }
         return totals
     }
+    // Forecast uses the latest recorded settlement ratio for each plan, not mutable settings rates.
+    fun forecastCny(l: Ledger, from: LocalDate, until: LocalDate): BigDecimal? {
+        var total = BigDecimal.ZERO
+        l.plans.forEach { plan ->
+            val amount = forecast(l.copy(plans = listOf(plan)), from, until)[plan.currency] ?: return@forEach
+            if (plan.currency == "CNY" || amount.signum() == 0) {
+                total += amount
+            } else {
+                val payment = l.payments.withIndex().filter { (_, p) ->
+                    p.planId == plan.id && p.currency == plan.currency && p.cnyAmount != null &&
+                        BigDecimal(p.amount).signum() > 0 && LocalDate.parse(p.date) <= from
+                }.maxWithOrNull(compareBy<IndexedValue<Payment>> { LocalDate.parse(it.value.date) }.thenBy { it.index })?.value
+                    ?: return null
+                total += amount.multiply(BigDecimal(payment.cnyAmount!!))
+                    .divide(BigDecimal(payment.amount), MathContext.DECIMAL128)
+            }
+        }
+        return total
+    }
     fun paid(l: Ledger, from: LocalDate? = null, until: LocalDate? = null): Map<String, BigDecimal> =
         l.payments.filter { (from == null || LocalDate.parse(it.date) >= from) && (until == null || LocalDate.parse(it.date) < until) }
             .groupBy { it.currency }.mapValues { (_, ps) -> ps.fold(BigDecimal.ZERO) { a, p -> a + BigDecimal(p.amount) } }
+    // Historical payments use their recorded settlement amount, never today's exchange rate.
+    fun paidCny(l: Ledger, from: LocalDate? = null, until: LocalDate? = null): BigDecimal? {
+        var total = BigDecimal.ZERO
+        l.payments.filter { (from == null || LocalDate.parse(it.date) >= from) && (until == null || LocalDate.parse(it.date) < until) }
+            .forEach { p -> total += BigDecimal(if (p.currency == "CNY") p.amount else p.cnyAmount ?: return null) }
+        return total
+    }
     fun estimate(totals: Map<String, BigDecimal>, rates: Map<String, String>): BigDecimal? {
         if (totals.keys.any { it != "CNY" && !rates.containsKey(it) }) return null
         return totals.entries.fold(BigDecimal.ZERO) { a, (c, v) -> a + v * if (c == "CNY") BigDecimal.ONE else BigDecimal(rates.getValue(c)) }
     }
-    fun renew(l: Ledger, planId: String, amount: String, date: LocalDate, selected: Set<String>, note: String): Ledger {
+    fun renew(l: Ledger, planId: String, amount: String, date: LocalDate, selected: Set<String>, note: String, cnyAmount: String? = null): Ledger {
         val p = l.plans.single { it.id == planId }
+        require(p.currency == "CNY" || !cnyAmount.isNullOrBlank()) { "请填写付款当天的实际人民币金额" }
         require(selected.isNotEmpty()) { "请选择至少一项续费权益" }
         require(selected.all { id -> l.benefits.any { it.id == id && it.planId == planId } })
         val updated = l.benefits.map { b ->
@@ -77,7 +106,7 @@ object Book {
         var index = p.paidCycles
         while (advance(LocalDate.parse(p.billingAnchor), p.cycle, index.toLong() * p.interval) < date) index++
         return l.copy(plans = l.plans.map { if (it.id == p.id) it.copy(paidCycles = index + 1) else it }, benefits = updated,
-            payments = l.payments + Payment(planId = p.id, planName = p.name, amount = amount, currency = p.currency, date = date.toString(), note = note, benefitIds = selected.toList())).also(::validate)
+            payments = l.payments + Payment(planId = p.id, planName = p.name, amount = amount, currency = p.currency, date = date.toString(), note = note, benefitIds = selected.toList(), cnyAmount = if (p.currency == "CNY") null else cnyAmount)).also(::validate)
     }
     fun delete(l: Ledger, id: String) = l.copy(plans = l.plans.filterNot { it.id == id }, benefits = l.benefits.filterNot { it.planId == id }) // Preserve actual receipts.
     fun validate(l: Ledger) {
@@ -90,7 +119,7 @@ object Book {
         l.plans.forEach { require(it.name.isNotBlank() && it.name.length <= 100); money(it.amount); currency(it.currency); date(it.billingAnchor); require(it.interval in 1..120 && it.paidCycles in 0..10000) }
         l.benefits.forEach { b -> require(b.name.isNotBlank() && b.name.length <= 100 && l.plans.any { it.id == b.planId }); date(b.anchor); require(b.renewals in 0..10000 && b.giftDays in 0..36500); require(expiry(b, l.plans.single { it.id == b.planId }).year <= 2200) }
         l.plans.forEach { p -> require(l.benefits.any { it.planId == p.id }) { "每个订阅至少需要一项权益" } }
-        l.payments.forEach { money(it.amount); currency(it.currency); date(it.date); require(it.planName.isNotBlank()) }
+        l.payments.forEach { money(it.amount); it.cnyAmount?.let(::money); currency(it.currency); date(it.date); require(it.planName.isNotBlank()) }
         require(l.settings.reminderDays.distinct().size == l.settings.reminderDays.size && l.settings.reminderDays.all { it in 0..365 }) { "提醒天数应为0至365且不能重复" }
         l.settings.rates.forEach { (c, r) -> currency(c); money(r); require(BigDecimal(r) > BigDecimal.ZERO) }
     }
