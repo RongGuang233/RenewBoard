@@ -6,10 +6,9 @@ import okhttp3.Request
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 
-/** Checks public release metadata only; installing remains an explicit user action. */
-data class AppUpdate(val version: String, val notes: String, val newer: Boolean)
+/** Public release metadata; Android handles download and installation. */
+data class AppUpdate(val version: String, val notes: String, val newer: Boolean, val apkUrl: String? = null)
 object Updates {
-    const val RELEASE_PAGE = "https://github.com/RongGuang233/RenewBoard/releases/latest"
     const val API_URL = "https://api.github.com/repos/RongGuang233/RenewBoard/releases/latest"
     private val client = OkHttpClient.Builder().connectTimeout(10, TimeUnit.SECONDS).callTimeout(15, TimeUnit.SECONDS).build()
     private fun versionParts(value: String): List<Int> {
@@ -25,7 +24,13 @@ object Updates {
         val release = Json.parseToJsonElement(body).jsonObject
         require(release["draft"]?.jsonPrimitive?.booleanOrNull == false && release["prerelease"]?.jsonPrimitive?.booleanOrNull == false) { "尚无可用正式版本" }
         val tag = release.getValue("tag_name").jsonPrimitive.content
-        return AppUpdate(tag.removePrefix("v"), release["body"]?.jsonPrimitive?.contentOrNull.orEmpty(), isNewer(tag, current))
+        val version = tag.removePrefix("v")
+        val newer = isNewer(tag, current)
+        val expected = "https://github.com/RongGuang233/RenewBoard/releases/download/$tag/RenewBoard-$version-release.apk"
+        val apk = release["assets"]?.jsonArray?.firstOrNull {
+            it.jsonObject["browser_download_url"]?.jsonPrimitive?.contentOrNull == expected
+        }?.jsonObject?.get("browser_download_url")?.jsonPrimitive?.contentOrNull
+        return AppUpdate(version, release["body"]?.jsonPrimitive?.contentOrNull.orEmpty(), newer, apk)
     }
     fun check(current: String, http: OkHttpClient = client, endpoint: String = API_URL): AppUpdate {
         val request = Request.Builder().url(endpoint).header("Accept", "application/vnd.github+json").header("User-Agent", "RenewBoard/$current").build()

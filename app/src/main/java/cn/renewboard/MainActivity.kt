@@ -343,9 +343,6 @@ private fun money(totals: Map<String,BigDecimal>) = if(totals.isEmpty()) "暂无
     var preview by remember { mutableStateOf<Backup?>(null) }; var remote by remember { mutableStateOf<List<String>?>(null) }
     var disconnect by remember { mutableStateOf(false) }
     var licenseText by remember { mutableStateOf<String?>(null) }
-    var checkingUpdate by remember { mutableStateOf(false) }
-    var update by remember { mutableStateOf<AppUpdate?>(null) }
-    var updateError by remember { mutableStateOf<String?>(null) }
     val permission=rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { allowed -> message(if(allowed) "已允许通知" else "通知未授权，订阅和备份仍可使用"); Jobs.schedule(c) }
     fun operation(block:suspend ()->Unit) { scope.launch { busy=true; try { block() } catch(e:Exception) { if(e is kotlinx.coroutines.CancellationException) throw e; message(if(e is DavException) e.message ?: "WebDAV 失败" else "操作失败，请检查文件、网络或应用密码") } finally { busy=false;status=config.status;success=config.lastSuccess } } }
     val export=rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri -> if(uri!=null) operation {
@@ -377,25 +374,7 @@ private fun money(totals: Map<String,BigDecimal>) = if(totals.isEmpty()) "暂无
     }
     TextButton({disconnect=true},enabled=!busy) { Text("断开 WebDAV") }
     Section("应用更新")
-    Text("当前版本 ${BuildConfig.VERSION_NAME}",fontSize=15.sp)
-    OutlinedButton(onClick={
-        scope.launch {
-            checkingUpdate=true;updateError=null
-            try { update=withContext(Dispatchers.IO) { Updates.check(BuildConfig.VERSION_NAME) } }
-            catch(e:Exception) { if(e is kotlinx.coroutines.CancellationException) throw e; updateError=if(e is java.net.UnknownHostException || e is java.net.SocketTimeoutException) "无法连接 GitHub，请检查网络后重试" else e.message ?: "检查失败，请稍后重试" }
-            finally { checkingUpdate=false }
-        }
-    },enabled=!checkingUpdate) { if(checkingUpdate) { CircularProgressIndicator(Modifier.size(18.dp),strokeWidth=2.dp);Spacer(Modifier.width(8.dp)) }; Text(if(checkingUpdate) "正在检查…" else "检查更新") }
-    if(updateError!=null) Text(updateError!!,color=MaterialTheme.colorScheme.error)
-    if(update!=null) { val result=update!!
-        AlertDialog(onDismissRequest={update=null},title={Text(if(result.newer) "发现新版本 ${result.version}" else "当前已是最新版本")},text={Column(Modifier.heightIn(max=320.dp).verticalScroll(rememberScrollState())) {
-            Text("当前 ${BuildConfig.VERSION_NAME} · 最新发布 ${result.version}")
-            if(result.newer) { Spacer(Modifier.height(12.dp));Text(result.notes.ifBlank { "前往发布页查看更新内容。" });Hint("下载 APK 后按系统提示覆盖安装，保留本机数据。") }
-        }},confirmButton={TextButton({
-            if(result.newer) runCatching { c.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW,android.net.Uri.parse(Updates.RELEASE_PAGE))) }.onFailure { message("无法打开浏览器") }
-            update=null
-        }) { Text(if(result.newer) "前往下载" else "知道了") }},dismissButton={if(result.newer) TextButton({update=null}) { Text("稍后") }})
-    }
+    UpdateSection()
     TextButton({ operation { licenseText=withContext(Dispatchers.IO) { c.assets.list("licenses").orEmpty().sorted().joinToString("\n\n") { name -> name+"\n"+c.assets.open("licenses/$name").bufferedReader().use { it.readText() } } } } }) { Text("开源许可证") }
     if(licenseText!=null) AlertDialog(onDismissRequest={licenseText=null},title={Text("开源许可证")},text={Text(licenseText!!,Modifier.heightIn(max=420.dp).verticalScroll(rememberScrollState()),fontSize=12.sp)},confirmButton={TextButton({licenseText=null}){Text("关闭")}})
     Hint("订阅簿 1.1 · MIT")

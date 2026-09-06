@@ -21,6 +21,13 @@ class UpdatesTest {
             val request=server.takeRequest();assertNull(request.getHeader("Authorization"));assertEquals("RenewBoard/1.1.0",request.getHeader("User-Agent"))
         }
     }
+    @Test fun selectsOnlyTheProjectApkForThisRelease() {
+        val url="https://github.com/RongGuang233/RenewBoard/releases/download/v1.2.0/RenewBoard-1.2.0-release.apk"
+        fun release(asset:String)="""{"tag_name":"v1.2.0","draft":false,"prerelease":false,"assets":[{"browser_download_url":"$asset"}]}"""
+        assertEquals(url,Updates.parse(release(url),"1.1.1").apkUrl)
+        assertNull(Updates.parse(release(url.replace("1.2.0-release","1.1.0-release")),"1.1.1").apkUrl)
+        assertNull(Updates.parse(release(url.replace("github.com","example.com")),"1.1.1").apkUrl)
+    }
     @Test fun missingRateLimitedAndUnavailableReleasesAreErrors() {
         MockWebServer().use { server ->
             for(code in listOf(404,403,429,500)) {
