@@ -9,7 +9,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 
-/** Navigation-only acceptance: does not edit credentials, restore data, or invoke remote operations. */
+/** Settings acceptance uses only the debug ledger and local backup status; no remote operations. */
 @RunWith(AndroidJUnit4::class)
 class SettingsNavigationDeviceTest {
     @get:Rule val compose = createAndroidComposeRule<MainActivity>()
@@ -24,6 +24,7 @@ class SettingsNavigationDeviceTest {
         check(compose.activity.packageName.endsWith(".debug"))
         compose.onNodeWithText("设置", substring = false).performClick()
         compose.waitForIdle()
+        compose.waitForIdle(); android.os.SystemClock.sleep(400)
         val bitmap=InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()
         java.io.File(compose.activity.filesDir,"settings-home.png").outputStream().use {bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG,100,it)}
         bitmap.recycle()
@@ -64,4 +65,57 @@ class SettingsNavigationDeviceTest {
         back()
         compose.onNodeWithText("本地备份", substring = false).assertExists()
     }
+    @Test fun reminderChoicesPersistCustomDaysAndRefreshPermissionAfterResume() {
+        check(compose.activity.packageName.endsWith(".debug"))
+        val repository=compose.activity.repository()
+        val original=kotlinx.coroutines.runBlocking {repository.read()}
+        try {
+            kotlinx.coroutines.runBlocking {repository.update {it.copy(settings=it.settings.copy(reminderDays=listOf(0,3)))}}
+            compose.waitForIdle()
+            compose.onNodeWithText("设置",substring=false).performClick()
+            compose.onNodeWithText("到期提醒",substring=false).performClick()
+            compose.onNodeWithText("当天",substring=false).assertIsSelected()
+            compose.onNodeWithText("提前 1 天").performClick()
+            compose.onNode(hasText("自定义提前天数") and hasSetTextAction()).performScrollTo().performTextReplacement("14")
+            compose.onNodeWithText("添加",substring=false).performScrollTo().performClick()
+            compose.onNodeWithText("提前 14 天").assertIsSelected()
+            compose.onNodeWithText("保存提醒").performScrollTo().performClick()
+            compose.waitUntil(10000) {kotlinx.coroutines.runBlocking {repository.read()}.settings.reminderDays==listOf(0,1,3,14)}
+            compose.onNodeWithText("提前 14 天").performScrollTo().performClick()
+            compose.onNodeWithText("提前 14 天").assertDoesNotExist()
+            compose.onNodeWithText("保存提醒").performScrollTo().performClick()
+            compose.waitUntil(10000) {kotlinx.coroutines.runBlocking {repository.read()}.settings.reminderDays==listOf(0,1,3)}
+            compose.activityRule.scenario.moveToState(androidx.lifecycle.Lifecycle.State.CREATED)
+            compose.activityRule.scenario.moveToState(androidx.lifecycle.Lifecycle.State.RESUMED)
+            compose.waitForIdle()
+            val allowed=androidx.core.app.NotificationManagerCompat.from(compose.activity).areNotificationsEnabled()
+            compose.onNodeWithText(if(allowed) "系统通知：已开启" else "系统通知：未开启").performScrollTo().assertIsDisplayed()
+            compose.onNodeWithText(if(allowed) "管理通知设置" else "前往开启通知").assertExists()
+            compose.waitForIdle(); android.os.SystemClock.sleep(400)
+        val bitmap=InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()
+            java.io.File(compose.activity.filesDir,"settings-reminders.png").outputStream().use {bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG,100,it)}
+            bitmap.recycle()
+        } finally {kotlinx.coroutines.runBlocking {repository.update {it.copy(settings=original.settings)}}}
+    }
+
+    @Test fun webdavSummaryRefreshesAfterReturningFromBackground() {
+        check(compose.activity.packageName.endsWith(".debug"))
+        val prefs=compose.activity.getSharedPreferences("webdav",android.content.Context.MODE_PRIVATE)
+        val oldStatus=prefs.getString("status",null);val oldSuccess=prefs.getString("success",null)
+        try {
+            prefs.edit().putString("status","尚未备份").apply()
+            compose.onNodeWithText("设置",substring=false).performClick()
+            compose.onNodeWithText("尚未备份",substring=false).assertExists()
+            compose.activityRule.scenario.moveToState(androidx.lifecycle.Lifecycle.State.CREATED)
+            prefs.edit().putString("status","WebDAV 返回 HTTP 401，请检查地址、应用密码与网络").apply()
+            compose.activityRule.scenario.moveToState(androidx.lifecycle.Lifecycle.State.RESUMED)
+            compose.waitForIdle()
+            compose.onNodeWithText("最近备份失败").assertExists()
+            compose.onNodeWithText("本地备份",substring=false).performClick()
+            prefs.edit().putString("status","备份成功").putString("success","2026-09-07T00:00:00Z").apply()
+            compose.onNodeWithText("返回",substring=false).performClick()
+            compose.onNodeWithText("最近成功",substring=true).assertExists()
+        } finally {prefs.edit().putString("status",oldStatus).putString("success",oldSuccess).apply()}
+    }
+
 }

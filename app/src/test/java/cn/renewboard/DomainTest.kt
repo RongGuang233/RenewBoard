@@ -256,4 +256,90 @@ class DomainTest {
         rejects { Book.encode(ledger().copy(settings = Settings(listOf(0, 0)))) }
         rejects { Book.encode(ledger().copy(settings = Settings(rates = mapOf("USD" to "0")))) }
     }
+    @Test fun lateRenewalRestartsBillingAndExpiryTogether() {
+        val p=plan().copy(billingAnchor="2024-01-01")
+        val b=benefit(anchor="2024-01-01").copy(renewals=1)
+        val renewed=Book.renew(ledger(p,b),p.id,"30",date("2024-02-10"),setOf(b.id),"重新开通")
+        assertEquals("2024-02-10",renewed.plans.single().billingAnchor)
+        assertEquals(1,renewed.plans.single().paidCycles)
+        assertEquals(date("2024-03-10"),Book.expiry(renewed.benefits.single(),renewed.plans.single()))
+        assertEquals(date("2024-03-10"),Book.nextCharge(renewed.plans.single(),date("2024-02-10")))
+    }
+
+    @Test fun payingAnOverdueOriginalCycleDoesNotSkipAnotherCycle() {
+        val p=plan().copy(billingAnchor="2024-01-01")
+        val b=benefit(anchor="2024-01-01").copy(renewals=1)
+        val renewed=Book.renew(ledger(p,b),p.id,"30",date("2024-02-10"),setOf(b.id),"补交原周期",restart=false)
+        assertEquals(p.billingAnchor,renewed.plans.single().billingAnchor)
+        assertEquals(2,renewed.plans.single().paidCycles)
+        assertEquals(date("2024-03-01"),Book.expiry(renewed.benefits.single(),renewed.plans.single()))
+        assertEquals(date("2024-03-01"),Book.nextCharge(renewed.plans.single(),date("2024-02-10")))
+    }
+
+    @Test fun restartingOneJointBenefitLeavesOtherExpiryAndGiftIntact() {
+        val p=plan().copy(billingAnchor="2024-01-01")
+        val selected=benefit("first","2024-01-01").copy(renewals=1)
+        val other=benefit("other","2024-01-01").copy(renewals=3,giftDays=5)
+        val original=ledger(p,selected).copy(benefits=listOf(selected,other))
+        val renewed=Book.renew(original,p.id,"30",date("2024-02-10"),setOf(selected.id),"重新开通")
+        assertEquals(other,renewed.benefits.last())
+        assertEquals(Book.expiry(other,p),Book.expiry(renewed.benefits.last(),renewed.plans.single()))
+        assertEquals(date("2024-03-10"),Book.expiry(renewed.benefits.first(),renewed.plans.single()))
+    }
+
+    @Test fun recordingHistoricalPaymentLeavesScheduleAndBenefitsUnchanged() {
+        val original=ledger()
+        val recorded=Book.recordPayment(original,"p","15",date("2024-01-10"),"补记旧账")
+        assertEquals(original.plans,recorded.plans)
+        assertEquals(original.benefits,recorded.benefits)
+        assertEquals("2024-01-10",recorded.payments.single().date)
+        assertTrue(recorded.payments.single().benefitIds.isEmpty())
+        money("15",Book.paidCny(recorded))
+        assertTrue(original.payments.isEmpty())
+    }
+
+    @Test fun correctingForeignReceiptKeepsItsIdentityAndDoesNotRenew() {
+        val original=Book.renew(ledger(plan().copy(currency="USD")),"p","20",date("2024-02-01"),setOf("b"),"",cnyAmount="1428")
+        val receipt=original.payments.single()
+        val corrected=Book.editPayment(original,receipt.id,"19",date("2024-01-31"),"更正手误","142.80")
+        assertEquals(original.plans,corrected.plans)
+        assertEquals(original.benefits,corrected.benefits)
+        assertEquals(receipt.id,corrected.payments.single().id)
+        assertEquals(receipt.benefitIds,corrected.payments.single().benefitIds)
+        assertEquals("2024-01-31",corrected.payments.single().date)
+        assertEquals("更正手误",corrected.payments.single().note)
+        money("142.80",Book.paidCny(corrected.copy(settings=Settings(rates=mapOf("USD" to "99")))))
+        rejects {Book.editPayment(original,receipt.id,"19",date("2024-01-31"),"",null)}
+        rejects {Book.editPayment(original,receipt.id,"-1",date("2024-01-31"),"","142.80")}
+    }
+
+    @Test fun phoneReceiptCorrectionsKeepTypeAndBalanceWhileOrdinaryNotesCannotChangeType() {
+        val p=plan().copy(balanceAccount=BalanceAccount("150","2024-01-01"))
+        for(type in listOf("话费充值","话费扣费","话费额外扣费")) {
+            val payment=Payment(planId=p.id,planName=p.name,amount="100",currency="CNY",date="2024-02-01",note=type)
+            val original=Ledger(plans=listOf(p),payments=listOf(payment))
+            val corrected=Book.editPayment(original,payment.id,"80",date("2024-02-02"),type)
+            assertEquals(original.plans,corrected.plans)
+            assertEquals(type,corrected.payments.single().note)
+            rejects {Book.editPayment(original,payment.id,"80",date("2024-02-02"),"普通备注")}
+            rejects {Book.recordPayment(ledger(),"p","10",date("2024-01-10"),type)}
+        }
+        val ordinary=Book.recordPayment(ledger(),"p","10",date("2024-01-10"))
+        rejects {Book.editPayment(ordinary,ordinary.payments.single().id,"10",date("2024-01-10"),"话费充值")}
+    }
+
+    @Test fun forecastSummaryRetainsKnownMoneyAndNamesOnlyUnpricedActivePlans() {
+        val cny=plan().copy(billingAnchor="2024-01-01")
+        val usd=cny.copy(id="usd",currency="USD",amount="20")
+        val unknown=usd.copy(id="unpriced")
+        val l=Ledger(plans=listOf(cny,usd,unknown,unknown.copy(id="archived",archived=true),unknown.copy(id="manual",autoRenew=false)),
+            payments=listOf(Payment(planId=usd.id,planName=usd.name,amount="20",currency="USD",date="2024-01-01",cnyAmount="140")))
+        val summary=Book.forecastSummary(l,date("2024-02-01"),date("2024-03-01"))
+        money("170",summary.known)
+        assertEquals(listOf("unpriced"),summary.missingPlanIds)
+        assertNull(Book.forecastCny(l,date("2024-02-01"),date("2024-03-01")))
+        val empty=Book.forecastSummary(l,date("2024-02-01"),date("2024-02-01"))
+        money("0",empty.known);assertTrue(empty.missingPlanIds.isEmpty())
+    }
+
 }

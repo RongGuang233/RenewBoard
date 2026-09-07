@@ -5,7 +5,7 @@ import java.time.LocalDate
 import java.time.temporal.ChronoUnit
 
 enum class TrendRange(val label: String) {
-    MONTH("近1月"), THREE("3月"), SIX("6月"), TWELVE("12月"), YEAR("1年"), FIVE("5年"), ALL("全部")
+    MONTH("近30天"), THREE("近3个月"), SIX("近6个月"), TWELVE("近12个月"), YEAR("按年"), FIVE("近5年"), ALL("全部")
 }
 
 data class CashSummary(val known: BigDecimal, val missing: Int, val count: Int)

@@ -147,4 +147,16 @@ class LedgerStatsTest {
         assertEquals(batch, Book.deletePayments(batch, setOf("one", "topup")))
         Book.validate(batch)
     }
+    @Test fun correctingReceiptMovesSpendingToItsCorrectDateWithoutChangingBenefits() {
+        val original=ledger()
+        val corrected=Book.editPayment(original,"one","35",d("2026-03-02"),"日期金额更正")
+        val buckets=LedgerStats.buckets(Prepaid.expenses(corrected),TrendRange.THREE,d("2026-03-07"))
+        assertEquals(listOf("2026/1","2026/2","2026/3"),buckets.map {it.label})
+        money("0",buckets[0].summary.known)
+        money("20",buckets[1].summary.known)
+        money("35",buckets[2].summary.known)
+        assertEquals(original.plans,corrected.plans)
+        assertEquals(original.benefits,corrected.benefits)
+    }
+
 }

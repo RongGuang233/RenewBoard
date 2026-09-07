@@ -1,11 +1,15 @@
 package cn.renewboard
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ExpandMore
+import androidx.compose.material.icons.outlined.ChevronLeft
+import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -14,7 +18,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import java.time.LocalDate
 import java.time.YearMonth
 
@@ -28,12 +34,13 @@ import java.time.YearMonth
     val date = LocalDate.parse(selected)
     val month = YearMonth.from(date)
     fun setMonth(year: Int, month: Int) {
+        if(year !in 1900..2200) return
         val target = YearMonth.of(year, month)
         selected = target.atDay(date.dayOfMonth.coerceAtMost(target.lengthOfMonth())).toString()
         panel = "day"
     }
     AlertDialog(onDismissRequest=dismiss, title={ Text("选择$label") }, text={
-        Column {
+        Column(Modifier.heightIn(max=480.dp).verticalScroll(rememberScrollState())) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement=Arrangement.spacedBy(12.dp)) {
                 OutlinedButton(onClick={panel="year"},modifier=Modifier.weight(1f).semantics {contentDescription="选择年份"},contentPadding=PaddingValues(8.dp)) {
                     Text("${date.year} 年"); Icon(Icons.Outlined.ExpandMore,null)
@@ -42,7 +49,11 @@ import java.time.YearMonth
                     Text("${date.monthValue} 月"); Icon(Icons.Outlined.ExpandMore,null)
                 }
             }
-            Spacer(Modifier.height(12.dp))
+            Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween,verticalAlignment=Alignment.CenterVertically) {
+                IconButton(onClick={val previous=month.minusMonths(1);setMonth(previous.year,previous.monthValue)},enabled=month>YearMonth.of(1900,1)) {Icon(Icons.Outlined.ChevronLeft,"上个月")}
+                TextButton(onClick={selected=LocalDate.now().toString();panel="day"}) {Text("今天")}
+                IconButton(onClick={val next=month.plusMonths(1);setMonth(next.year,next.monthValue)},enabled=month<YearMonth.of(2200,12)) {Icon(Icons.Outlined.ChevronRight,"下个月")}
+            }
             when(panel) {
                 "year" -> {
                     val state = rememberLazyGridState(initialFirstVisibleItemIndex=((date.year-1900)/3)*3)
@@ -57,7 +68,7 @@ import java.time.YearMonth
                         TextButton(onClick={setMonth(date.year,number)},modifier=Modifier.height(64.dp)) {Text("$number 月",fontWeight=if(number==date.monthValue) FontWeight.Bold else FontWeight.Normal)}
                     }
                 }
-                else -> Column(Modifier.height(294.dp)) {
+                else -> Column(Modifier.height(324.dp)) {
                     Row { listOf("一","二","三","四","五","六","日").forEach { day ->
                         Box(Modifier.weight(1f).height(36.dp),contentAlignment=Alignment.Center) {Text(day,color=MaterialTheme.colorScheme.onSurfaceVariant)}
                     } }
@@ -65,13 +76,13 @@ import java.time.YearMonth
                     repeat(6) { week -> Row {
                         repeat(7) { weekday ->
                             val number=week*7+weekday-offset+1
-                            Box(Modifier.weight(1f).height(42.dp),contentAlignment=Alignment.Center) {
+                            Box(Modifier.weight(1f).height(48.dp),contentAlignment=Alignment.Center) {
                                 if(number in 1..month.lengthOfMonth()) Surface(
                                     modifier=Modifier.size(38.dp).semantics {contentDescription="${date.year}年${date.monthValue}月${number}日"}.clickable {selected=month.atDay(number).toString()},
                                     shape=CircleShape,
                                     color=if(number==date.dayOfMonth) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceContainerHigh,
                                     contentColor=if(number==date.dayOfMonth) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface
-                                ) { Box(contentAlignment=Alignment.Center) {Text(number.toString())} }
+                                ) { Box(contentAlignment=Alignment.Center) {Text(number.toString(),modifier=Modifier.fillMaxWidth(),textAlign=TextAlign.Center,fontSize=14.sp,lineHeight=18.sp,maxLines=1,softWrap=false)} }
                             }
                         }
                     } }

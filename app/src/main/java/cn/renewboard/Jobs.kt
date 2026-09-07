@@ -72,6 +72,16 @@ object Jobs {
         work.enqueueUniquePeriodicWork("backup-periodic",ExistingPeriodicWorkPolicy.KEEP,PeriodicWorkRequestBuilder<BackupWorker>(12,TimeUnit.HOURS).setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()).build())
         work.enqueueUniqueWork("reminder-now",ExistingWorkPolicy.KEEP,OneTimeWorkRequestBuilder<ReminderWorker>().build())
     }
+    fun detailIntent(c:Context,planId:String,action:String="open"):PendingIntent {
+        val intent=Intent(c,MainActivity::class.java).setData(android.net.Uri.parse("renewboard://subscription/${android.net.Uri.encode(planId)}/$action"))
+            .putExtra("planId",planId).putExtra("subscriptionAction",action)
+            .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        return PendingIntent.getActivity(c,0,intent,PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+    }
+    fun snooze(c:Context,planId:String) {
+        WorkManager.getInstance(c).enqueueUniqueWork("snooze-$planId",ExistingWorkPolicy.REPLACE,
+            OneTimeWorkRequestBuilder<SnoozeReminderWorker>().setInitialDelay(1,TimeUnit.DAYS).setInputData(workDataOf("planId" to planId)).build())
+    }
     fun backup(c: Context) {
         if(!CredentialsStore(c).configured) return
         WorkManager.getInstance(c).enqueueUniqueWork("backup-changes",ExistingWorkPolicy.REPLACE,OneTimeWorkRequestBuilder<BackupWorker>().setInitialDelay(30,TimeUnit.SECONDS).setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()).build())
@@ -103,8 +113,8 @@ class ReminderWorker(c: Context, p: WorkerParameters): CoroutineWorker(c,p) {
             val p = l.plans.single { it.id == b.planId }; val key = Book.reminderKey(b,p,today)
             if(repo.db.book().claim(ReminderRow(key,today.toString())) != -1L) {
                 try {
-                    val intent = PendingIntent.getActivity(c,0,Intent(c,MainActivity::class.java),PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-                    nm.notify(key,0,NotificationCompat.Builder(c,"expiry").setSmallIcon(R.drawable.ic_launcher).setContentTitle("${b.name} 即将到期").setContentText("${Book.expiry(b,p)} · ${p.name}").setContentIntent(intent).setAutoCancel(true).build())
+                    val intent = Jobs.detailIntent(c,p.id)
+                    nm.notify(key,0,NotificationCompat.Builder(c,"expiry").setSmallIcon(R.drawable.ic_launcher).setContentTitle("${b.name} 即将到期").setContentText("${Book.expiry(b,p)} · ${p.name}").setContentIntent(intent).addAction(0,"确认已扣款",Jobs.detailIntent(c,p.id,"pay")).addAction(0,"明天提醒",Jobs.detailIntent(c,p.id,"snooze")).setAutoCancel(true).build())
                 } catch(e: SecurityException) { repo.db.book().release(key) }
             }
         }
@@ -113,13 +123,27 @@ class ReminderWorker(c: Context, p: WorkerParameters): CoroutineWorker(c,p) {
             val key="balance:${p.id}:$date:$today"
             if(repo.db.book().claim(ReminderRow(key,today.toString())) != -1L) {
                 try {
-                    val intent=PendingIntent.getActivity(c,0,Intent(c,MainActivity::class.java),PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+                    val intent=Jobs.detailIntent(c,p.id)
                     nm.notify(key,0,NotificationCompat.Builder(c,"expiry").setSmallIcon(R.drawable.ic_launcher)
                         .setContentTitle("${p.name} 余额提醒").setContentText("预计 $date 余额不足，请及时充值")
-                        .setContentIntent(intent).setAutoCancel(true).build())
+                        .setContentIntent(intent).addAction(0,"明天提醒",Jobs.detailIntent(c,p.id,"snooze")).setAutoCancel(true).build())
                 } catch(e: SecurityException) { repo.db.book().release(key) }
             }
         }
+        return Result.success()
+    }
+}
+
+class SnoozeReminderWorker(c:Context,p:WorkerParameters):CoroutineWorker(c,p) {
+    override suspend fun doWork():Result {
+        val c=applicationContext
+        val id=inputData.getString("planId") ?: return Result.success()
+        val l=c.repository().read();val plan=l.plans.find{it.id==id && !it.archived} ?: return Result.success()
+        val nm=NotificationManagerCompat.from(c)
+        if(!nm.areNotificationsEnabled() || (Build.VERSION.SDK_INT>=33 && ContextCompat.checkSelfPermission(c,Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED)) return Result.success()
+        nm.createNotificationChannel(NotificationChannel("expiry","到期提醒",NotificationManager.IMPORTANCE_DEFAULT))
+        val text=if(plan.balanceAccount!=null) "查看话费余额与充值记录" else l.benefits.filter{it.planId==id}.minOfOrNull{Book.expiry(it,plan)}?.let {"到期日 $it"} ?: return Result.success()
+        try {nm.notify("snooze-$id",0,NotificationCompat.Builder(c,"expiry").setSmallIcon(R.drawable.ic_launcher).setContentTitle("${plan.name} · 稍后提醒").setContentText(text).setContentIntent(Jobs.detailIntent(c,id)).setAutoCancel(true).build())} catch(_:SecurityException) {}
         return Result.success()
     }
 }

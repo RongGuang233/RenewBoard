@@ -43,9 +43,9 @@ private fun deviceIcon(category: DeviceCategory): ImageVector = when(category) {
     DeviceCategory.EREADER -> Icons.Outlined.MenuBook
     DeviceCategory.CHAIR -> Icons.Outlined.Chair
     DeviceCategory.ROUTER -> Icons.Outlined.Router
-    DeviceCategory.AUDIO -> Icons.Outlined.Headphones
+    DeviceCategory.AUDIO -> Icons.Outlined.Speaker
     DeviceCategory.CAMERA -> Icons.Outlined.PhotoCamera
-    DeviceCategory.GAMING -> Icons.Outlined.SportsEsports
+    DeviceCategory.GAMING -> Icons.Outlined.VideogameAsset
     DeviceCategory.OTHER -> Icons.Outlined.Devices
 }
 private fun deviceMoney(value: String) = "¥" + BigDecimal(value).setScale(2, RoundingMode.HALF_UP).toPlainString()
@@ -55,6 +55,10 @@ private fun deviceMoney(value: String) = "¥" + BigDecimal(value).setScale(2, Ro
     var selectedId by rememberSaveable { mutableStateOf<String?>(null) }
     var editing by rememberSaveable { mutableStateOf(false) }
     var filter by rememberSaveable { mutableStateOf(DeviceStatus.ACTIVE.name) }
+    var search by rememberSaveable { mutableStateOf("") }
+    var sort by rememberSaveable { mutableStateOf(DeviceSort.DATE.name) }
+    var sortMenu by remember { mutableStateOf(false) }
+    var moreMenu by remember { mutableStateOf(false) }
     var deleting by remember { mutableStateOf(false) }
     val device = l.devices.find { it.id == selectedId }
     val subpage = editing || selectedId != null
@@ -64,7 +68,14 @@ private fun deviceMoney(value: String) = "¥" + BigDecimal(value).setScale(2, Ro
     BackHandler(enabled=subpage) { back() }
     Column(Modifier.fillMaxSize()) {
         if(subpage) TopAppBar(title={ Text(if(editing) if(selectedId==null) "添加设备" else "编辑设备" else "设备详情") },
-            navigationIcon={ FilledTonalIconButton(onClick=::back,modifier=Modifier.padding(start=8.dp)) { Icon(Icons.Outlined.ArrowBack,"返回") } },
+            navigationIcon={ PageBack(description="返回",back=::back) },
+            actions={ if(!editing && device!=null) Box {
+                IconButton(onClick={moreMenu=true}) {Icon(Icons.Outlined.MoreVert,"设备更多操作")}
+                DropdownMenu(expanded=moreMenu,onDismissRequest={moreMenu=false}) {
+                    DropdownMenuItem(text={Text("变更设备状态")},onClick={moreMenu=false;editing=true})
+                    DropdownMenuItem(text={Text("删除设备")},onClick={moreMenu=false;deleting=true})
+                }
+            } },
             windowInsets=WindowInsets(0,0,0,0))
         if(editing) {
             key(selectedId) { DeviceEditor(device, onSave={ saved ->
@@ -82,22 +93,23 @@ private fun deviceMoney(value: String) = "¥" + BigDecimal(value).setScale(2, Ro
                 }
                 Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween,verticalAlignment=Alignment.CenterVertically) {
                     Column {
-                        Text(if(device.status==DeviceStatus.WISHLIST) "购买预算" else "购入金额",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
-                        Text(deviceMoney(device.purchaseAmount),fontSize=26.sp,fontWeight=FontWeight.Bold,color=MaterialTheme.colorScheme.primary)
+                        Text(if(device.status==DeviceStatus.WISHLIST) "购买预算" else if(device.status==DeviceStatus.SOLD) "净花费" else "购入金额",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(deviceMoney(if(device.status==DeviceStatus.SOLD) Devices.netCost(device).toPlainString() else device.purchaseAmount),fontSize=26.sp,fontWeight=FontWeight.Bold,color=MaterialTheme.colorScheme.primary)
                     }
                     Devices.serviceDays(device)?.let { days -> Column(horizontalAlignment=Alignment.End) {
                         Text("已服役 $days 天",fontWeight=FontWeight.SemiBold)
-                        Devices.dailyCost(device)?.let { Text("日均 ${deviceMoney(it.toPlainString())}",style=MaterialTheme.typography.bodyMedium,color=MaterialTheme.colorScheme.onSurfaceVariant) }
+                        Devices.dailyCost(device)?.let { Text("日均购入成本 ${deviceMoney(it.toPlainString())}",style=MaterialTheme.typography.bodyMedium,color=MaterialTheme.colorScheme.onSurfaceVariant) }
                     } }
                 }
                 HorizontalDivider()
                 device.startDate?.let { DeviceInfo(if(device.status==DeviceStatus.WISHLIST) "计划日期" else "服役日期",it) }
                 device.endDate?.let { DeviceInfo(if(device.status==DeviceStatus.SOLD) "卖出日期" else "退役日期",it) }
+                if(device.status==DeviceStatus.SOLD) DeviceInfo("购入金额",deviceMoney(device.purchaseAmount))
                 device.saleAmount?.let { DeviceInfo("卖出金额",deviceMoney(it)) }
                 if(device.note.isNotBlank()) Text(device.note)
                 Row(horizontalArrangement=Arrangement.spacedBy(12.dp)) {
                     Button(onClick={editing=true},modifier=Modifier.weight(1f)) { Text("编辑设备") }
-                    TextButton(onClick={deleting=true}) { Text("删除设备",color=MaterialTheme.colorScheme.error) }
+
                 }
             }
         } else Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal=20.dp).padding(bottom=24.dp),verticalArrangement=Arrangement.spacedBy(10.dp)) {
@@ -105,12 +117,23 @@ private fun deviceMoney(value: String) = "¥" + BigDecimal(value).setScale(2, Ro
                 Text("我的设备",fontSize=26.sp,fontWeight=FontWeight.Bold,modifier=Modifier.weight(1f))
                 FilledTonalIconButton(onClick={selectedId=null;editing=true}) { Icon(Icons.Outlined.Add,"添加设备") }
             }
-            DeviceDropdown("",DeviceStatus.valueOf(filter).label,DeviceStatus.entries.map { it.label },"筛选设备状态") { label ->
-                filter=DeviceStatus.entries.single {it.label==label}.name
+            OutlinedTextField(value=search,onValueChange={search=it},label={Text("搜索设备")},singleLine=true,
+                leadingIcon={Icon(Icons.Outlined.Search,null)},modifier=Modifier.fillMaxWidth())
+            Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically) {
+                Box(Modifier.weight(1f)) { DeviceDropdown("",DeviceStatus.valueOf(filter).label,DeviceStatus.entries.map { it.label },"筛选设备状态") { label ->
+                    filter=DeviceStatus.entries.single {it.label==label}.name
+                } }
+                Box {
+                    IconButton(onClick={sortMenu=true}) {Icon(Icons.Outlined.Sort,"设备排序")}
+                    DropdownMenu(expanded=sortMenu,onDismissRequest={sortMenu=false}) {
+                        DeviceSort.entries.forEach {item -> DropdownMenuItem(text={Text(item.label)},onClick={sort=item.name;sortMenu=false},
+                            trailingIcon=if(sort==item.name) {{Icon(Icons.Outlined.Check,null)}} else null) }
+                    }
+                }
             }
-            val visible=l.devices.filter { it.status.name==filter }
+            val visible=Devices.list(l.devices,DeviceStatus.valueOf(filter),search,DeviceSort.valueOf(sort))
             if(visible.isEmpty()) {
-                Text("还没有${DeviceStatus.valueOf(filter).label}的设备",fontSize=18.sp,modifier=Modifier.padding(top=20.dp))
+                Text(if(search.isNotBlank()) "没有匹配的设备" else "还没有${DeviceStatus.valueOf(filter).label}的设备",fontSize=18.sp,modifier=Modifier.padding(top=20.dp))
                 Text("记录设备，看看它陪伴了你多久。",color=MaterialTheme.colorScheme.onSurfaceVariant)
             }
             visible.forEach { item ->
@@ -153,10 +176,10 @@ private fun deviceMoney(value: String) = "¥" + BigDecimal(value).setScale(2, Ro
                 status=DeviceStatus.entries.single {it.label==label}.name
             } }
         }
-        Field(if(currentStatus==DeviceStatus.WISHLIST) "购买预算（元）" else "购入金额（元）",price,{price=it})
+        MoneyField(if(currentStatus==DeviceStatus.WISHLIST) "购买预算（元）" else "购入金额（元）",price,{price=it})
         Field(if(currentStatus==DeviceStatus.WISHLIST) "计划日期（选填）" else "服役日期",start,{start=it},dateField=true)
         if(currentStatus==DeviceStatus.RETIRED || currentStatus==DeviceStatus.SOLD) Field(if(currentStatus==DeviceStatus.SOLD) "卖出日期" else "退役日期",end,{end=it},dateField=true)
-        if(currentStatus==DeviceStatus.SOLD) Field("卖出金额（元）",sale,{sale=it})
+        if(currentStatus==DeviceStatus.SOLD) MoneyField("卖出金额（元）",sale,{sale=it})
         Field("设备备注",note,{note=it})
         error?.let {Text(it,color=MaterialTheme.colorScheme.error)}
         Button(onClick={

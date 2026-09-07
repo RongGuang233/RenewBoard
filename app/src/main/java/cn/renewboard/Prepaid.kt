@@ -67,19 +67,33 @@ object Prepaid {
         if (funded > BigDecimal(ChronoUnit.MONTHS.between(YearMonth.from(first), YearMonth.of(2200, 12)))) return null
         return LocalDate.parse(p.billingAnchor).plusMonths(indexAfter(p, asOf) + funded.toLong())
     }
-    fun topUp(l: Ledger, planId: String, amount: String, date: LocalDate): Ledger {
+    fun topUp(l: Ledger, planId: String, amount: String, date: LocalDate, affectBalance: Boolean = true): Ledger {
         val original=l.plans.single { it.id==planId }
+        val account=requireNotNull(original.balanceAccount) { "请选择余额账户" }
         require(date<=LocalDate.now()) { "充值日期不能晚于今天" }
-        require(original.balanceAccount != null && date>=LocalDate.parse(original.balanceAccount.asOf)) { "充值日期不能早于最近余额记录" }
-        val settled=accrue(l,date)
-        val p = settled.plans.single { it.id == planId }
-        require(p.balanceAccount != null) { "请选择余额账户" }
-        require(date >= LocalDate.parse(p.balanceAccount.asOf)) { "充值日期不能早于余额查询日期" }
         require(BigDecimal(amount).signum() > 0) { "充值金额应大于0" }
-        val updated = p.copy(balanceAccount = BalanceAccount((balance(p, date) + BigDecimal(amount)).toPlainString(), date.toString()))
-        return settled.copy(plans = settled.plans.map { if(it.id == p.id) updated else it }, payments = settled.payments +
-            Payment(planId = p.id, planName = p.name, amount = amount, currency = "CNY", date = date.toString(), note = "话费充值"))
+        val through=maxOf(date,LocalDate.parse(account.asOf))
+        val settled=accrue(l,through)
+        val p=settled.plans.single { it.id==planId }
+        val updated=if(affectBalance) p.copy(balanceAccount=BalanceAccount(
+            (balance(p,through)+BigDecimal(amount)).toPlainString(),through.toString())) else p
+        return settled.copy(plans=settled.plans.map { if(it.id==p.id) updated else it },payments=settled.payments+
+            Payment(planId=p.id,planName=p.name,amount=amount,currency="CNY",date=date.toString(),note="话费充值"))
             .also(Book::validate)
+    }
+    fun calibrate(l:Ledger,planId:String,amount:String,date:LocalDate,recordExpense:Boolean=false):Ledger {
+        val original=l.plans.single { it.id==planId }
+        val account=requireNotNull(original.balanceAccount) { "请选择余额账户" }
+        require(date>=LocalDate.parse(account.asOf) && date<=LocalDate.now()) { "请校准最近余额日期至今天的余额" }
+        val settled=accrue(l,date)
+        val p=settled.plans.single { it.id==planId }
+        val difference=balance(p,date)-BigDecimal(amount)
+        require(!recordExpense || difference.signum()>0) { "实际余额低于估算余额时，才能将差额记为额外支出" }
+        val updated=p.copy(balanceAccount=BalanceAccount(BigDecimal(amount).toPlainString(),date.toString()))
+        val payment=if(recordExpense) Payment(planId=p.id,planName=p.name,amount=difference.toPlainString(),
+            currency="CNY",date=date.toString(),note="话费额外扣费") else null
+        return settled.copy(plans=settled.plans.map { if(it.id==p.id) updated else it },
+            payments=settled.payments+listOfNotNull(payment)).also(Book::validate)
     }
     fun due(l: Ledger, today: LocalDate): List<Plan> = l.plans.filter { p ->
         p.balanceAccount != null && !p.archived && rechargeDate(p)?.let {

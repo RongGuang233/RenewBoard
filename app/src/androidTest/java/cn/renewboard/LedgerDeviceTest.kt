@@ -43,10 +43,10 @@ class LedgerDeviceTest {
         for(range in TrendRange.entries) {
             compose.onNodeWithContentDescription("趋势范围 ${range.label}").performScrollTo().performClick()
         }
-        compose.onNodeWithContentDescription("趋势范围 1年").performScrollTo().performClick()
+        compose.onNodeWithContentDescription("趋势范围 按年").performScrollTo().performClick()
         compose.onNodeWithContentDescription("上一年").performScrollTo().performClick()
         compose.onNodeWithText("${today.year-1} 年",substring=false).assertExists()
-        compose.onNodeWithContentDescription("趋势范围 3月").performScrollTo().performClick()
+        compose.onNodeWithContentDescription("趋势范围 近3个月").performScrollTo().performClick()
         compose.onNode(hasContentDescription("${today.year}/${today.monthValue}，支出",substring=true)).performScrollTo().performClick()
         compose.onAllNodes(isDialog()).assertCountEquals(0)
         compose.onNodeWithText("${today.year}年${today.monthValue}月 · 按应用").assertExists()
@@ -99,7 +99,7 @@ class LedgerDeviceTest {
             Payment(planId="one",planName="ChatGPT",amount="40",currency="CNY",date=today.withDayOfYear(1).minusDays(1).toString())
         )
         seed(Ledger(payments=rows));compose.onNodeWithText("账本",substring=false).performClick()
-        compose.onNodeWithContentDescription("趋势范围 近1月").performScrollTo().performClick()
+        compose.onNodeWithContentDescription("趋势范围 近30天").performScrollTo().performClick()
         compose.onNode(hasContentDescription("${today.monthValue}/${today.dayOfMonth}，支出",substring=true)).performScrollTo().performClick().assertIsSelected()
         compose.onNode(hasContentDescription("ChatGPT，支出¥10.00",substring=true)).assertExists()
         compose.onAllNodes(isDialog()).assertCountEquals(0)
@@ -110,7 +110,7 @@ class LedgerDeviceTest {
             compose.onNode(hasContentDescription("ChatGPT，支出¥$amount",substring=true)).assertExists()
             compose.onAllNodes(isDialog()).assertCountEquals(0)
         }
-        compose.onNodeWithContentDescription("趋势范围 5年").performScrollTo().performClick()
+        compose.onNodeWithContentDescription("趋势范围 近5年").performScrollTo().performClick()
         compose.onNode(hasContentDescription("${today.year-1}，支出",substring=true)).performScrollTo().performClick().assertIsSelected()
         val previousYearAmount=if(today.dayOfYear==1) "60.00" else "40.00"
         compose.onNode(hasContentDescription("ChatGPT，支出¥$previousYearAmount",substring=true)).assertExists()
@@ -153,12 +153,33 @@ class LedgerDeviceTest {
         compose.onNodeWithText("1 笔 · 支出 ¥0.00",substring=false).assertExists()
         compose.onNodeWithText("¥100.00",substring=false).assertExists()
     }
+    @Test fun correctingReceiptUsesFullPageAndDoesNotRenewBenefits() {
+        val today=LocalDate.now()
+        val plan=Plan(id="editing",name="ChatGPT",amount="20",currency="USD",billingAnchor=today.minusMonths(1).toString())
+        val benefit=Benefit(id="editing-benefit",planId=plan.id,name=plan.name,anchor=today.plusMonths(1).toString())
+        val payment=Payment(planId=plan.id,planName=plan.name,amount="20",currency="USD",date=today.toString(),cnyAmount="1428")
+        seed(Ledger(plans=listOf(plan),benefits=listOf(benefit),payments=listOf(payment)))
+        compose.onNodeWithText("账本",substring=false).performClick();click("全部明细")
+        compose.onNodeWithText("ChatGPT",substring=false).performClick()
+        compose.onNodeWithText("更正付款").performScrollTo().performClick()
+        compose.onAllNodes(isDialog()).assertCountEquals(0)
+        compose.onNodeWithText("人民币实付金额").performTextReplacement("142.80")
+        compose.onNodeWithText("付款备注").performTextReplacement("更正手误")
+        compose.onNodeWithText("保存更正").performScrollTo().performClick()
+        waitFor {it.payments.single().cnyAmount=="142.80"}
+        assertEquals(listOf(plan),read().plans);assertEquals(listOf(benefit),read().benefits)
+        compose.onNodeWithText("付款详情").assertExists()
+        compose.onNodeWithText("¥142.80",substring=false).assertExists()
+        compose.onNodeWithText("更正手误").assertExists()
+    }
     @Test fun deleteSubscriptionCanExplicitlyRemoveLinkedReceipts() {
         val today=LocalDate.now();val p=Plan(name="清理测试",amount="30",billingAnchor=today.toString())
         val b=Benefit(planId=p.id,name=p.name,anchor=today.plusMonths(1).toString())
         val payment=Payment(planId=p.id,planName=p.name,amount="30",currency="CNY",date=today.toString())
         seed(Ledger(plans=listOf(p),benefits=listOf(b),payments=listOf(payment)))
-        compose.onNodeWithText("清理测试").performClick();click("删除订阅")
+        compose.onNodeWithText("清理测试").performClick()
+        compose.onNodeWithContentDescription("订阅更多操作").performClick()
+        compose.onNodeWithText("删除订阅").performClick()
         compose.onNodeWithText("同时删除付款记录（1 笔）").performClick()
         compose.onNodeWithText("删除",substring=false).performClick()
         waitFor {it.plans.isEmpty()};assertTrue(read().payments.isEmpty());assertTrue(read().benefits.isEmpty())

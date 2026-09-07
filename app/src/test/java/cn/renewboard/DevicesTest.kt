@@ -67,4 +67,23 @@ class DevicesTest {
         assertTrue(DeviceCategory.entries.map {it.label}.containsAll(listOf("鼠标","椅子","耳机","显示屏","手机","电脑","手表","平板","键盘","手柄","电纸书")))
     }
 
+    @Test fun searchAndSortRespectStatusAndNumericPricesAndServiceDays() {
+        val older=device().copy(id="older",name="旧手机",purchaseAmount="900",startDate="2026-08-01")
+        val newer=device().copy(id="newer",name="新手机",purchaseAmount="10000",startDate="2026-09-01")
+        val retired=older.copy(id="retired",status=DeviceStatus.RETIRED,endDate="2026-09-01")
+        val all=listOf(older,newer,retired)
+        assertEquals(listOf("newer","older"),Devices.list(all,DeviceStatus.ACTIVE,"手机",DeviceSort.DATE,today).map {it.id})
+        assertEquals(listOf("newer","older"),Devices.list(all,DeviceStatus.ACTIVE,"",DeviceSort.PRICE,today).map {it.id})
+        assertEquals(listOf("older","newer"),Devices.list(all,DeviceStatus.ACTIVE,"",DeviceSort.SERVICE,today).map {it.id})
+        assertTrue(Devices.list(all,DeviceStatus.ACTIVE,"不存在",DeviceSort.DATE,today).isEmpty())
+    }
+    @Test fun soldNetCostKeepsPurchaseDailyCostAndCanRepresentProfit() {
+        val sold=device().copy(status=DeviceStatus.SOLD,endDate="2026-09-03",saleAmount="2000")
+        assertEquals(BigDecimal("1000"),Devices.netCost(sold))
+        assertEquals(BigDecimal("1000.00"),Devices.dailyCost(sold,today))
+        assertEquals(BigDecimal("-1000"),Devices.netCost(sold.copy(saleAmount="4000")))
+        assertEquals("音箱",DeviceCategory.AUDIO.label)
+        assertEquals("游戏主机",DeviceCategory.GAMING.label)
+    }
+
 }

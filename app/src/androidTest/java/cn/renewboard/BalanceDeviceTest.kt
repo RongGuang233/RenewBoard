@@ -58,8 +58,12 @@ class BalanceDeviceTest {
         assertEquals(java.math.BigDecimal.ZERO,Book.paidCny(recharged))
         assertEquals(0,Prepaid.balance(recharged.plans.single(),LocalDate.now()).compareTo(java.math.BigDecimal("150")))
         compose.onNodeWithText("¥150.00").assertExists()
-        click("校准余额 / 修改月费")
-        fill("查询到的余额","125")
+        click("校准余额")
+        fill("实际余额","125")
+        compose.onNodeWithText("确认校准").performClick()
+        val corrected=await { it.plans.single().balanceAccount?.balance=="125" }
+        assertEquals(recharged.payments,corrected.payments)
+        click("修改月费")
         fill("每月扣费金额","40")
         click("保存订阅")
         val calibrated=await { it.plans.single().amount=="40" }
@@ -78,7 +82,9 @@ class BalanceDeviceTest {
         val receipt=Payment(planId=p.id,planName=p.name,amount="100",currency="CNY",date=today.toString())
         runBlocking { app.repository.update { Ledger(plans=listOf(p),benefits=listOf(b),payments=listOf(receipt)) } }
         compose.waitForIdle();compose.onNodeWithText("中国电信").performClick()
-        click("编辑订阅与到期日");click("话费余额")
+        compose.onNodeWithContentDescription("订阅更多操作").performScrollTo().performClick()
+        compose.onNodeWithText("编辑订阅与到期日").performClick()
+        click("话费余额")
         fill("查询到的余额","61")
         click("保存订阅")
         val converted=await { it.plans.single().balanceAccount!=null }
@@ -103,6 +109,34 @@ class BalanceDeviceTest {
         compose.onNodeWithText("中国移动").assertExists()
         compose.onNodeWithText("账本",substring=false).performClick()
         compose.onNodeWithText("范围支出 ¥60.00").assertExists()
+    }
+
+    @Test fun historicalRechargeRequiresExplicitBalanceChoiceAndCalibrationCanRecordExpense() {
+        val today=LocalDate.now()
+        val p=Plan(name="中国移动",amount="30",billingAnchor=today.toString(),paidCycles=0,
+            balanceAccount=BalanceAccount("100",today.toString()))
+        runBlocking {app.repository.update {Ledger(plans=listOf(p))}}
+        compose.waitForIdle();compose.onNodeWithText("中国移动").performClick()
+        click("记录充值")
+        fill("充值金额","50")
+        fill("充值日期",today.minusDays(5).toString())
+        compose.onNodeWithText("确认充值").performClick()
+        compose.onNodeWithText("请选择这笔充值是否已包含在当前余额中").assertExists()
+        assertTrue(ledger().payments.isEmpty())
+        click("已包含，仅补记充值记录")
+        compose.onNodeWithText("确认充值").performClick()
+        val history=await {it.payments.size==1}
+        assertEquals("100",history.plans.single().balanceAccount!!.balance)
+        click("校准余额")
+        fill("实际余额","85")
+        click("差额 ¥15.00 记为额外支出")
+        compose.onNodeWithText("确认校准").performClick()
+        val calibrated=await {it.payments.size==2}
+        assertEquals(java.math.BigDecimal("15"),Book.paidCny(calibrated))
+        assertEquals("85",calibrated.plans.single().balanceAccount!!.balance)
+        compose.onNodeWithText("删除订阅").assertDoesNotExist()
+        compose.onNodeWithContentDescription("更多操作").performScrollTo().performClick()
+        compose.onNodeWithText("删除订阅").assertExists()
     }
 
 }

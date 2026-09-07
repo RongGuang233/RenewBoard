@@ -51,7 +51,7 @@ class PrepaidTest {
         val l=Ledger(plans=listOf(p));assertTrue(l.payments.isEmpty())
         assertThrows(Exception::class.java) { Prepaid.topUp(l,"phone","-1",d("2024-03-02")) }
         assertThrows(Exception::class.java) { Prepaid.topUp(l,"phone","0",d("2024-03-02")) }
-        assertThrows(Exception::class.java) { Prepaid.topUp(l,"phone","1",d("2024-02-29")) }
+        money("75",Prepaid.balance(Prepaid.topUp(l,"phone","1",d("2024-02-29"),false).plans.single(),d("2024-03-01")))
         assertThrows(Exception::class.java) { Book.validate(l.copy(plans=listOf(p.copy(currency="USD")))) }
         assertThrows(Exception::class.java) { Book.validate(l.copy(plans=listOf(p.copy(balanceAccount=BalanceAccount("75",LocalDate.now().plusDays(1).toString()))))) }
         assertThrows(Exception::class.java) { Book.renew(l,"phone","40",d("2024-03-02"),emptySet(),"") }
@@ -93,6 +93,32 @@ class PrepaidTest {
         val later=Prepaid.accrue(resumed,d("2024-06-30"))
         assertEquals(listOf("2024-03-31","2024-06-30"),later.payments.map {it.date})
         money("40",Prepaid.balance(later.plans.single(),d("2024-06-30")))
+    }
+
+    @Test fun historicalTopupsCanBeRecordedWithoutRecreditingAndDoNotRewindAccrual() {
+        val advanced=Prepaid.accrue(Ledger(plans=listOf(plan())),d("2024-03-31"))
+        val recorded=Prepaid.topUp(advanced,"phone","50",d("2024-02-10"),false)
+        assertEquals(advanced.plans,recorded.plans)
+        money("90",Book.paidCny(recorded)!!)
+        val credited=Prepaid.topUp(advanced,"phone","50",d("2024-02-10"),true)
+        money("60",Prepaid.balance(credited.plans.single(),d("2024-03-31")))
+        assertEquals("2024-03-31",credited.plans.single().balanceAccount!!.asOf)
+        assertEquals(credited,Prepaid.accrue(credited,d("2024-03-31")))
+        assertEquals("2024-02-10",credited.payments.last().date)
+    }
+    @Test fun calibrationMayRecordOnlyExtraConsumptionAndKeepsMonthlyChargesOnce() {
+        val l=Ledger(plans=listOf(plan()))
+        val adjusted=Prepaid.calibrate(l,"phone","25",d("2024-02-29"))
+        money("25",Prepaid.balance(adjusted.plans.single(),d("2024-02-29")))
+        money("60",Book.paidCny(adjusted)!!)
+        val expense=Prepaid.calibrate(l,"phone","25",d("2024-02-29"),true)
+        money("75",Book.paidCny(expense)!!)
+        assertEquals("话费额外扣费",expense.payments.last().note)
+        assertEquals(expense,Prepaid.accrue(expense,d("2024-02-29")))
+        assertThrows(Exception::class.java) {Prepaid.calibrate(adjusted,"phone","25",d("2024-02-29"),true)}
+        assertThrows(Exception::class.java) {Prepaid.calibrate(adjusted,"phone","50",d("2024-02-29"),true)}
+        assertThrows(Exception::class.java) {Prepaid.calibrate(adjusted,"phone","20",d("2024-02-10"))}
+        assertEquals(expense,Book.decode(Book.encode(expense)).data)
     }
 
 }

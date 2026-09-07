@@ -30,6 +30,8 @@ fun newId() = UUID.randomUUID().toString()
     val currency: String, val date: String, val note: String = "", val benefitIds: List<String> = emptyList(),
     val cnyAmount: String? = null
 )
+data class ForecastSummary(val known: BigDecimal, val missingPlanIds: List<String>)
+
 @Serializable data class Settings(val reminderDays: List<Int> = listOf(3, 0), val rates: Map<String, String> = emptyMap())
 @Serializable data class Ledger(val plans: List<Plan> = emptyList(), val benefits: List<Benefit> = emptyList(), val payments: List<Payment> = emptyList(), val settings: Settings = Settings(), val devices: List<Device> = emptyList())
 @Serializable data class Backup(val version: Int = 1, val createdAt: String = Instant.now().toString(), val data: Ledger)
@@ -71,8 +73,9 @@ object Book {
         return totals
     }
     // Forecast uses the latest recorded settlement ratio for each plan, not mutable settings rates.
-    fun forecastCny(l: Ledger, from: LocalDate, until: LocalDate): BigDecimal? {
+    fun forecastSummary(l: Ledger, from: LocalDate, until: LocalDate): ForecastSummary {
         var total = BigDecimal.ZERO
+        val missing=mutableListOf<String>()
         l.plans.forEach { plan ->
             val amount = forecast(l.copy(plans = listOf(plan)), from, until)[plan.currency] ?: return@forEach
             if (plan.currency == "CNY" || amount.signum() == 0) {
@@ -82,13 +85,15 @@ object Book {
                     p.planId == plan.id && p.currency == plan.currency && p.cnyAmount != null &&
                         BigDecimal(p.amount).signum() > 0 && LocalDate.parse(p.date) <= from
                 }.maxWithOrNull(compareBy<IndexedValue<Payment>> { LocalDate.parse(it.value.date) }.thenBy { it.index })?.value
-                    ?: return null
+                if(payment==null) { missing += plan.id; return@forEach }
                 total += amount.multiply(BigDecimal(payment.cnyAmount!!))
                     .divide(BigDecimal(payment.amount), MathContext.DECIMAL128)
             }
         }
-        return total
+        return ForecastSummary(total,missing)
     }
+    fun forecastCny(l: Ledger, from: LocalDate, until: LocalDate): BigDecimal? =
+        forecastSummary(l,from,until).let { if(it.missingPlanIds.isEmpty()) it.known else null }
     fun paid(l: Ledger, from: LocalDate? = null, until: LocalDate? = null): Map<String, BigDecimal> =
         Prepaid.expenses(l).filter { (from == null || LocalDate.parse(it.date) >= from) && (until == null || LocalDate.parse(it.date) < until) }
             .groupBy { it.currency }.mapValues { (_, ps) -> ps.fold(BigDecimal.ZERO) { a, p -> a + BigDecimal(p.amount) } }
@@ -103,20 +108,46 @@ object Book {
         if (totals.keys.any { it != "CNY" && !rates.containsKey(it) }) return null
         return totals.entries.fold(BigDecimal.ZERO) { a, (c, v) -> a + v * if (c == "CNY") BigDecimal.ONE else BigDecimal(rates.getValue(c)) }
     }
-    fun renew(l: Ledger, planId: String, amount: String, date: LocalDate, selected: Set<String>, note: String, cnyAmount: String? = null): Ledger {
+    private val paymentTypes=setOf("话费充值","话费扣费","话费额外扣费")
+    private fun receipt(p: Plan, amount: String, date: LocalDate, note: String, cnyAmount: String?, selected: Set<String> = emptySet()): Payment {
+        require(p.currency=="CNY" || !cnyAmount.isNullOrBlank()) { "请填写付款当天的实际人民币金额" }
+        require(note.trim() !in paymentTypes) { "话费类型请通过话费账户记录" }
+        return Payment(planId=p.id,planName=p.name,amount=amount.trim(),currency=p.currency,date=date.toString(),note=note.trim(),
+            benefitIds=selected.toList(),cnyAmount=if(p.currency=="CNY") null else cnyAmount?.trim())
+    }
+    /** Add a historical receipt without extending benefits or changing a balance. */
+    fun recordPayment(l: Ledger, planId: String, amount: String, date: LocalDate, note: String = "", cnyAmount: String? = null): Ledger {
+        val p=l.plans.single { it.id==planId }
+        require(p.balanceAccount==null) { "话费账户请使用充值或余额校准" }
+        return l.copy(payments=l.payments+receipt(p,amount,date,note,cnyAmount)).also(::validate)
+    }
+    /** Correct the receipt only: the recorded benefit term and account balance remain unchanged. */
+    fun editPayment(l: Ledger, paymentId: String, amount: String, date: LocalDate, note: String, cnyAmount: String? = null): Ledger {
+        val p=l.payments.single { it.id==paymentId }
+        require(p.currency=="CNY" || !cnyAmount.isNullOrBlank()) { "请填写付款当天的实际人民币金额" }
+        val revisedNote=note.trim()
+        if(p.note in paymentTypes) require(revisedNote==p.note) { "话费记录的类型不能更改" }
+        else require(revisedNote !in paymentTypes) { "不能将普通付款改为话费类型" }
+        val revised=p.copy(amount=amount.trim(),date=date.toString(),note=revisedNote,cnyAmount=if(p.currency=="CNY") null else cnyAmount?.trim())
+        return l.copy(payments=l.payments.map { if(it.id==paymentId) revised else it }).also(::validate)
+    }
+    /** restart=null restarts only when all selected benefits have expired; false pays the original next cycle. */
+    fun renew(l: Ledger, planId: String, amount: String, date: LocalDate, selected: Set<String>, note: String, cnyAmount: String? = null, restart: Boolean? = null): Ledger {
         val p = l.plans.single { it.id == planId }
         require(p.balanceAccount == null) { "余额账户请记录充值" }
-        require(p.currency == "CNY" || !cnyAmount.isNullOrBlank()) { "请填写付款当天的实际人民币金额" }
         require(selected.isNotEmpty()) { "请选择至少一项续费权益" }
         require(selected.all { id -> l.benefits.any { it.id == id && it.planId == planId } })
-        val updated = l.benefits.map { b ->
-            if (b.id !in selected) b else if (expiry(b, p) < date) b.copy(anchor = date.toString(), renewals = 1, giftDays = 0) else b.copy(renewals = b.renewals + 1)
+        val payment=receipt(p,amount,date,note,cnyAmount,selected)
+        val reopening=restart ?: l.benefits.filter {it.id in selected}.all {expiry(it,p)<date}
+        val updated=l.benefits.map { b ->
+            when {
+                b.id !in selected -> b
+                reopening -> b.copy(anchor=date.toString(),renewals=1,giftDays=0)
+                else -> b.copy(renewals=b.renewals+1)
+            }
         }
-        // A prepaid package advances the original billing schedule; money is recorded only once.
-        var index = p.paidCycles
-        while (advance(LocalDate.parse(p.billingAnchor), p.cycle, index.toLong() * p.interval) < date) index++
-        return l.copy(plans = l.plans.map { if (it.id == p.id) it.copy(paidCycles = index + 1) else it }, benefits = updated,
-            payments = l.payments + Payment(planId = p.id, planName = p.name, amount = amount, currency = p.currency, date = date.toString(), note = note, benefitIds = selected.toList(), cnyAmount = if (p.currency == "CNY") null else cnyAmount)).also(::validate)
+        val renewedPlan=if(reopening) p.copy(billingAnchor=date.toString(),paidCycles=1) else p.copy(paidCycles=p.paidCycles+1)
+        return l.copy(plans=l.plans.map {if(it.id==p.id) renewedPlan else it},benefits=updated,payments=l.payments+payment).also(::validate)
     }
     fun delete(l: Ledger, id: String, deletePayments: Boolean = false) = l.copy(
         plans = l.plans.filterNot { it.id == id },

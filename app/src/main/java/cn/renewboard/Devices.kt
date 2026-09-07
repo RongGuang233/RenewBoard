@@ -10,7 +10,7 @@ import java.time.temporal.ChronoUnit
 @Serializable enum class DeviceCategory(val label: String) {
     PHONE("手机"), COMPUTER("电脑"), TABLET("平板"), HEADPHONES("耳机"), MONITOR("显示屏"),
     WATCH("手表"), KEYBOARD("键盘"), MOUSE("鼠标"), CONTROLLER("手柄"), EREADER("电纸书"), CHAIR("椅子"),
-    AUDIO("耳机音箱"), CAMERA("相机"), GAMING("游戏设备"), ROUTER("路由器"), OTHER("其他")
+    AUDIO("音箱"), CAMERA("相机"), GAMING("游戏主机"), ROUTER("路由器"), OTHER("其他")
 }
 @Serializable data class Device(
     val id: String = newId(), val name: String, val category: DeviceCategory = DeviceCategory.OTHER,
@@ -18,7 +18,19 @@ import java.time.temporal.ChronoUnit
     val startDate: String? = null, val endDate: String? = null, val saleAmount: String? = null, val note: String = ""
 )
 
+enum class DeviceSort(val label: String) { DATE("服役日期 · 最近"), PRICE("价格 · 最高"), SERVICE("服役时长 · 最长") }
+
 object Devices {
+    fun netCost(device: Device): BigDecimal = BigDecimal(device.purchaseAmount) -
+        if(device.status==DeviceStatus.SOLD) BigDecimal(device.saleAmount ?: "0") else BigDecimal.ZERO
+    fun list(items: List<Device>, status: DeviceStatus, query: String, sort: DeviceSort, today: LocalDate = LocalDate.now()): List<Device> {
+        val filtered=items.filter {it.status==status && (it.name.contains(query.trim(),true) || it.category.label.contains(query.trim(),true))}
+        return when(sort) {
+            DeviceSort.DATE -> filtered.sortedByDescending {it.startDate ?: ""}
+            DeviceSort.PRICE -> filtered.sortedByDescending {BigDecimal(it.purchaseAmount)}
+            DeviceSort.SERVICE -> filtered.sortedByDescending {serviceDays(it,today) ?: -1L}
+        }
+    }
     fun validate(device: Device, today: LocalDate = LocalDate.now()) {
         require(device.id.isNotBlank() && device.name.isNotBlank() && device.name.length <= 100) { "请填写设备名称（最多100字）" }
         fun money(value: String) { require(value.matches(Regex("[0-9]{1,12}(\\.[0-9]{1,4})?"))) { "金额格式错误（最多4位小数）" } }

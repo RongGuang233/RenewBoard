@@ -92,11 +92,15 @@ class DevicesDeviceTest {
         compose.onNodeWithText("卖出日期",substring=false).assertExists()
         compose.onNodeWithText("已服役 4 天").assertExists()
         compose.onAllNodes(hasText("日均 =",substring=true)).assertCountEquals(0)
+        compose.onNodeWithText("净花费",substring=false).assertExists()
+        compose.onNodeWithText("¥1000.00",substring=false).assertExists()
         shot("device-sold-detail")
-        click("删除设备")
+        compose.onNodeWithContentDescription("设备更多操作").performClick()
+        compose.onNodeWithText("删除设备",substring=false).performClick()
         compose.onNodeWithText("取消",substring=false).performClick()
         compose.onNodeWithText("测试手机").assertExists()
-        click("删除设备")
+        compose.onNodeWithContentDescription("设备更多操作").performClick()
+        compose.onNodeWithText("删除设备",substring=false).performClick()
         compose.onNodeWithText("删除",substring=false).performClick()
         awaitDevice {it.devices.isEmpty()}
         compose.onNodeWithText("我的设备").assertExists()
@@ -136,4 +140,30 @@ class DevicesDeviceTest {
         compose.onNodeWithText("未来电脑").assertExists()
         assertEquals(1,runBlocking {app.repository.read()}.devices.size)
     }
+    @Test fun listSearchAndSortMenuPreserveDefaultActiveStatus() {
+        runBlocking { app.repository.update { it.copy(devices=listOf(
+            Device(id="old",name="旧手机",category=DeviceCategory.PHONE,purchaseAmount="900",startDate="2026-08-01"),
+            Device(id="new",name="新手机",category=DeviceCategory.PHONE,purchaseAmount="10000",startDate="2026-09-01"),
+            Device(id="wish",name="待购手表",status=DeviceStatus.WISHLIST,purchaseAmount="2000")
+        )) } }
+        awaitDevice {it.devices.size==3}
+        compose.onNodeWithText("待购手表").assertDoesNotExist()
+        compose.onNodeWithContentDescription("设备排序").performScrollTo().performClick()
+        compose.onNodeWithText("价格 · 最高").performClick()
+        val newer=compose.onNodeWithText("新手机").fetchSemanticsNode().boundsInRoot.top
+        val older=compose.onNodeWithText("旧手机").fetchSemanticsNode().boundsInRoot.top
+        assertTrue(newer<older)
+        compose.onNodeWithContentDescription("设备排序").performScrollTo().performClick()
+        compose.onNodeWithText("服役时长 · 最长").performClick()
+        assertTrue(compose.onNodeWithText("旧手机").fetchSemanticsNode().boundsInRoot.top < compose.onNodeWithText("新手机").fetchSemanticsNode().boundsInRoot.top)
+        fill("搜索设备","不存在")
+        compose.onNodeWithText("没有匹配的设备").assertExists()
+        fill("搜索设备","新手机")
+        compose.onNodeWithText("旧手机").assertDoesNotExist()
+        compose.onNode(hasText("新手机",substring=false) and hasClickAction() and !hasSetTextAction()).performScrollTo().performClick()
+        back()
+        compose.onNode(hasText("搜索设备") and hasSetTextAction()).assertTextContains("新手机")
+        shot("devices-search-sort")
+    }
+
 }

@@ -63,6 +63,8 @@ class GrantedReminderWorkerDeviceTest {
             }
             val first = manager.activeNotifications.single { it.tag == key }
             assertEquals(0, first.id)
+            assertEquals(listOf("确认已扣款","明天提醒"),first.notification.actions.map {it.title.toString()})
+            assertNotEquals(Jobs.detailIntent(app,phone.id),Jobs.detailIntent(app,ledger.plans.single().id))
             assertEquals("设备测试权益 即将到期", first.notification.extras.getString("android.title"))
             assertEquals(-1L, database.book().claim(ReminderRow(key, today.toString())))
             val firstBalance=manager.activeNotifications.single { it.tag==balanceKey }
@@ -79,6 +81,14 @@ class GrantedReminderWorkerDeviceTest {
             assertEquals(first.postTime, second.postTime)
             assertEquals(firstBalance.postTime,manager.activeNotifications.single { it.tag==balanceKey }.postTime)
             assertEquals(settled, repository.read())
+            assertEquals(ListenableWorker.Result.success(),TestListenableWorkerBuilder<SnoozeReminderWorker>(app).setInputData(androidx.work.workDataOf("planId" to phone.id)).build().doWork())
+            val snoozeDeadline=SystemClock.elapsedRealtime()+5000
+            while(manager.activeNotifications.none {it.tag=="snooze-${phone.id}"} && SystemClock.elapsedRealtime()<snoozeDeadline) SystemClock.sleep(25)
+            assertTrue(manager.activeNotifications.any {it.tag=="snooze-${phone.id}"})
+            manager.cancel("snooze-${phone.id}",0)
+            repository.update {it.copy(plans=it.plans.map {p->if(p.id==phone.id) p.copy(archived=true) else p})}
+            TestListenableWorkerBuilder<SnoozeReminderWorker>(app).setInputData(androidx.work.workDataOf("planId" to phone.id)).build().doWork()
+            assertTrue(manager.activeNotifications.none {it.tag=="snooze-${phone.id}"})
         } finally {
             manager.cancel(key, 0)
             manager.cancel(balanceKey,0)

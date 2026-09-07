@@ -34,11 +34,29 @@ class MainActivityDeviceTest {
     }
 
     private fun fill(label: String, value: String) {
-        compose.onNode(hasText(label) and hasSetTextAction())
-            .performScrollTo().performTextReplacement(value)
+        if(label=="备注") openMoreOptions()
+        val field=hasText(label) and hasSetTextAction()
+        awaitNode(field,"field-before-input")
+        compose.onNode(field).performScrollTo()
+        compose.waitForIdle()
+        awaitNode(field,"field-after-scroll")
+        compose.onNode(field).performTextReplacement(value)
+    }
+
+    private fun openMoreOptions() {
+        if(compose.onAllNodes(hasText("备注") and hasSetTextAction()).fetchSemanticsNodes().isEmpty()) {
+            compose.onNodeWithText("更多选项").performScrollTo().performClick()
+        }
     }
 
     private fun click(text: String) {
+        if(text in setOf("编辑订阅与到期日","仅补记付款","归档订阅","恢复使用","删除订阅","明天提醒")) {
+            compose.onNodeWithContentDescription("订阅更多操作").performScrollTo().performClick()
+            compose.onNodeWithText(text,substring=false).performClick()
+            compose.waitForIdle()
+            if(text=="编辑订阅与到期日") awaitNode(hasText("订阅 / 套餐名称") and hasSetTextAction(),"editor-opening")
+            return
+        }
         if(text=="保存订阅") {
             // IME-driven scrolling can move this button during injected pointer events.
             compose.onNodeWithText(text).performScrollTo().performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.OnClick) { it() }
@@ -120,7 +138,7 @@ class MainActivityDeviceTest {
         compose.onNodeWithText("订阅", substring = false).performClick()
         click("月末续费套餐")
         click("记录付款 / 提前续费")
-        fill("付款日期 YYYY-MM-DD", "2024-02-10")
+        fill("付款日期", "2024-02-10")
         compose.onNodeWithText("确认付款").performClick()
         val renewed = awaitLedger { it.payments.size == 2 }
         assertEquals(1, renewed.plans.size)
@@ -152,23 +170,24 @@ class MainActivityDeviceTest {
         compose.onNodeWithText("订阅",substring=false).performClick()
         click("返回测试")
         click("编辑订阅与到期日")
+        openMoreOptions()
         compose.onNode(hasText("备注") and hasSetTextAction()).performScrollTo()
         compose.onNodeWithText("返回",substring=false).assertIsDisplayed()
         compose.waitForIdle()
         androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
         compose.waitForIdle()
-        compose.onNodeWithText("编辑订阅与到期日").assertExists()
+        compose.onNodeWithContentDescription("订阅更多操作").assertExists()
         assertEquals("",runBlocking { app.repository.read() }.plans.single().note)
         click("编辑订阅与到期日")
         compose.activityRule.scenario.recreate(); compose.waitForIdle()
         compose.onNodeWithText("返回",substring=false).performClick()
-        compose.onNodeWithText("编辑订阅与到期日").assertExists()
+        compose.onNodeWithContentDescription("订阅更多操作").assertExists()
         click("记录付款 / 提前续费")
         compose.waitForIdle()
         androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
         compose.waitForIdle()
         compose.onNodeWithText("记录实际付款").assertDoesNotExist()
-        compose.onNodeWithText("编辑订阅与到期日").assertExists()
+        compose.onNodeWithContentDescription("订阅更多操作").assertExists()
         compose.waitForIdle()
         androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
         compose.waitForIdle()
@@ -265,7 +284,42 @@ class MainActivityDeviceTest {
         assertEquals("10.00", saved.plans.single().amount)
         assertEquals(1, saved.payments.size)
     }
+    private fun awaitNode(matcher:SemanticsMatcher,diagnosticName:String) {
+        try {
+            compose.waitUntil(10_000) {
+                runCatching {compose.onAllNodes(matcher).fetchSemanticsNodes().isNotEmpty()}.getOrDefault(false)
+            }
+        } catch(e:Throwable) {
+            val ui=runCatching {
+                val roots=compose.onAllNodes(isRoot(),useUnmergedTree=true)
+                roots.fetchSemanticsNodes().indices.joinToString("\n") {roots[it].printToString()}
+            }.getOrElse {"No semantics: $it"}
+            java.io.File(app.filesDir,"$diagnosticName.txt").writeText(ui)
+            runCatching {
+                val bitmap=androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()
+                java.io.File(app.filesDir,"$diagnosticName.png").outputStream().use {bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG,100,it)}
+                bitmap.recycle()
+            }
+            throw AssertionError("Timed out waiting for $matcher; diagnostic=$diagnosticName\n$ui",e)
+        }
+    }
+
+    private fun recreateDetails(diagnosticName:String) {
+        compose.activityRule.scenario.recreate()
+        // The pinned back button is available even when the detail restores a lower scroll position.
+        awaitNode(hasText("返回",substring=false) and hasClickAction(),diagnosticName)
+        awaitNode(hasText("记录付款 / 提前续费",substring=false),diagnosticName)
+        compose.onNode(hasScrollAction() and hasAnyDescendant(hasText("记录付款 / 提前续费",substring=false)))
+            .performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.ScrollBy) {it(0f,-100000f)}
+        compose.waitForIdle()
+    }
+
     private fun screenshot(name: String) {
+        compose.activityRule.scenario.onActivity {activity->
+            activity.currentFocus?.clearFocus()
+            (activity.getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager)
+                .hideSoftInputFromWindow(activity.window.decorView.windowToken,0)
+        }
         compose.waitForIdle()
         android.os.SystemClock.sleep(400) // Let Android window/compositor animations settle before screenshot.
         val bitmap=androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()
@@ -297,7 +351,7 @@ class MainActivityDeviceTest {
         assertEquals("142.80",renewed.payments.first().cnyAmount)
         assertEquals("145.60",renewed.payments.last().cnyAmount)
         runBlocking { app.repository.update { it.copy(settings=it.settings.copy(rates=mapOf("USD" to "99"))) } }
-        compose.activityRule.scenario.recreate();compose.waitForIdle()
+        recreateDetails("foreign-after-recreate")
         click("返回")
         compose.onNodeWithText("账本",substring=false).performClick()
         assertTrue(compose.onAllNodesWithText("¥288.40",substring=false).fetchSemanticsNodes().isNotEmpty())
@@ -333,6 +387,8 @@ class MainActivityDeviceTest {
         screenshot("overview-v1.1")
         compose.onNodeWithText("订阅",substring=false).performClick()
         compose.onNodeWithText("哔哩哔哩大会员").assertExists()
+        compose.onNodeWithText("¥25.00",substring=false).assertExists()
+        compose.onNodeWithText("CNY 25",substring=false).assertDoesNotExist()
         screenshot("subscriptions-v1.1")
     }
 
@@ -346,6 +402,134 @@ class MainActivityDeviceTest {
         fill("套餐价格","15")
         click("保存订阅")
         awaitLedger { it.plans.singleOrNull()?.name=="小黑盒加速器" }
+    }
+
+    @Test fun historicalReceiptEntryDoesNotChangeBenefitOrBillingSchedule() {
+        val today=java.time.LocalDate.now()
+        val plan=Plan(id="history-plan",name="补记测试",amount="30",billingAnchor=today.minusMonths(2).toString(),paidCycles=3)
+        val benefit=Benefit(id="history-benefit",planId=plan.id,name="已有权益",anchor=today.plusMonths(1).toString(),giftDays=3)
+        runBlocking {app.repository.update {Ledger(plans=listOf(plan),benefits=listOf(benefit))}}
+        compose.waitForIdle();compose.onNodeWithText("订阅",substring=false).performClick();click(plan.name)
+        click("仅补记付款")
+        compose.onNodeWithText("仅记账").assertIsSelected()
+        compose.onNodeWithText("只补记付款，不改变到期日和下次扣款。").assertExists()
+        fill("付款金额 ¥","19.50")
+        fill("付款日期",today.minusMonths(1).toString())
+        screenshot("subscription-record-only")
+        compose.onNodeWithText("确认付款").performClick()
+        val saved=awaitLedger {it.payments.size==1}
+        assertEquals(listOf(plan),saved.plans);assertEquals(listOf(benefit),saved.benefits)
+        assertEquals("19.50",saved.payments.single().amount)
+        assertEquals(today.minusMonths(1).toString(),saved.payments.single().date)
+        assertTrue(saved.payments.single().benefitIds.isEmpty())
+    }
+
+    @Test fun disablingAutomaticRenewalKeepsBenefitAndExpiryReminder() {
+        val today=java.time.LocalDate.now()
+        val plan=Plan(id="cancel-plan",name="关闭续费测试",amount="30",billingAnchor=today.toString())
+        val benefit=Benefit(id="cancel-benefit",planId=plan.id,name="仍可使用的权益",anchor=today.plusDays(3).toString())
+        runBlocking {app.repository.update {Ledger(plans=listOf(plan),benefits=listOf(benefit))}}
+        compose.waitForIdle();compose.onNodeWithText("订阅",substring=false).performClick();click(plan.name)
+        click("标记已关闭自动续费")
+        val saved=awaitLedger {it.plans.singleOrNull()?.autoRenew==false}
+        assertFalse(saved.plans.single().archived)
+        assertEquals(listOf(benefit),saved.benefits)
+        assertTrue(saved.payments.isEmpty())
+        assertEquals(listOf(benefit),Book.due(saved,today))
+        assertTrue(Book.forecast(saved,today,today.plusDays(30)).isEmpty())
+        compose.onNodeWithText("已标记关闭自动续费 · 有效期提醒仍保留").assertExists()
+        screenshot("subscription-renewal-disabled")
+        click("返回");compose.onNodeWithText("到期",substring=false).performClick()
+        compose.onNodeWithText(benefit.name,substring=false).assertExists()
+    }
+
+    @Test fun subscriptionSearchFiltersNamesAndCanBeCleared() {
+        val today=java.time.LocalDate.now()
+        val names=listOf("网易云音乐","QQ音乐","ChatGPT")
+        val plans=names.mapIndexed {i,name->Plan(id="search-$i",name=name,amount="18",billingAnchor=today.toString())}
+        val benefits=plans.map {Benefit(planId=it.id,name=it.name+"权益",anchor=today.plusMonths(1).toString())}
+        runBlocking {app.repository.update {Ledger(plans=plans,benefits=benefits)}}
+        compose.waitForIdle();compose.onNodeWithText("订阅",substring=false).performClick()
+        fill("搜索订阅","音乐")
+        compose.onNodeWithText("网易云音乐",substring=false).assertExists()
+        compose.onNodeWithText("QQ音乐",substring=false).assertExists()
+        compose.onNodeWithText("ChatGPT",substring=false).assertDoesNotExist()
+        fill("搜索订阅","QQ")
+        compose.onNodeWithText("QQ音乐",substring=false).assertExists()
+        compose.onNodeWithText("网易云音乐",substring=false).assertDoesNotExist()
+        screenshot("subscription-search")
+        fill("搜索订阅","")
+        names.forEach {compose.onNodeWithText(it,substring=false).assertExists()}
+        assertEquals(plans,runBlocking {app.repository.read()}.plans)
+    }
+
+    @Test fun paymentNotificationIntentOpensTheTargetSubscriptionAndConfirmation() {
+        val today=java.time.LocalDate.now()
+        val first=Plan(id="intent-other",name="其他订阅",amount="10",billingAnchor=today.toString())
+        val target=Plan(id="intent-target",name="通知目标订阅",amount="45",billingAnchor=today.toString())
+        val benefits=listOf(first,target).map {Benefit(planId=it.id,name=it.name+"权益",anchor=today.plusMonths(1).toString())}
+        runBlocking {app.repository.update {Ledger(plans=listOf(first,target),benefits=benefits)}}
+        compose.waitForIdle();compose.onNodeWithText("订阅",substring=false).performClick();click(first.name)
+        click("仅补记付款")
+        fill("付款金额 ¥","17.50")
+        fill("付款备注","A的未保存草稿")
+        compose.onNodeWithText("仅记账").assertIsSelected()
+        compose.activityRule.scenario.onActivity {activity->
+            // ActivityScenario matches lifecycle callbacks by the launch Intent's identity fields.
+            // Preserve those fields so setIntent in onNewIntent does not detach its lifecycle observer.
+            activity.startActivity(android.content.Intent(activity.intent)
+                .setFlags(android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP or android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                .putExtra("planId",target.id).putExtra("subscriptionAction","pay"))
+        }
+        compose.waitForIdle()
+        compose.onNodeWithText("记录实际付款").assertExists()
+        compose.onNode(hasText("付款金额 ¥") and hasSetTextAction()).assertTextContains("45")
+        compose.onNodeWithText("续费",substring=false).assertIsSelected()
+        compose.onNodeWithText("A的未保存草稿",substring=false).assertDoesNotExist()
+        compose.onNode(hasText(target.name+"权益",substring=false) and hasAnyAncestor(isDialog())).assertExists()
+        compose.onNode(hasText(first.name+"权益",substring=false) and hasAnyAncestor(isDialog())).assertDoesNotExist()
+        assertTrue(runBlocking {app.repository.read()}.payments.isEmpty())
+        screenshot("subscription-notification-payment")
+        compose.onNodeWithText("确认付款").performClick()
+        val saved=awaitLedger {it.payments.size==1}
+        assertEquals(target.id,saved.payments.single().planId)
+        assertEquals("45",saved.payments.single().amount)
+        assertEquals(first,saved.plans.single {it.id==first.id})
+        assertEquals(target.paidCycles+1,saved.plans.single {it.id==target.id}.paidCycles)
+        assertEquals(benefits.first(),saved.benefits.single {it.planId==first.id})
+        recreateDetails("notification-after-recreate")
+        compose.onNodeWithText("记录实际付款").assertDoesNotExist()
+        compose.onAllNodes(isDialog()).assertCountEquals(0)
+        compose.onNodeWithText(target.name,substring=false).assertExists()
+        assertEquals(saved.payments,runBlocking {app.repository.read()}.payments)
+    }
+
+    @Test fun deselectingExpiredJointBenefitClearsRestartAndOnlyExtendsActiveBenefit() {
+        val today=java.time.LocalDate.now()
+        val plan=Plan(id="joint-plan",name="联合权益续费",amount="30",billingAnchor=today.minusMonths(2).toString(),paidCycles=2)
+        val expired=Benefit(id="expired-right",planId=plan.id,name="已过期权益",anchor=today.minusMonths(2).toString(),renewals=1)
+        val active=Benefit(id="active-right",planId=plan.id,name="有效权益",anchor=today.toString(),renewals=2,giftDays=5)
+        runBlocking {app.repository.update {Ledger(plans=listOf(plan),benefits=listOf(expired,active))}}
+        compose.waitForIdle();compose.onNodeWithText("订阅",substring=false).performClick();click(plan.name)
+        click("记录付款 / 提前续费")
+        compose.onNodeWithText("从付款日重新开通",substring=false)
+            .performScrollTo().performClick().assertIsSelected()
+        // This fixture lists the expired benefit first; verify that only its selection is removed below.
+        val benefitChoices=compose.onAllNodes(isToggleable() and hasAnyAncestor(isDialog()))
+        benefitChoices.assertCountEquals(2)
+        benefitChoices[0].performScrollTo().performClick().assertIsOff()
+        compose.onNodeWithText("从付款日重新开通",substring=false).assertDoesNotExist()
+        val expected=today.plusMonths(3).plusDays(5)
+        compose.onNodeWithText("${active.name} → $expected",substring=false).assertExists()
+        screenshot("subscription-joint-renewal")
+        compose.onNodeWithText("确认付款").performClick()
+        val saved=awaitLedger {it.payments.size==1}
+        assertEquals(expired,saved.benefits.single {it.id==expired.id})
+        assertEquals(expected,Book.expiry(saved.benefits.single {it.id==active.id},saved.plans.single()))
+        assertEquals(5,saved.benefits.single {it.id==active.id}.giftDays)
+        assertEquals(plan.billingAnchor,saved.plans.single().billingAnchor)
+        assertEquals(plan.paidCycles+1,saved.plans.single().paidCycles)
+        assertEquals(listOf(active.id),saved.payments.single().benefitIds)
     }
 
 }

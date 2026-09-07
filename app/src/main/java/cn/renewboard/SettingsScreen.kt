@@ -1,7 +1,12 @@
 package cn.renewboard
 
-import android.Manifest
-import android.os.Build
+import android.content.Intent
+import android.provider.Settings
+import androidx.core.app.NotificationManagerCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -58,7 +63,9 @@ private enum class SettingsPage(val title: String) {
     var url by remember { mutableStateOf(config.url) }
     var user by remember { mutableStateOf(config.user) }
     var password by remember { mutableStateOf("") }
-    var reminder by remember(l.settings.reminderDays) { mutableStateOf(l.settings.reminderDays.joinToString(",")) }
+    var reminderDays by remember(l.settings.reminderDays) { mutableStateOf(l.settings.reminderDays.toSet()) }
+    var customDay by rememberSaveable { mutableStateOf("") }
+    var reminderError by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
     var configured by remember { mutableStateOf(config.configured) }
     var status by remember { mutableStateOf(config.status) }
@@ -67,10 +74,18 @@ private enum class SettingsPage(val title: String) {
     var remote by remember { mutableStateOf<List<String>?>(null) }
     var disconnect by remember { mutableStateOf(false) }
     var licenseText by remember { mutableStateOf<String?>(null) }
-    val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { allowed ->
-        message(if (allowed) "已允许通知" else "通知未授权，订阅和备份仍可使用")
-        Jobs.schedule(c)
+    var notificationsEnabled by remember { mutableStateOf(NotificationManagerCompat.from(c).areNotificationsEnabled()) }
+    fun refreshStatus() {
+        notificationsEnabled=NotificationManagerCompat.from(c).areNotificationsEnabled()
+        status=config.status;success=config.lastSuccess;configured=config.configured
     }
+    val lifecycleOwner=LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer=LifecycleEventObserver { _,event -> if(event==Lifecycle.Event.ON_RESUME) refreshStatus() }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+    LaunchedEffect(page) { refreshStatus() }
     fun operation(block: suspend () -> Unit) {
         scope.launch {
             busy = true
@@ -113,10 +128,7 @@ private enum class SettingsPage(val title: String) {
     Column(Modifier.fillMaxSize().padding(horizontal = 20.dp)) {
         Row(Modifier.fillMaxWidth().padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
             if (page != SettingsPage.HOME) {
-                FilledTonalButton(onClick = { back() }, contentPadding = PaddingValues(horizontal = 12.dp)) {
-                    Icon(Icons.Outlined.ArrowBack, contentDescription = null, modifier = Modifier.size(20.dp))
-                    Spacer(Modifier.width(4.dp)); Text("返回")
-                }
+                PageBack(back={back()})
                 Spacer(Modifier.width(12.dp))
             }
             Text(page.title, fontSize = if (page == SettingsPage.HOME) 28.sp else 22.sp, fontWeight = FontWeight.Bold)
@@ -131,7 +143,7 @@ private enum class SettingsPage(val title: String) {
                         }
                         SettingsGroup("数据") {
                             SettingsLink("本地备份", "导出与恢复", Icons.Outlined.SaveAlt) { navigate(SettingsPage.BACKUP) }
-                            SettingsLink("坚果云 · WebDAV", if (configured) "已连接" else "未连接", Icons.Outlined.CloudUpload) { navigate(SettingsPage.WEBDAV) }
+                            SettingsLink("坚果云 · WebDAV", when { status=="备份成功" -> "最近成功 ${settingsDisplayTime(success)}";status.isBlank() || status=="尚未备份" -> "尚未备份";else -> "最近备份失败" }, Icons.Outlined.CloudUpload) { navigate(SettingsPage.WEBDAV) }
                         }
                         SettingsGroup("应用") {
                             SettingsLink("更新与关于", "${BuildConfig.VERSION_NAME}", Icons.Outlined.Info) { navigate(SettingsPage.ABOUT) }
@@ -139,20 +151,38 @@ private enum class SettingsPage(val title: String) {
                     }
                     SettingsPage.REMINDERS -> {
                         SettingsPanel {
-                            Field("提前天数，用逗号分隔；0 表示当天", reminder, { reminder = it })
-                            SettingsNote("清空可关闭提醒；系统省电可能延迟通知。")
+                            Text("提醒时间",style=MaterialTheme.typography.titleMedium)
+                            listOf(listOf(0,1),listOf(3,7)).forEach { row ->
+                                Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+                                    row.forEach { day -> FilterChip(selected=day in reminderDays,
+                                        onClick={reminderDays=if(day in reminderDays) reminderDays-day else reminderDays+day},
+                                        label={Text(if(day==0) "当天" else "提前 $day 天")},modifier=Modifier.weight(1f)) }
+                                }
+                            }
+                            Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+                                Field("自定义提前天数",customDay,{customDay=it;reminderError=null},modifier=Modifier.weight(1f),keyboardType=KeyboardType.Number)
+                                OutlinedButton({
+                                    val day=customDay.toIntOrNull()
+                                    if(day==null || day !in 0..365) reminderError="请输入 0 至 365 天"
+                                    else {reminderDays=reminderDays+day;customDay="";reminderError=null}
+                                }) { Text("添加") }
+                            }
+                            reminderDays.filter { it !in setOf(0,1,3,7) }.sorted().forEach { day ->
+                                InputChip(selected=true,onClick={reminderDays=reminderDays-day},label={Text("提前 $day 天")},
+                                    trailingIcon={Icon(Icons.Outlined.Close,contentDescription="移除提前 $day 天")})
+                            }
+                            reminderError?.let { Text(it,color=MaterialTheme.colorScheme.error) }
+                            SettingsNote(if(reminderDays.isEmpty()) "未选择提醒时间，保存后关闭提醒。" else "系统省电可能延迟通知。")
                             Button(onClick = {
-                                try {
-                                    val days = if (reminder.isBlank()) emptyList() else reminder.replace('，', ',').split(',').map { it.trim().toInt() }
-                                    Book.validate(l.copy(settings = l.settings.copy(reminderDays = days)))
-                                    change { it.copy(settings = it.settings.copy(reminderDays = days)) }
-                                    message("提醒已保存")
-                                } catch (e: Exception) { message("请检查提醒天数") }
+                                val days=reminderDays.sorted()
+                                change { it.copy(settings=it.settings.copy(reminderDays=days)) }
+                                message("提醒已保存")
                             }, modifier = Modifier.fillMaxWidth()) { Text("保存提醒") }
+                            Text(if(notificationsEnabled) "系统通知：已开启" else "系统通知：未开启",fontWeight=FontWeight.Medium)
                             OutlinedButton(onClick = {
-                                if (Build.VERSION.SDK_INT >= 33) permission.launch(Manifest.permission.POST_NOTIFICATIONS)
-                                else message("请在系统应用设置中管理通知授权")
-                            }, modifier = Modifier.fillMaxWidth()) { Text("允许到期通知") }
+                                c.startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE,c.packageName))
+                            }, modifier = Modifier.fillMaxWidth()) { Text(if(notificationsEnabled) "管理通知设置" else "前往开启通知") }
+
                         }
                     }
                     SettingsPage.BACKUP -> {
@@ -262,8 +292,10 @@ private enum class SettingsPage(val title: String) {
 @Composable private fun SettingsLink(title: String, detail: String, icon: ImageVector, click: () -> Unit) {
     Row(Modifier.fillMaxWidth().clickable(onClick = click).padding(horizontal = 16.dp, vertical = 20.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(22.dp))
-        Text(title, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
-        Text(detail, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(4.dp)) {
+            Text(title, fontWeight = FontWeight.Medium)
+            Text(detail, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
         Icon(Icons.Outlined.ChevronRight, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(18.dp))
     }
 }
