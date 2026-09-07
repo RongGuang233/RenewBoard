@@ -39,6 +39,11 @@ class MainActivityDeviceTest {
     }
 
     private fun click(text: String) {
+        if(text=="保存订阅") {
+            // IME-driven scrolling can move this button during injected pointer events.
+            compose.onNodeWithText(text).performScrollTo().performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.OnClick) { it() }
+            return
+        }
         if(text=="返回") compose.onNodeWithText(text).performClick()
         else compose.onNodeWithText(text).performScrollTo().performClick()
     }

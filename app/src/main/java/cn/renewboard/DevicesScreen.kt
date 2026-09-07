@@ -2,6 +2,10 @@ package cn.renewboard
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.ui.window.Dialog
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -30,6 +34,15 @@ private fun deviceIcon(category: DeviceCategory): ImageVector = when(category) {
     DeviceCategory.PHONE -> Icons.Outlined.PhoneAndroid
     DeviceCategory.COMPUTER -> Icons.Outlined.Laptop
     DeviceCategory.TABLET -> Icons.Outlined.TabletAndroid
+    DeviceCategory.HEADPHONES -> Icons.Outlined.Headphones
+    DeviceCategory.MONITOR -> Icons.Outlined.Monitor
+    DeviceCategory.WATCH -> Icons.Outlined.Watch
+    DeviceCategory.KEYBOARD -> Icons.Outlined.Keyboard
+    DeviceCategory.MOUSE -> Icons.Outlined.Mouse
+    DeviceCategory.CONTROLLER -> Icons.Outlined.SportsEsports
+    DeviceCategory.EREADER -> Icons.Outlined.MenuBook
+    DeviceCategory.CHAIR -> Icons.Outlined.Chair
+    DeviceCategory.ROUTER -> Icons.Outlined.Router
     DeviceCategory.AUDIO -> Icons.Outlined.Headphones
     DeviceCategory.CAMERA -> Icons.Outlined.PhotoCamera
     DeviceCategory.GAMING -> Icons.Outlined.SportsEsports
@@ -82,7 +95,6 @@ private fun deviceMoney(value: String) = "¥" + BigDecimal(value).setScale(2, Ro
                 device.endDate?.let { DeviceInfo(if(device.status==DeviceStatus.SOLD) "卖出日期" else "退役日期",it) }
                 device.saleAmount?.let { DeviceInfo("卖出金额",deviceMoney(it)) }
                 if(device.note.isNotBlank()) Text(device.note)
-                if(device.status!=DeviceStatus.WISHLIST) Text("日均 = 购入金额 ÷ 服役天数，首日计1天",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
                 Row(horizontalArrangement=Arrangement.spacedBy(12.dp)) {
                     Button(onClick={editing=true},modifier=Modifier.weight(1f)) { Text("编辑设备") }
                     TextButton(onClick={deleting=true}) { Text("删除设备",color=MaterialTheme.colorScheme.error) }
@@ -134,8 +146,8 @@ private fun deviceMoney(value: String) = "¥" + BigDecimal(value).setScale(2, Ro
     Column(Modifier.fillMaxSize().imePadding().verticalScroll(rememberScrollState()).padding(horizontal=20.dp,vertical=8.dp),verticalArrangement=Arrangement.spacedBy(8.dp)) {
         Field("设备名称",name,{name=it})
         Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)) {
-            Box(Modifier.weight(1f)) { DeviceDropdown("分类",DeviceCategory.valueOf(category).label,DeviceCategory.entries.map {it.label},"选择设备分类") { label ->
-                category=DeviceCategory.entries.single {it.label==label}.name
+            Box(Modifier.weight(1f)) { DeviceCategoryPicker(DeviceCategory.valueOf(category)) { selected ->
+                category=selected.name
             } }
             Box(Modifier.weight(1f)) { DeviceDropdown("状态",currentStatus.label,DeviceStatus.entries.map {it.label},"选择设备状态") { label ->
                 status=DeviceStatus.entries.single {it.label==label}.name
@@ -178,6 +190,47 @@ private fun deviceMoney(value: String) = "¥" + BigDecimal(value).setScale(2, Ro
         }
         DropdownMenu(expanded=expanded,onDismissRequest={expanded=false}) {
             options.forEach { option -> DropdownMenuItem(text={Text(option)},onClick={onSelect(option);expanded=false}) }
+        }
+    }
+}
+
+@Composable private fun DeviceCategoryPicker(selected: DeviceCategory,onSelect: (DeviceCategory)->Unit) {
+    var open by remember { mutableStateOf(false) }
+    var query by remember { mutableStateOf("") }
+    val focus=LocalFocusManager.current
+    val keyboard=LocalSoftwareKeyboardController.current
+    TextButton(onClick={focus.clearFocus();keyboard?.hide();query="";open=true},contentPadding=PaddingValues(horizontal=4.dp),modifier=Modifier.semantics {contentDescription="选择设备分类"}) {
+        Icon(deviceIcon(selected),null,Modifier.size(20.dp))
+        Spacer(Modifier.width(6.dp))
+        Text(selected.label,fontWeight=FontWeight.SemiBold)
+        Icon(Icons.Outlined.ExpandMore,null,Modifier.size(20.dp))
+    }
+    if(open) Dialog(onDismissRequest={open=false}) {
+        Surface(shape=RoundedCornerShape(24.dp),color=MaterialTheme.colorScheme.surface) {
+            Column(Modifier.fillMaxWidth().heightIn(max=480.dp).padding(16.dp),verticalArrangement=Arrangement.spacedBy(12.dp)) {
+                Row(verticalAlignment=Alignment.CenterVertically) {
+                    Text("设备分类",fontSize=20.sp,fontWeight=FontWeight.SemiBold,modifier=Modifier.weight(1f))
+                    IconButton(onClick={open=false}) {Icon(Icons.Outlined.Close,"关闭分类选择")}
+                }
+                OutlinedTextField(value=query,onValueChange={query=it},label={Text("搜索分类")},singleLine=true,
+                    leadingIcon={Icon(Icons.Outlined.Search,null)},modifier=Modifier.fillMaxWidth())
+                val visible=DeviceCategory.entries.filter {it.label.contains(query.trim(),ignoreCase=true)}
+                if(visible.isEmpty()) Text("没有匹配的分类",modifier=Modifier.padding(vertical=16.dp),color=MaterialTheme.colorScheme.onSurfaceVariant)
+                LazyVerticalGrid(columns=GridCells.Fixed(3),modifier=Modifier.fillMaxWidth().weight(1f,fill=false),
+                    horizontalArrangement=Arrangement.spacedBy(8.dp),verticalArrangement=Arrangement.spacedBy(8.dp)) {
+                    items(visible,key={it.name}) { item ->
+                        val active=item==selected
+                        Surface(onClick={onSelect(item);keyboard?.hide();open=false},shape=RoundedCornerShape(14.dp),
+                            color=if(active) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerLow,
+                            contentColor=if(active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface) {
+                            Column(Modifier.padding(vertical=12.dp,horizontal=4.dp),horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.spacedBy(6.dp)) {
+                                Icon(deviceIcon(item),null,Modifier.size(24.dp))
+                                Text(item.label,fontSize=13.sp,maxLines=1,fontWeight=if(active) FontWeight.SemiBold else FontWeight.Normal)
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }

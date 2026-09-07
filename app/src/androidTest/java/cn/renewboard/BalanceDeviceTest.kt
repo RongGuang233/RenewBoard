@@ -22,7 +22,14 @@ class BalanceDeviceTest {
     }
     @After fun cleanup() { runBlocking { app.repository.update { Ledger() } } }
     private fun fill(label:String,value:String) = compose.onNode(hasText(label) and hasSetTextAction()).performScrollTo().performTextReplacement(value)
-    private fun click(text:String) = compose.onNodeWithText(text).performScrollTo().performClick()
+    private fun click(text:String) {
+        if(text=="保存订阅") {
+            // IME-driven scrolling can move this button during injected pointer events.
+            compose.onNodeWithText(text).performScrollTo().performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.OnClick) { it() }
+            return
+        }
+        compose.onNodeWithText(text).performScrollTo().performClick()
+    }
     private fun ledger()=runBlocking { app.repository.read() }
     private fun await(check:(Ledger)->Boolean):Ledger { compose.waitUntil(10000) { check(ledger()) };compose.waitForIdle();return ledger() }
     @Test fun phonePresetTracksBalanceRechargeAndCalibrationWithoutDoubleCounting() {

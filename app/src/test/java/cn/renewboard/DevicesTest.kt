@@ -54,4 +54,17 @@ class DevicesTest {
         assertEquals(BigDecimal("20"),Book.paidCny(l))
         assertEquals(BigDecimal.ZERO,Book.forecastCny(l,today,today.plusDays(30)))
     }
+    @Test fun expandedCategoriesRoundTripAndExistingSerializedNamesRemainReadable() {
+        val items=DeviceCategory.entries.map { category ->
+            device().copy(id=category.name,category=category,status=DeviceStatus.WISHLIST,startDate=null)
+        }
+        val restored=Book.decode(Book.encode(Ledger(devices=items))).data.devices
+        assertEquals(items,restored)
+        listOf("PHONE","COMPUTER","TABLET","AUDIO","CAMERA","GAMING","OTHER").forEach { oldName ->
+            val legacyJson="""{"id":"old","name":"原设备","category":"$oldName","status":"WISHLIST","purchaseAmount":"100"}"""
+            assertEquals(oldName,Book.json.decodeFromString<Device>(legacyJson).category.name)
+        }
+        assertTrue(DeviceCategory.entries.map {it.label}.containsAll(listOf("鼠标","椅子","耳机","显示屏","手机","电脑","手表","平板","键盘","手柄","电纸书")))
+    }
+
 }

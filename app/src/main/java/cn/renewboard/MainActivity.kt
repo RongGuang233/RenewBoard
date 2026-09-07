@@ -55,12 +55,16 @@ class MainActivity: ComponentActivity() {
 @Composable internal fun Field(label: String, value: String, change: (String)->Unit, modifier: Modifier = Modifier, secret: Boolean=false, dateField: Boolean=false) {
     if(secret) OutlinedTextField(value,change,label={Text(label)},modifier=modifier.fillMaxWidth(),singleLine=true,visualTransformation=PasswordVisualTransformation())
     else {
-        val c = LocalContext.current
+        var choosingDate by remember { mutableStateOf(false) }
+        val focus = androidx.compose.ui.platform.LocalFocusManager.current
+        val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
         OutlinedTextField(value,change,label={Text(label)},modifier=modifier.fillMaxWidth(),singleLine=true,
             trailingIcon=if(dateField) {{ IconButton(onClick={
-                val date=runCatching { LocalDate.parse(value) }.getOrDefault(LocalDate.now())
-                android.app.DatePickerDialog(c,{_,y,m,d->change(LocalDate.of(y,m+1,d).toString())},date.year,date.monthValue-1,date.dayOfMonth).show()
+                focus.clearFocus(); keyboard?.hide(); choosingDate=true
             }) { Icon(Icons.Outlined.CalendarMonth,contentDescription="选择日期") } }} else null)
+        if(choosingDate) CalendarDateDialog(label,value,{choosingDate=false}) {
+            change(it); choosingDate=false
+        }
     }
 }
 @Composable private fun Hint(text: String) { Text(text,color=MaterialTheme.colorScheme.onSurfaceVariant,fontSize=14.sp,modifier=Modifier.padding(vertical=8.dp)) }

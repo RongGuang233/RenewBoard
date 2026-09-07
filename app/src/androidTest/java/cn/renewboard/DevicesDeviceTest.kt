@@ -40,6 +40,7 @@ class DevicesDeviceTest {
     }
     private fun shot(name:String) {
         compose.waitForIdle()
+        android.os.SystemClock.sleep(350)
         val bitmap=androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()
         java.io.File(app.filesDir,"$name.png").outputStream().use {bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG,100,it)}
         bitmap.recycle()
@@ -51,6 +52,11 @@ class DevicesDeviceTest {
         fill("设备名称","测试手机")
         fill("购入金额（元）","3000")
         fill("服役日期","2026-09-01")
+        compose.onNodeWithContentDescription("选择日期").performClick()
+        shot("date-picker")
+        compose.onNodeWithContentDescription("选择月份").performClick()
+        shot("date-months")
+        compose.onNodeWithText("取消",substring=false).performClick()
         click("保存设备")
         val created=awaitDevice {it.devices.singleOrNull()?.name=="测试手机"}
         assertTrue(created.payments.isEmpty())
@@ -72,15 +78,20 @@ class DevicesDeviceTest {
         compose.onNode(hasText("退役日期") and hasSetTextAction()).assertDoesNotExist()
         fill("卖出日期","2026-09-04")
         fill("卖出金额（元）","2000")
-        select("选择设备分类","手机")
+        compose.onNodeWithContentDescription("选择设备分类").performScrollTo().performClick()
+        shot("device-category-picker")
+        compose.onNode(hasText("搜索分类") and hasSetTextAction()).performTextReplacement("手机")
+        compose.onNode(hasText("手机",substring=false) and !hasSetTextAction() and hasAnyAncestor(isDialog())).performClick()
         shot("device-editor")
         click("保存设备")
         val sold=awaitDevice {it.devices.singleOrNull()?.status==DeviceStatus.SOLD}
         assertEquals(created.devices.single().id,sold.devices.single().id)
+        assertEquals(DeviceCategory.PHONE,sold.devices.single().category)
         assertEquals("2000",sold.devices.single().saleAmount)
         assertEquals("2026-09-04",sold.devices.single().endDate)
         compose.onNodeWithText("卖出日期",substring=false).assertExists()
         compose.onNodeWithText("已服役 4 天").assertExists()
+        compose.onAllNodes(hasText("日均 =",substring=true)).assertCountEquals(0)
         shot("device-sold-detail")
         click("删除设备")
         compose.onNodeWithText("取消",substring=false).performClick()
@@ -93,6 +104,11 @@ class DevicesDeviceTest {
     @Test fun invalidInputCanBeCorrectedAndWishlistHasNoServiceStats() {
         compose.onNodeWithContentDescription("添加设备").performClick()
         fill("设备名称","未来电脑")
+        compose.onNodeWithContentDescription("选择设备分类").performScrollTo().performClick()
+        compose.onNode(hasText("搜索分类") and hasSetTextAction()).performTextReplacement("不存在的分类")
+        compose.onNodeWithText("没有匹配的分类").assertExists()
+        compose.onNode(hasText("搜索分类") and hasSetTextAction()).performTextReplacement("电纸")
+        compose.onNode(hasText("电纸书",substring=false) and hasAnyAncestor(isDialog())).performClick()
         select("选择设备状态","待购买")
         fill("购买预算（元）","-1")
         fill("计划日期（选填）","")
@@ -103,6 +119,7 @@ class DevicesDeviceTest {
         click("保存设备")
         val saved=awaitDevice {it.devices.size==1}
         assertEquals(DeviceStatus.WISHLIST,saved.devices.single().status)
+        assertEquals(DeviceCategory.EREADER,saved.devices.single().category)
         assertNull(saved.devices.single().startDate)
         compose.onAllNodes(hasText("已服役",substring=true)).assertCountEquals(0)
         click("编辑设备")

@@ -7,7 +7,11 @@ import java.time.LocalDate
 import java.time.temporal.ChronoUnit
 
 @Serializable enum class DeviceStatus(val label: String) { ACTIVE("服役中"), RETIRED("已退役"), SOLD("已卖出"), WISHLIST("待购买") }
-@Serializable enum class DeviceCategory(val label: String) { PHONE("手机"), COMPUTER("电脑"), TABLET("平板"), AUDIO("耳机音箱"), CAMERA("相机"), GAMING("游戏设备"), OTHER("其他") }
+@Serializable enum class DeviceCategory(val label: String) {
+    PHONE("手机"), COMPUTER("电脑"), TABLET("平板"), HEADPHONES("耳机"), MONITOR("显示屏"),
+    WATCH("手表"), KEYBOARD("键盘"), MOUSE("鼠标"), CONTROLLER("手柄"), EREADER("电纸书"), CHAIR("椅子"),
+    AUDIO("耳机音箱"), CAMERA("相机"), GAMING("游戏设备"), ROUTER("路由器"), OTHER("其他")
+}
 @Serializable data class Device(
     val id: String = newId(), val name: String, val category: DeviceCategory = DeviceCategory.OTHER,
     val status: DeviceStatus = DeviceStatus.ACTIVE, val purchaseAmount: String,
