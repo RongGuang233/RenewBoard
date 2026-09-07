@@ -342,4 +342,104 @@ class DomainTest {
         money("0",empty.known);assertTrue(empty.missingPlanIds.isEmpty())
     }
 
+    @Test fun payingThreeOverduePeriodsAddsThreeTermsButOnlyOneActualReceipt() {
+        val p=plan().copy(billingAnchor="2024-01-01")
+        val b=benefit(anchor="2024-01-01").copy(renewals=1)
+        val renewed=Book.renew(ledger(p,b),p.id,"79.90",date("2024-04-10"),setOf(b.id),"补交三期",restart=false,periods=3)
+        assertEquals(p.billingAnchor,renewed.plans.single().billingAnchor)
+        assertEquals(4,renewed.plans.single().paidCycles)
+        assertEquals(date("2024-05-01"),Book.expiry(renewed.benefits.single(),renewed.plans.single()))
+        assertEquals(date("2024-05-01"),Book.nextCharge(renewed.plans.single(),date("2024-04-10")))
+        assertEquals(1,renewed.payments.size)
+        money("79.90",Book.paidCny(renewed))
+    }
+
+    @Test fun restartingSeveralPeriodsPreservesUnselectedJointBenefits() {
+        val p=plan().copy(billingAnchor="2024-01-01")
+        val selected=benefit("first","2024-01-01").copy(renewals=1,giftDays=5)
+        val other=benefit("other","2024-01-01").copy(renewals=8,giftDays=7)
+        val original=ledger(p,selected).copy(benefits=listOf(selected,other))
+        val renewed=Book.renew(original,p.id,"85",date("2024-02-10"),setOf(selected.id),"",restart=true,periods=3)
+        assertEquals("2024-02-10",renewed.plans.single().billingAnchor)
+        assertEquals(3,renewed.plans.single().paidCycles)
+        assertEquals(date("2024-05-10"),Book.expiry(renewed.benefits.first(),renewed.plans.single()))
+        assertEquals(0,renewed.benefits.first().giftDays)
+        assertEquals(other,renewed.benefits.last())
+        assertEquals(Book.expiry(other,p),Book.expiry(renewed.benefits.last(),renewed.plans.single()))
+    }
+
+    @Test fun multiplePeriodsRespectConfiguredIntervalAndKeepEarlyRenewalGifts() {
+        val p=plan(Cycle.WEEK,2)
+        val b=benefit(anchor="2024-01-31").copy(renewals=1,giftDays=3)
+        val renewed=Book.renew(ledger(p,b),p.id,"1",date("2024-02-01"),setOf(b.id),"",periods=3)
+        assertEquals(date("2024-03-30"),Book.expiry(renewed.benefits.single(),renewed.plans.single()))
+        assertEquals(4,renewed.plans.single().paidCycles)
+        assertEquals(3,renewed.benefits.single().giftDays)
+        money("1",Book.paidCny(renewed))
+    }
+
+    @Test fun renewalPeriodLimitsDoNotChangeSinglePeriodDefault() {
+        for(periods in listOf(0,-1,121)) rejects {
+            Book.renew(ledger(),"p","30",date("2024-02-01"),setOf("b"),"",periods=periods)
+        }
+        val maximum=Book.renew(ledger(),"p","30",date("2024-02-01"),setOf("b"),"",periods=120)
+        assertEquals(120,maximum.benefits.single().renewals)
+        assertEquals(121,maximum.plans.single().paidCycles)
+        val default=Book.renew(ledger(),"p","900",date("2024-02-01"),setOf("b"),"")
+        assertEquals(1,default.benefits.single().renewals)
+        assertEquals(2,default.plans.single().paidCycles)
+    }
+
+    @Test fun suspectedDuplicatesCompareNumericAmountAndKeepIntentionalPaymentsAllowed() {
+        val day=date("2024-02-01")
+        val once=Book.recordPayment(ledger(),"p","30.00",day,"首次补记")
+        val original=once.payments.single()
+        val candidates=once.copy(payments=once.payments+listOf(
+            original.copy(id="other-plan",planId="other"),
+            original.copy(id="other-day",date="2024-02-02"),
+            original.copy(id="other-currency",currency="USD",cnyAmount="30"),
+            original.copy(id="other-amount",amount="30.01")
+        ))
+        assertEquals(listOf(original.id),Book.suspectedDuplicates(candidates,"p"," 30.0000 ",day).map {it.id})
+        assertTrue(Book.suspectedDuplicates(candidates,"p","",day).isEmpty())
+        val twice=Book.recordPayment(candidates,"p","30",day,"确有第二笔")
+        assertEquals(2,Book.suspectedDuplicates(twice,"p","30",day).size)
+        assertEquals(candidates.plans,twice.plans)
+        assertEquals(candidates.benefits,twice.benefits)
+    }
+
+    @Test fun suspectedDuplicatesIncludeForeignRenewalsButExcludePhoneRecords() {
+        val day=date("2024-02-01")
+        val p=plan().copy(currency="USD")
+        val renewed=Book.renew(ledger(p),p.id,"20",day,setOf("b"),"",cnyAmount="144")
+        assertEquals(renewed.payments,Book.suspectedDuplicates(renewed,p.id,"20.00",day))
+        val ordinary=ledger()
+        val phoneRecords=ordinary.copy(payments=listOf("话费充值","话费扣费","话费额外扣费").map {type->
+            Payment(planId="p",planName=p.name,amount="30",currency="CNY",date=day.toString(),note=type)
+        })
+        assertTrue(Book.suspectedDuplicates(phoneRecords,"p","30",day).isEmpty())
+        val phone=phoneRecords.copy(plans=listOf(plan().copy(balanceAccount=BalanceAccount("100","2024-01-01"))),
+            payments=listOf(Payment(planId="p",planName=p.name,amount="30",currency="CNY",date=day.toString())))
+        assertTrue(Book.suspectedDuplicates(phone,"p","30",day).isEmpty())
+    }
+
+    @Test fun phoneForecastUsesTheFeeEffectiveOnEachDeductionDate() {
+        val p=plan().copy(amount="19",billingAnchor="2024-01-28",balanceAccount=
+            BalanceAccount("100","2024-05-25",MonthlyFeeChange("29","2024-06-01")))
+        val l=Ledger(plans=listOf(p))
+        money("48",Book.forecast(l,date("2024-05-25"),date("2024-07-01"))["CNY"])
+        money("29",Book.forecastSummary(l,date("2024-06-01"),date("2024-07-01")).known)
+        money("0",Book.forecastSummary(l,date("2024-05-25"),date("2024-05-28")).known)
+    }
+
+    @Test fun pendingPhoneFeeRequiresValidAmountAndDateAfterBalanceSnapshot() {
+        val p=plan().copy(balanceAccount=BalanceAccount("100","2024-05-25",MonthlyFeeChange("0","2024-06-01")))
+        Book.validate(Ledger(plans=listOf(p)))
+        for(pending in listOf(MonthlyFeeChange("-1","2024-06-01"),MonthlyFeeChange("abc","2024-06-01"),
+            MonthlyFeeChange("29","2024-05-25"),MonthlyFeeChange("29","2024-05-24"),
+            MonthlyFeeChange("29","2024-02-30"),MonthlyFeeChange("29","2201-01-01"))) {
+            rejects {Book.validate(Ledger(plans=listOf(p.copy(balanceAccount=p.balanceAccount!!.copy(pendingFee=pending)))))}
+        }
+    }
+
 }

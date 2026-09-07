@@ -21,18 +21,31 @@ class DevicesDeviceTest {
         app=ApplicationProvider.getApplicationContext()
         check(app.packageName.endsWith(".debug"))
         WorkManager.getInstance(app).cancelAllWork().result.get()
+        app.getSharedPreferences("form-drafts",0).edit().clear().commit()
         runBlocking {app.repository.update {Ledger()}}
         compose.waitForIdle()
         compose.onNodeWithText("设备",substring=false).performClick()
     }
-    @After fun clean() {if(::app.isInitialized) runBlocking {app.repository.update {Ledger()}}}
+    @After fun clean() {if(::app.isInitialized && app.packageName.endsWith(".debug")) {
+        runBlocking {app.repository.update {Ledger()}}
+        app.getSharedPreferences("form-drafts",0).edit().clear().commit()
+    }}
     private fun fill(label: String,value: String) {compose.onNode(hasText(label) and hasSetTextAction()).performScrollTo().performTextReplacement(value)}
-    private fun click(text: String) {compose.onNodeWithText(text,substring=false).performScrollTo().performClick()}
+    private fun click(text: String) {
+        if(text=="保存设备") compose.onNodeWithText(text,substring=false).performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.OnClick) {it()}
+        else compose.onNodeWithText(text,substring=false).performScrollTo().performClick()
+    }
     private fun select(description: String,value: String) {
         compose.onNodeWithContentDescription(description).performScrollTo().performClick()
         compose.onNode(hasText(value) and hasAnyAncestor(isPopup())).performClick()
     }
-    private fun back() {compose.onNodeWithContentDescription("返回").performClick()}
+    private fun back() {
+        compose.onNodeWithContentDescription("返回").performClick()
+        compose.waitForIdle()
+        if(compose.onAllNodesWithText("保留设备草稿？").fetchSemanticsNodes().isNotEmpty()) {
+            compose.onNodeWithText("放弃修改").performClick()
+        }
+    }
     private fun awaitDevice(predicate: (Ledger)->Boolean): Ledger {
         compose.waitUntil(10000) {predicate(runBlocking {app.repository.read()})}
         compose.waitForIdle()

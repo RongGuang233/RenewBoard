@@ -20,6 +20,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -29,6 +30,10 @@ import androidx.compose.ui.unit.sp
 import java.math.BigDecimal
 import java.math.RoundingMode
 import java.time.LocalDate
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.launch
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.encodeToString
 
 private fun deviceIcon(category: DeviceCategory): ImageVector = when(category) {
     DeviceCategory.PHONE -> Icons.Outlined.PhoneAndroid
@@ -65,7 +70,13 @@ private fun deviceMoney(value: String) = "¥" + BigDecimal(value).setScale(2, Ro
     LaunchedEffect(subpage) { onSubpageChange(subpage) }
     DisposableEffect(Unit) { onDispose { onSubpageChange(false) } }
     fun back() { if(editing) editing=false else selectedId=null }
-    BackHandler(enabled=subpage) { back() }
+    BackHandler(enabled=subpage && !editing) { back() }
+    if(editing) {
+        key(selectedId) { DeviceEditor(device,onClose={editing=false},onSaved={saved->
+            selectedId=saved.id;editing=false
+        }) }
+        return
+    }
     Column(Modifier.fillMaxSize()) {
         if(subpage) TopAppBar(title={ Text(if(editing) if(selectedId==null) "添加设备" else "编辑设备" else "设备详情") },
             navigationIcon={ PageBack(description="返回",back=::back) },
@@ -77,12 +88,7 @@ private fun deviceMoney(value: String) = "¥" + BigDecimal(value).setScale(2, Ro
                 }
             } },
             windowInsets=WindowInsets(0,0,0,0))
-        if(editing) {
-            key(selectedId) { DeviceEditor(device, onSave={ saved ->
-                change { old -> old.copy(devices=old.devices.filterNot { it.id==saved.id } + saved) }
-                selectedId=saved.id; editing=false
-            }) }
-        } else if(selectedId!=null) {
+        if(selectedId!=null) {
             if(device!=null) Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal=20.dp,vertical=12.dp),verticalArrangement=Arrangement.spacedBy(14.dp)) {
                 Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(12.dp)) {
                     Icon(deviceIcon(device.category),null,Modifier.size(28.dp),tint=MaterialTheme.colorScheme.primary)
@@ -155,43 +161,96 @@ private fun deviceMoney(value: String) = "¥" + BigDecimal(value).setScale(2, Ro
         dismissButton={TextButton(onClick={deleting=false}) {Text("取消")}})
 }
 
-@Composable private fun DeviceEditor(original: Device?, onSave: (Device)->Unit) {
-    var name by rememberSaveable { mutableStateOf(original?.name ?: "") }
-    var category by rememberSaveable { mutableStateOf(original?.category?.name ?: DeviceCategory.PHONE.name) }
-    var status by rememberSaveable { mutableStateOf(original?.status?.name ?: DeviceStatus.ACTIVE.name) }
-    var price by rememberSaveable { mutableStateOf(original?.purchaseAmount ?: "") }
-    var start by rememberSaveable { mutableStateOf(original?.startDate ?: LocalDate.now().toString()) }
-    var end by rememberSaveable { mutableStateOf(original?.endDate ?: LocalDate.now().toString()) }
-    var sale by rememberSaveable { mutableStateOf(original?.saleAmount ?: "") }
-    var note by rememberSaveable { mutableStateOf(original?.note ?: "") }
-    var error by remember { mutableStateOf<String?>(null) }
-    val currentStatus=DeviceStatus.valueOf(status)
-    Column(Modifier.fillMaxSize().imePadding().verticalScroll(rememberScrollState()).padding(horizontal=20.dp,vertical=8.dp),verticalArrangement=Arrangement.spacedBy(8.dp)) {
-        Field("设备名称",name,{name=it})
-        Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)) {
-            Box(Modifier.weight(1f)) { DeviceCategoryPicker(DeviceCategory.valueOf(category)) { selected ->
-                category=selected.name
-            } }
-            Box(Modifier.weight(1f)) { DeviceDropdown("状态",currentStatus.label,DeviceStatus.entries.map {it.label},"选择设备状态") { label ->
-                status=DeviceStatus.entries.single {it.label==label}.name
-            } }
-        }
-        MoneyField(if(currentStatus==DeviceStatus.WISHLIST) "购买预算（元）" else "购入金额（元）",price,{price=it})
-        Field(if(currentStatus==DeviceStatus.WISHLIST) "计划日期（选填）" else "服役日期",start,{start=it},dateField=true)
-        if(currentStatus==DeviceStatus.RETIRED || currentStatus==DeviceStatus.SOLD) Field(if(currentStatus==DeviceStatus.SOLD) "卖出日期" else "退役日期",end,{end=it},dateField=true)
-        if(currentStatus==DeviceStatus.SOLD) MoneyField("卖出金额（元）",sale,{sale=it})
-        Field("设备备注",note,{note=it})
-        error?.let {Text(it,color=MaterialTheme.colorScheme.error)}
+@Serializable private data class DeviceDraft(
+    val id:String, val name:String, val category:DeviceCategory, val status:DeviceStatus,
+    val price:String, val start:String, val end:String, val sale:String, val note:String
+)
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable private fun DeviceEditor(original:Device?,onClose:()->Unit,onSaved:(Device)->Unit) {
+    val context=LocalContext.current
+    val store=remember(context) {DraftStore(context)}
+    val scope=rememberCoroutineScope()
+    val focus=LocalFocusManager.current
+    val keyboard=LocalSoftwareKeyboardController.current
+    val draftKey=original?.id?.let {"device:$it"} ?: "device:new"
+    val baselineJson=rememberSaveable(draftKey) {Book.json.encodeToString(DeviceDraft(
+        id=original?.id ?: newId(),name=original?.name ?: "",category=original?.category ?: DeviceCategory.PHONE,
+        status=original?.status ?: DeviceStatus.ACTIVE,price=original?.purchaseAmount ?: "",
+        start=original?.startDate ?: LocalDate.now().toString(),end=original?.endDate ?: LocalDate.now().toString(),
+        sale=original?.saleAmount ?: "",note=original?.note ?: ""))}
+    val stored=remember(draftKey) {store.read(draftKey)?.takeIf {runCatching {Book.json.decodeFromString<DeviceDraft>(it)}.isSuccess}}
+    var draftJson by rememberSaveable(draftKey) {mutableStateOf(stored ?: baselineJson)}
+    val baseline=remember(baselineJson) {Book.json.decodeFromString<DeviceDraft>(baselineJson)}
+    val draft=remember(draftJson) {Book.json.decodeFromString<DeviceDraft>(draftJson)}
+    // A new draft carries its own stable ID across leaving and reopening the form.
+    val dirty=draft.copy(id=baseline.id)!=baseline
+    var restored by rememberSaveable(draftKey) {mutableStateOf(stored!=null)}
+    var leaving by remember {mutableStateOf(false)}
+    var noteExpanded by rememberSaveable {mutableStateOf(false)}
+    var saving by remember {mutableStateOf(false)}
+    var completed by remember {mutableStateOf(false)}
+    var error by remember {mutableStateOf<String?>(null)}
+    fun update(change:(DeviceDraft)->DeviceDraft) {if(!saving) {draftJson=Book.json.encodeToString(change(draft));error=null}}
+    fun back() {if(!saving) {focus.clearFocus();keyboard?.hide();if(dirty) leaving=true else {store.remove(draftKey);onClose()}}}
+    fun discard() {store.remove(draftKey);draftJson=baselineJson;restored=false;error=null}
+    LaunchedEffect(draftJson,saving) {
+        if(!saving && !completed) {if(dirty) store.write(draftKey,draftJson) else store.remove(draftKey)}
+    }
+    BackHandler {back()}
+    Scaffold(modifier=Modifier.fillMaxSize().imePadding(),topBar={
+        TopAppBar(title={Text(if(original==null) "添加设备" else "编辑设备")},
+            navigationIcon={PageBack(description="返回",back=::back)},windowInsets=WindowInsets(0,0,0,0))
+    },bottomBar={Surface(shadowElevation=4.dp) {
         Button(onClick={
             try {
-                val saved=Device(id=original?.id ?: newId(),name=name.trim(),category=DeviceCategory.valueOf(category),status=currentStatus,
-                    purchaseAmount=price.trim(),startDate=start.trim().ifEmpty {null},
-                    endDate=if(currentStatus==DeviceStatus.RETIRED || currentStatus==DeviceStatus.SOLD) end.trim().ifEmpty {null} else null,
-                    saleAmount=if(currentStatus==DeviceStatus.SOLD) sale.trim() else null,note=note)
-                Devices.validate(saved); onSave(saved)
-            } catch(e: Exception) { error=if(e is java.time.format.DateTimeParseException) "请使用 YYYY-MM-DD 日期格式" else e.message ?: "请检查输入" }
-        },modifier=Modifier.fillMaxWidth().heightIn(min=48.dp)) {Text("保存设备")}
+                val saved=Device(id=draft.id,name=draft.name.trim(),category=draft.category,status=draft.status,
+                    purchaseAmount=draft.price.trim(),startDate=draft.start.trim().ifEmpty {null},
+                    endDate=if(draft.status==DeviceStatus.RETIRED || draft.status==DeviceStatus.SOLD) draft.end.trim().ifEmpty {null} else null,
+                    saleAmount=if(draft.status==DeviceStatus.SOLD) draft.sale.trim() else null,note=draft.note)
+                Devices.validate(saved)
+                focus.clearFocus();keyboard?.hide();saving=true
+                scope.launch {
+                    try {
+                        context.repository().update {old->old.copy(devices=old.devices.filterNot {it.id==saved.id}+saved)}
+                        completed=true;store.remove(draftKey);onSaved(saved)
+                    } catch(e:CancellationException) {throw e}
+                    catch(e:Exception) {error=e.message ?: "保存失败，请重试"}
+                    finally {saving=false}
+                }
+            } catch(e:Exception) {error=if(e is java.time.format.DateTimeParseException) "请使用 YYYY-MM-DD 日期格式" else e.message ?: "请检查输入"}
+        },enabled=!saving,modifier=Modifier.fillMaxWidth().padding(horizontal=20.dp,vertical=12.dp).heightIn(min=48.dp)) {
+            Text(if(saving) "正在保存…" else "保存设备")
+        }
+    }},contentWindowInsets=WindowInsets(0,0,0,0)) {padding->
+        Column(Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(horizontal=20.dp,vertical=8.dp),
+            verticalArrangement=Arrangement.spacedBy(8.dp)) {
+            if(restored) Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically) {
+                Text("已恢复上次草稿",modifier=Modifier.weight(1f),color=MaterialTheme.colorScheme.onSurfaceVariant)
+                TextButton(onClick={discard()},enabled=!saving) {Text("放弃草稿")}
+            }
+            Field("设备名称",draft.name,{value->update {it.copy(name=value)}})
+            Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+                Box(Modifier.weight(1f)) {DeviceCategoryPicker(draft.category) {value->update {it.copy(category=value)}}}
+                Box(Modifier.weight(1f)) {DeviceDropdown("状态",draft.status.label,DeviceStatus.entries.map {it.label},"选择设备状态") {label->
+                    update {it.copy(status=DeviceStatus.entries.single {item->item.label==label})}
+                }}
+            }
+            MoneyField(if(draft.status==DeviceStatus.WISHLIST) "购买预算（元）" else "购入金额（元）",draft.price,{value->update {it.copy(price=value)}})
+            Field(if(draft.status==DeviceStatus.WISHLIST) "计划日期（选填）" else "服役日期",draft.start,{value->update {it.copy(start=value)}},dateField=true)
+            if(draft.status==DeviceStatus.RETIRED || draft.status==DeviceStatus.SOLD) Field(if(draft.status==DeviceStatus.SOLD) "卖出日期" else "退役日期",draft.end,{value->update {it.copy(end=value)}},dateField=true)
+            if(draft.status==DeviceStatus.SOLD) MoneyField("卖出金额（元）",draft.sale,{value->update {it.copy(sale=value)}})
+            TextButton(onClick={noteExpanded=!noteExpanded}) {Text("设备备注");Icon(if(noteExpanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore,null)}
+            if(noteExpanded) Field("设备备注",draft.note,{value->update {it.copy(note=value)}})
+            error?.let {Text(it,color=MaterialTheme.colorScheme.error)}
+        }
     }
+    if(leaving) AlertDialog(onDismissRequest={leaving=false},title={Text("保留设备草稿？")},text={Text("还有未保存的修改。")},
+        confirmButton={TextButton(onClick={store.write(draftKey,draftJson);leaving=false;onClose()}) {Text("保留草稿")}},
+        dismissButton={Row {
+            TextButton(onClick={discard();leaving=false;onClose()}) {Text("放弃修改")}
+            TextButton(onClick={leaving=false}) {Text("继续编辑")}
+        }})
 }
 
 @Composable private fun DeviceInfo(label: String,value: String) {

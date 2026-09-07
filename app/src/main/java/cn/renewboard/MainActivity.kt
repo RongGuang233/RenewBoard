@@ -80,12 +80,12 @@ class MainActivity: ComponentActivity() {
         Icon(Icons.Outlined.ArrowBack,null,Modifier.size(20.dp)); Spacer(Modifier.width(4.dp)); Text("返回")
     }
 }
-@Composable private fun CurrencyPicker(value:String,change:(String)->Unit) {
+@Composable internal fun CurrencyPicker(value:String,compact:Boolean=false,change:(String)->Unit) {
     var open by remember { mutableStateOf(false) }
     var other by remember { mutableStateOf(false) };var query by remember {mutableStateOf("")}
     val names=linkedMapOf("CNY" to "人民币 ¥","USD" to "美元 $","EUR" to "欧元 €","HKD" to "港币 HK$","JPY" to "日元 JP¥","GBP" to "英镑 £","TWD" to "新台币 NT$","SGD" to "新加坡元 S$","AUD" to "澳元 A$")
     Box {
-        OutlinedButton(onClick={open=true},modifier=Modifier.semantics {contentDescription="选择币种"}) {Text(names[value] ?: value);Icon(Icons.Outlined.ExpandMore,null)}
+        OutlinedButton(onClick={open=true},modifier=Modifier.semantics {contentDescription="选择币种"}) {Text(if(compact) value else names[value] ?: value);Icon(Icons.Outlined.ExpandMore,null)}
         DropdownMenu(open,{open=false}) {
             names.forEach { (code,name)->DropdownMenuItem(text={Text(name)},onClick={change(code);open=false})}
             DropdownMenuItem(text={Text("其他币种")},onClick={open=false;other=true;query=""})
@@ -102,7 +102,7 @@ class MainActivity: ComponentActivity() {
     }},confirmButton={TextButton(onClick={other=false}) {Text("取消")}})
 }
 internal fun displayMoney(currency:String,amount:String):String = (if(currency=="CNY") "¥" else "$currency ")+runCatching{BigDecimal(amount).setScale(2,RoundingMode.HALF_UP).toPlainString()}.getOrDefault(amount)
-@Composable private fun Hint(text: String) { Text(text,color=MaterialTheme.colorScheme.onSurfaceVariant,fontSize=14.sp,modifier=Modifier.padding(vertical=8.dp)) }
+@Composable internal fun Hint(text: String) { Text(text,color=MaterialTheme.colorScheme.onSurfaceVariant,fontSize=14.sp,modifier=Modifier.padding(vertical=8.dp)) }
 private fun money(totals: Map<String,BigDecimal>) = if(totals.isEmpty()) "暂无费用" else totals.entries.sortedBy { it.key }.joinToString("\n") { "${it.key} ${it.value.setScale(2,RoundingMode.HALF_UP).toPlainString()}" }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -121,7 +121,8 @@ private fun money(totals: Map<String,BigDecimal>) = if(totals.isEmpty()) "暂无
     var editId by rememberSaveable { mutableStateOf<String?>(null) }; var creating by rememberSaveable { mutableStateOf(false) }
     var detailId by rememberSaveable { mutableStateOf<String?>(null) }
     var receiptId by rememberSaveable { mutableStateOf<String?>(null) }
-    var paymentRequested by rememberSaveable { mutableStateOf(false) }
+    var paymentPlanId by rememberSaveable {mutableStateOf<String?>(null)}
+    var paymentOnlyRecord by rememberSaveable {mutableStateOf(false)}
     val snack = remember { SnackbarHostState() }; val scope = rememberCoroutineScope()
     fun message(s: String) { scope.launch { snack.showSnackbar(s) } }
     fun change(f: (Ledger)->Ledger) { scope.launch { try { repo.update(f) } catch(e: Exception) { message(e.message ?: "未能保存，请检查输入") } } }
@@ -132,7 +133,8 @@ private fun money(totals: Map<String,BigDecimal>) = if(totals.isEmpty()) "暂无
         if(id!=null) {
             if(ledger.plans.any {it.id==id}) {
                 creating=false;editId=null;receiptId=null;detailId=id;tab=1
-                paymentRequested=intent.getStringExtra("subscriptionAction")=="pay"
+                paymentOnlyRecord=false
+                paymentPlanId=if(intent.getStringExtra("subscriptionAction")=="pay" && ledger.plans.single{it.id==id}.balanceAccount==null) id else null
                 when(intent.getStringExtra("subscriptionAction")) {
                     "snooze" -> {Jobs.snooze(c,id);message("已安排明天提醒")}
                 }
@@ -148,19 +150,31 @@ private fun money(totals: Map<String,BigDecimal>) = if(totals.isEmpty()) "暂无
             else -> detailId=null
         }
     }
-    BackHandler(enabled=hasPreviousPage) { goBack() }
+    BackHandler(enabled=hasPreviousPage && !creating && editId==null && paymentPlanId==null) { goBack() }
     Scaffold(snackbarHost={SnackbarHost(snack)}, topBar={
-        if(hasPreviousPage && receiptId==null) Surface(color=Paper) {
+        if(hasPreviousPage && !creating && editId==null && paymentPlanId==null && receiptId==null) Surface(color=Paper) {
             Row(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal=20.dp,vertical=8.dp)) {
                 PageBack(back=::goBack)
             }
         }
-    }, bottomBar={ if(!hasPreviousPage && !subpage && receiptId==null) NavigationBar(containerColor=Paper) {
+    }, bottomBar={ if(!hasPreviousPage && !subpage && paymentPlanId==null && receiptId==null) NavigationBar(containerColor=Paper) {
         listOf("到期","订阅","账本","设备","设置").forEachIndexed { i,s -> NavigationBarItem(selected=tab==i,onClick={tab=i},icon={Icon(listOf(Icons.Outlined.Event,Icons.Outlined.Bookmarks,Icons.Outlined.ReceiptLong,Icons.Outlined.Devices,Icons.Outlined.Settings)[i],null)},label={Text(s)}) }
     } }) { padding ->
         val receipt=ledger.payments.find {it.id==receiptId}
         if(received==null) {
             Box(Modifier.fillMaxSize().padding(padding),contentAlignment=Alignment.Center) {CircularProgressIndicator()}
+        } else if(creating || editId!=null) {
+            Box(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding).systemBarsPadding()) {
+                key(editId ?: "new") {SubscriptionEditor(ledger,ledger.plans.find{it.id==editId},close={creating=false;editId=null}) {p,bs,initial ->
+                    repo.update {old->old.copy(plans=old.plans.filterNot{it.id==p.id}+p,benefits=old.benefits.filterNot{it.planId==p.id}+bs,payments=old.payments+listOfNotNull(initial))}
+                    detailId=null;message("已保存")
+                }}
+            }
+        } else if(paymentPlanId!=null) {
+            val plan=ledger.plans.find{it.id==paymentPlanId}
+            if(plan==null) {paymentPlanId=null} else Box(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding).systemBarsPadding()) {
+                key(plan.id) {PaymentEditor(ledger,plan,paymentOnlyRecord,close={paymentPlanId=null}) {transform ->repo.update(transform);message("已记录付款")}}
+            }
         } else if(receiptId!=null && receipt!=null) {
             Box(Modifier.fillMaxSize().padding(padding).imePadding()) {PaymentDetailScreen(ledger,receipt,{receiptId=null},::change)}
         } else if(!hasPreviousPage && tab>=2) {
@@ -172,16 +186,9 @@ private fun money(totals: Map<String,BigDecimal>) = if(totals.isEmpty()) "暂无
                 }
             }
         } else Column(Modifier.fillMaxSize().padding(padding).padding(horizontal=20.dp).imePadding().verticalScroll(rememberScrollState()).padding(bottom=24.dp)) {
-            if(creating || editId!=null) {
-                PlanEditor(ledger,ledger.plans.find { it.id==editId }) { p,bs,initial ->
-                    scope.launch { try {
-                        repo.update { old -> old.copy(plans=old.plans.filterNot { it.id==p.id }+p, benefits=old.benefits.filterNot { it.planId==p.id }+bs, payments=old.payments+listOfNotNull(initial)) }
-                        creating=false; editId=null; detailId=null; message("已保存")
-                    } catch(e: Exception) { message(e.message ?: "输入无效") } }
-                }
-            } else if(detailId!=null) {
+            if(detailId!=null) {
                 val p = ledger.plans.find { it.id==detailId }
-                if(p==null) { detailId=null } else key(p.id) {Detail(ledger,p,onEdit={editId=p.id},change=::change,onDeleted={detailId=null},openPayment={receiptId=it},startPayment=paymentRequested,onPaymentOpened={paymentRequested=false})}
+                if(p==null) { detailId=null } else key(p.id) {Detail(ledger,p,onEdit={editId=p.id},change=::change,onDeleted={DraftStore(c).remove("subscription:${p.id}");DraftStore(c).remove("payment:${p.id}");detailId=null},openPayment={receiptId=it},recordPayment={only->paymentOnlyRecord=only;paymentPlanId=p.id})}
             } else when(tab) {
                 0 -> Overview(ledger,onAdd={creating=true}) { detailId=it }
                 1 -> Subscriptions(ledger,onAdd={creating=true}) { detailId=it }
@@ -280,176 +287,13 @@ private fun money(totals: Map<String,BigDecimal>) = if(totals.isEmpty()) "暂无
         }
     }
 }
-@OptIn(ExperimentalLayoutApi::class)
-@Composable private fun ServicePicker(close:()->Unit, select:(ServicePreset)->Unit) {
-    var query by rememberSaveable { mutableStateOf("") }
-    var category by rememberSaveable { mutableStateOf("全部") }
-    AlertDialog(onDismissRequest=close,title={Text("选择会员")},text={Column {
-        Field("搜索会员",query,{query=it})
-        FlowRow(horizontalArrangement=Arrangement.spacedBy(6.dp)) {
-            (listOf("全部")+servicePresets.map { it.category }.distinct()).forEach { group ->
-                FilterChip(category==group,{category=group},label={Text(group,fontSize=12.sp)})
-            }
-        }
-        Column(Modifier.heightIn(max=380.dp).verticalScroll(rememberScrollState())) {
-            val matches=servicePresets.filter { p -> (category=="全部" || p.category==category) && (listOf(p.name,p.category)+p.aliases).any { it.contains(query.trim(),ignoreCase=true) } }
-            if(matches.isEmpty()) Hint("没有找到，可返回自定义名称。")
-            matches.groupBy { it.category }.forEach { (category,items) ->
-                Section(category)
-                items.forEach { preset -> Row(Modifier.fillMaxWidth().clickable { select(preset) }.padding(vertical=10.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(12.dp)) {
-                    ServiceIcon(preset.name,size=40.dp); Text(preset.name,fontSize=16.sp)
-                } }
-            }
-        }
-    }},confirmButton={TextButton(close){Text("自定义 / 返回")}})
-}
-
-@Composable private fun PlanEditor(l: Ledger, existing: Plan?, save: (Plan,List<Benefit>,Payment?)->Unit) {
-    val id=remember { existing?.id ?: newId() }
-    val today=remember { LocalDate.now() }
-    var prepaid by rememberSaveable { mutableStateOf(existing?.balanceAccount!=null) }
-    var balance by rememberSaveable { mutableStateOf(existing?.balanceAccount?.let { Prepaid.balance(existing,today).toPlainString() } ?: "") }
-    var balanceDate by rememberSaveable { mutableStateOf(today.toString()) }
-    var deductionDay by rememberSaveable { mutableStateOf(existing?.billingAnchor?.let { LocalDate.parse(it).dayOfMonth.toString() } ?: "1") }
-    var name by rememberSaveable { mutableStateOf(existing?.name ?: "") }; var amount by rememberSaveable { mutableStateOf(existing?.amount ?: "") }
-    var currency by rememberSaveable { mutableStateOf(existing?.currency ?: "CNY") }; var cycle by remember { mutableStateOf(existing?.cycle ?: Cycle.MONTH) }
-    var interval by rememberSaveable { mutableStateOf((existing?.interval ?: 1).toString()) }; var auto by rememberSaveable { mutableStateOf(existing?.autoRenew ?: true) }
-    var anchor by rememberSaveable { mutableStateOf(existing?.billingAnchor ?: LocalDate.now().toString()) }
-    var note by rememberSaveable { mutableStateOf(existing?.note ?: "") }; var paid by rememberSaveable { mutableStateOf(existing==null) }
-    var error by remember { mutableStateOf("") }
-    var picker by remember { mutableStateOf(false) }
-    var cycleMenu by remember { mutableStateOf(false) }
-    var moreExpanded by rememberSaveable { mutableStateOf(false) }
-    var benefitsExpanded by rememberSaveable { mutableStateOf(false) }
-    var cnyAmount by rememberSaveable { mutableStateOf("") }
-    var benefits by remember { mutableStateOf(l.benefits.filter { it.planId==id }.ifEmpty {
-        listOf(Benefit(planId=id,name="",anchor=anchor,renewals=1))
-    }) }
-    var following by remember { mutableStateOf(benefits.filter {
-        it.anchor==(existing?.billingAnchor ?: anchor) && it.renewals>0
-    }.map { it.id }.toSet()) }
-    val previewPlan=Plan(id=id,name=name,amount=amount,currency=currency,cycle=cycle,
-        interval=interval.toIntOrNull()?.takeIf { it in 1..120 } ?: 1,billingAnchor=anchor)
-    fun resolvedBenefit(b:Benefit):Benefit = if(b.id in following) b.copy(anchor=anchor) else b
-    fun displayedExpiry(b:Benefit):String = runCatching {
-        Book.expiry(resolvedBenefit(b),if(b.id in following) previewPlan else existing ?: previewPlan).toString()
-    }.getOrDefault(b.anchor)
-    Title(if(existing==null) "记一笔订阅" else "编辑订阅")
-    if(existing==null) {
-        OutlinedButton({picker=true},Modifier.fillMaxWidth()) { Icon(Icons.Outlined.GridView,null); Spacer(Modifier.width(8.dp)); Text("选择常见会员") }
-        if(picker) ServicePicker({picker=false}) { preset-> name=preset.name;currency=preset.currency;
-            prepaid=preset.name in listOf("中国电信","中国移动","中国联通")
-            if(prepaid) anchor=today.withDayOfMonth(1).plusMonths(1).toString();benefits=benefits.mapIndexed { i,b->if(i==0)b.copy(name=preset.name) else b };picker=false }
-    }
-    Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(10.dp)) {
-        if(name.isNotBlank()) ServiceIcon(name,size=36.dp)
-        Field("订阅 / 套餐名称",name,{name=it},Modifier.weight(1f))
-    }
-    Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
-        FilterChip(!prepaid,{prepaid=false},label={Text("周期订阅")})
-        FilterChip(prepaid,{
-            if(!prepaid && existing?.balanceAccount==null) anchor=today.withDayOfMonth(1).plusMonths(1).toString()
-            prepaid=true
-        },label={Text("话费余额")})
-    }
-    MoneyField(if(prepaid) "每月扣费金额" else "套餐价格",amount,{amount=it})
-    if(prepaid) {
-        MoneyField("查询到的余额",balance,{balance=it})
-        Field("余额查询日期",balanceDate,{balanceDate=it},dateField=true)
-        Hint("填写运营商显示的余额，以及查到这笔余额的日期，默认今天。")
-        OutlinedTextField(deductionDay,{deductionDay=it},label={Text("每月扣费日")},suffix={Text("日")},
-            keyboardOptions=KeyboardOptions(keyboardType=KeyboardType.Number),singleLine=true,modifier=Modifier.fillMaxWidth())
-        Hint("每月 1–31 日；无该日期时按月末。查询日期之后的月费计入账本。")
-    } else {
-    CurrencyPicker(currency) {currency=it}
-    Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(12.dp),verticalAlignment=Alignment.CenterVertically) {
-        OutlinedTextField(interval,{interval=it},label={Text("周期")},singleLine=true,
-            keyboardOptions=KeyboardOptions(keyboardType=KeyboardType.Number),modifier=Modifier.weight(1f))
-        Box {
-            OutlinedButton({cycleMenu=true},Modifier.height(56.dp).semantics { contentDescription="选择周期单位" }) {
-                Text(cycle.label); Spacer(Modifier.width(12.dp)); Icon(Icons.Outlined.ExpandMore,null)
-            }
-            DropdownMenu(expanded=cycleMenu,onDismissRequest={cycleMenu=false}) {
-                Cycle.entries.forEach { v -> DropdownMenuItem(text={Text(v.label)},onClick={cycle=v;cycleMenu=false}) }
-            }
-        }
-    }
-    Row(verticalAlignment=Alignment.CenterVertically) { Switch(auto,{auto=it}); Text("自动续费",Modifier.padding(start=12.dp)) }
-    Field("扣款日期",anchor,{anchor=it},dateField=true)
-    TextButton({benefitsExpanded=!benefitsExpanded},Modifier.fillMaxWidth().padding(top=12.dp)) {
-        Text("包含的权益",fontSize=19.sp,fontWeight=FontWeight.SemiBold,modifier=Modifier.weight(1f))
-        Icon(if(benefitsExpanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore,if(benefitsExpanded) "收起权益" else "展开权益")
-    }
-    if(benefitsExpanded) {
-    benefits.forEachIndexed { i,b ->
-        key(b.id) { Card(Modifier.fillMaxWidth().padding(vertical=6.dp)) { Column(Modifier.padding(16.dp)) {
-            Field("权益 ${i+1} 名称",b.name,{v->benefits=benefits.map { if(it.id==b.id) it.copy(name=v) else it }})
-            Field("到期日期",displayedExpiry(b),{v->
-                following=following-b.id
-                benefits=benefits.map { if(it.id==b.id) it.copy(anchor=v,renewals=0,giftDays=0) else it }
-            },dateField=true)
-            if(b.id in following) Text("跟随扣款日期与周期",fontSize=13.sp,color=MaterialTheme.colorScheme.primary)
-            else TextButton({
-                following=following+b.id
-                benefits=benefits.map { if(it.id==b.id) it.copy(anchor=anchor,renewals=1) else it }
-            }) { Text("恢复跟随周期") }
-            if(benefits.size>1) TextButton({benefits=benefits.filterNot { it.id==b.id }}) { Text("移除此权益") }
-        } } }
-    }
-    TextButton({
-        val added=Benefit(planId=id,name="",anchor=anchor,renewals=1)
-        benefits=benefits+added;following=following+added.id
-    }) { Text("＋ 添加联合权益") }
-    }
-    if(existing==null) Row(verticalAlignment=Alignment.CenterVertically) { Checkbox(paid,{paid=it}); Text("同时记录首次付款") }
-    if(existing==null && paid && currency!="CNY") { MoneyField("人民币实付金额",cnyAmount,{cnyAmount=it}); Hint("填写付款当天的人民币金额，保存后固定。") }
-    }
-    TextButton(onClick={moreExpanded=!moreExpanded}) {Text("更多选项"); Icon(if(moreExpanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore,null)}
-    if(moreExpanded) Field("备注",note,{note=it})
-    if(error.isNotBlank()) Text(error,color=MaterialTheme.colorScheme.error)
-    Button(onClick={ try {
-        if(prepaid) {
-            require(LocalDate.parse(balanceDate)<=today) { "余额查询日期不能晚于今天" }
-            existing?.balanceAccount?.let { require(LocalDate.parse(balanceDate)>=LocalDate.parse(it.asOf)) { "余额查询日期不能早于最近余额记录 ${it.asOf}" } }
-        }
-        val billingAnchor=if(prepaid) {
-            val day=deductionDay.toIntOrNull()
-            require(day!=null && day in 1..31) { "每月扣费日请填写 1–31" }
-            if(existing?.balanceAccount!=null && LocalDate.parse(existing.billingAnchor).dayOfMonth==day) existing.billingAnchor
-            else LocalDate.of(LocalDate.parse(balanceDate).year,1,day).toString()
-        } else anchor
-        val p=Plan(id,name.trim(),amount,if(prepaid) "CNY" else currency,if(prepaid) Cycle.MONTH else cycle,
-            if(prepaid) 1 else interval.toInt(),if(prepaid) true else auto,billingAnchor,
-            if(prepaid) 0 else existing?.paidCycles ?: if(paid) 1 else 0,existing?.archived ?: false,note,
-            if(prepaid) BalanceAccount(balance,balanceDate) else null)
-        val bs=if(prepaid) l.benefits.filter { it.planId==id } else benefits.map { b ->
-            val resolved=resolvedBenefit(b)
-            val named = if(resolved.name.isBlank() && benefits.size==1) resolved.copy(name=name.trim()) else resolved
-            when {
-                b.id in following -> named
-                existing==null && named.renewals==0 && named.giftDays==0 &&
-                    LocalDate.parse(named.anchor)==Book.advance(LocalDate.parse(anchor),cycle,p.interval.toLong()) -> named.copy(anchor=anchor,renewals=1)
-                existing!=null && (existing.cycle!=cycle || existing.interval!=p.interval) ->
-                    named.copy(anchor=Book.expiry(named,existing).minusDays(named.giftDays.toLong()).toString(),renewals=0)
-                else -> named
-            }
-        }
-        if(!prepaid && existing==null && paid && currency!="CNY") require(cnyAmount.isNotBlank()) { "请填写付款当天的人民币实付金额" }
-        val receipt=if(!prepaid && existing==null && paid) Payment(planId=id,planName=p.name,amount=amount,currency=currency,date=anchor,note="首次付款",benefitIds=bs.map { it.id },cnyAmount=if(currency=="CNY") null else cnyAmount.trim()) else null
-        Book.validate(l.copy(plans=l.plans.filterNot { it.id==id }+p,benefits=l.benefits.filterNot { it.planId==id }+bs,payments=l.payments+listOfNotNull(receipt)))
-        save(p,bs,receipt)
-    } catch(e: Exception) { error="请检查名称、金额、周期和日期：${e.message ?: "格式错误"}" } },modifier=Modifier.fillMaxWidth().padding(top=16.dp)) { Text("保存订阅") }
-}
-
-@Composable private fun Detail(l: Ledger,p: Plan,onEdit:()->Unit,change:((Ledger)->Ledger)->Unit,onDeleted:()->Unit,openPayment:(String)->Unit={},startPayment:Boolean=false,onPaymentOpened:()->Unit={}) {
+@Composable private fun Detail(l: Ledger,p: Plan,onEdit:()->Unit,change:((Ledger)->Ledger)->Unit,onDeleted:()->Unit,openPayment:(String)->Unit={},recordPayment:(Boolean)->Unit={}) {
     if(p.balanceAccount!=null) { BalanceDetail(l,p,onEdit,change,onDeleted); return }
-    var renewing by remember { mutableStateOf(false) }; var deleting by remember { mutableStateOf(false) }
-    var onlyRecord by remember {mutableStateOf(false)}
+    var deleting by remember { mutableStateOf(false) }
     var more by remember {mutableStateOf(false)}
     var giftId by remember { mutableStateOf<String?>(null) }; var gift by remember { mutableStateOf("7") }
     val context=LocalContext.current
     var snoozed by remember {mutableStateOf(false)}
-    LaunchedEffect(startPayment) {if(startPayment) {renewing=true;onlyRecord=false;onPaymentOpened()}}
     Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(12.dp)) {
         ServiceIcon(p.name,size=40.dp)
         Column(Modifier.weight(1f)) {Text(p.name,fontSize=24.sp,fontWeight=FontWeight.Bold);Text("${displayMoney(p.currency,p.amount)} / ${p.interval} ${p.cycle.label}",color=MaterialTheme.colorScheme.onSurfaceVariant)}
@@ -457,7 +301,7 @@ private fun money(totals: Map<String,BigDecimal>) = if(totals.isEmpty()) "暂无
             IconButton(onClick={more=true}) {Icon(Icons.Outlined.MoreVert,"订阅更多操作")}
             DropdownMenu(more,{more=false}) {
                 DropdownMenuItem(text={Text("编辑订阅与到期日")},onClick={more=false;onEdit()})
-                DropdownMenuItem(text={Text("仅补记付款")},onClick={more=false;onlyRecord=true;renewing=true})
+                DropdownMenuItem(text={Text("仅补记付款")},onClick={more=false;recordPayment(true)})
                 DropdownMenuItem(text={Text("明天提醒")},onClick={more=false;Jobs.snooze(context,p.id);snoozed=true})
                 DropdownMenuItem(text={Text(if(p.archived) "恢复使用" else "归档订阅")},onClick={more=false;change {it.copy(plans=it.plans.map {x->if(x.id==p.id)x.copy(archived=!x.archived) else x})}})
                 DropdownMenuItem(text={Text("删除订阅",color=MaterialTheme.colorScheme.error)},onClick={more=false;deleting=true})
@@ -473,8 +317,8 @@ private fun money(totals: Map<String,BigDecimal>) = if(totals.isEmpty()) "暂无
     }}}
     val missing=l.payments.filter {it.planId==p.id && it.currency!="CNY" && it.cnyAmount==null}
     if(missing.isNotEmpty()) OutlinedButton(onClick={openPayment(missing.first().id)},modifier=Modifier.fillMaxWidth()) {Text("补录人民币（${missing.size} 笔）")}
-    else if(p.currency!="CNY" && l.payments.none {it.planId==p.id && it.cnyAmount!=null}) OutlinedButton(onClick={onlyRecord=true;renewing=true},modifier=Modifier.fillMaxWidth()) {Text("补记付款与人民币金额")}
-    Button(onClick={onlyRecord=false;renewing=true},modifier=Modifier.fillMaxWidth()) {Text("记录付款 / 提前续费")}
+    else if(p.currency!="CNY" && l.payments.none {it.planId==p.id && it.cnyAmount!=null}) OutlinedButton(onClick={recordPayment(true)},modifier=Modifier.fillMaxWidth()) {Text("补记付款与人民币金额")}
+    Button(onClick={recordPayment(false)},modifier=Modifier.fillMaxWidth()) {Text("记录付款 / 提前续费")}
     TextButton(onClick={change {it.copy(plans=it.plans.map {x->if(x.id==p.id)x.copy(autoRenew=!x.autoRenew) else x})}},modifier=Modifier.fillMaxWidth()) {Text(if(p.autoRenew) "标记已关闭自动续费" else "标记已开启自动续费")}
     if(p.note.isNotBlank()) Hint(p.note)
     Section("此套餐已付记录")
@@ -483,40 +327,6 @@ private fun money(totals: Map<String,BigDecimal>) = if(totals.isEmpty()) "暂无
             Text(receipt.date,modifier=Modifier.weight(1f));Text(displayMoney(receipt.currency,receipt.amount));Icon(Icons.Outlined.ChevronRight,null)
         }
     }
-    if(renewing) key(p.id,onlyRecord) {RenewalDialog(l,p,{renewing=false},change,onlyRecord)}
     if(deleting) DeletePlanDialog(l,p,{deleting=false}) {include->change {Book.delete(it,p.id,include)};deleting=false;onDeleted()}
     if(giftId!=null) AlertDialog(onDismissRequest={giftId=null},title={Text("赠送时长")},text={Field("增加天数",gift,{gift=it},keyboardType=KeyboardType.Number)},confirmButton={TextButton(onClick={val n=gift.toIntOrNull();if(n!=null && n in 1..36500) {val id=giftId;change {it.copy(benefits=it.benefits.map {b->if(b.id==id)b.copy(giftDays=b.giftDays+n) else b})};giftId=null}}) {Text("增加")}},dismissButton={TextButton(onClick={giftId=null}) {Text("取消")}})
-}
-@Composable private fun RenewalDialog(l: Ledger,p: Plan,close:()->Unit,change:((Ledger)->Ledger)->Unit,initialOnlyRecord:Boolean=false) {
-    var amount by remember {mutableStateOf(p.amount)};var date by remember {mutableStateOf(LocalDate.now().toString())};var note by remember {mutableStateOf("")}
-    var cnyAmount by remember {mutableStateOf("")};var onlyRecord by remember {mutableStateOf(initialOnlyRecord)}
-    var selected by remember {mutableStateOf(l.benefits.filter {it.planId==p.id}.map{it.id}.toSet())};var error by remember {mutableStateOf<String?>(null)}
-    var restart by remember {mutableStateOf<Boolean?>(null)}
-    val expired=runCatching {l.benefits.filter {it.id in selected}.any {Book.expiry(it,p)<LocalDate.parse(date)}}.getOrDefault(false)
-    val restarting=restart ?: runCatching {l.benefits.filter{it.id in selected}.all {Book.expiry(it,p)<LocalDate.parse(date)}}.getOrDefault(false)
-    fun updated(old:Ledger):Ledger = if(onlyRecord) Book.recordPayment(old,p.id,amount,LocalDate.parse(date),note,cnyAmount.takeIf{p.currency!="CNY"}) else Book.renew(old,p.id,amount,LocalDate.parse(date),selected,note,cnyAmount.takeIf{p.currency!="CNY"},restarting)
-    val preview=runCatching {updated(l)}.getOrNull()
-    AlertDialog(onDismissRequest=close,title={Text("记录实际付款")},text={Column(Modifier.verticalScroll(rememberScrollState())) {
-        Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
-            FilterChip(!onlyRecord,{onlyRecord=false},label={Text("续费")})
-            FilterChip(onlyRecord,{onlyRecord=true},label={Text("仅记账")})
-        }
-        MoneyField("付款金额 ${if(p.currency=="CNY") "¥" else p.currency}",amount,{amount=it}); Field("付款日期",date,{date=it;restart=null},dateField=true)
-        if(p.currency!="CNY") {MoneyField("人民币实付金额",cnyAmount,{cnyAmount=it});Hint("付款当天实际扣款，保存后固定。")}
-        if(onlyRecord) Hint("只补记付款，不改变到期日和下次扣款。") else {
-            if(expired) {
-                Text("已过期，选择本次处理方式",fontWeight=FontWeight.SemiBold)
-                Row(Modifier.fillMaxWidth().selectable(restarting,role=Role.RadioButton,onClick={restart=true}),verticalAlignment=Alignment.CenterVertically) {RadioButton(restarting,null);Text("从付款日重新开通")}
-                Row(Modifier.fillMaxWidth().selectable(!restarting,role=Role.RadioButton,onClick={restart=false}),verticalAlignment=Alignment.CenterVertically) {RadioButton(!restarting,null);Text("补交原周期账单")}
-            }
-            l.benefits.filter{it.planId==p.id}.forEach {b->Row(verticalAlignment=Alignment.CenterVertically) {Checkbox(b.id in selected,{selected=if(it) selected+b.id else selected-b.id;restart=null});Text(b.name)}}
-            preview?.let {result->
-                val next=result.plans.single{it.id==p.id}
-                result.benefits.filter{it.id in selected}.forEach {b->Text("${b.name} → ${Book.expiry(b,next)}",style=MaterialTheme.typography.bodySmall)}
-                if(p.autoRenew) Text("下次扣款 ${Book.nextCharge(next,LocalDate.parse(date))}",style=MaterialTheme.typography.bodySmall)
-            }
-        }
-        Field("付款备注",note,{note=it})
-        error?.let {Text(it,color=MaterialTheme.colorScheme.error)}
-    }},confirmButton={TextButton(onClick={try {updated(l);change(::updated);close()} catch(e:Exception) {error=e.message ?: "请检查输入"}}) {Text("确认付款")}},dismissButton={TextButton(onClick=close) {Text("取消")}})
 }

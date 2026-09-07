@@ -121,4 +121,56 @@ class PrepaidTest {
         assertEquals(expense,Book.decode(Book.encode(expense)).data)
     }
 
+    @Test fun scheduledPriceSettlesOldAndNewMonthsExactlyOnce() {
+        val initial=Ledger(plans=listOf(plan()))
+        val scheduled=Prepaid.changeMonthlyFee(initial,"phone","40",d("2024-03-01"),d("2024-01-15"))
+        assertEquals("30",scheduled.plans.single().amount)
+        money("0",Prepaid.balance(scheduled.plans.single(),d("2024-03-31")))
+        assertEquals(d("2024-04-30"),Prepaid.rechargeDate(scheduled.plans.single()))
+        val advanced=Prepaid.accrue(scheduled,d("2024-03-31"))
+        assertEquals(listOf("30","30","40"),advanced.payments.map {it.amount})
+        assertEquals("40",advanced.plans.single().amount)
+        assertNull(advanced.plans.single().balanceAccount!!.pendingFee)
+        money("0",Prepaid.balance(advanced.plans.single(),d("2024-03-31")))
+        assertEquals(advanced,Prepaid.accrue(advanced,d("2024-03-31")))
+        assertEquals(scheduled,Book.decode(Book.encode(scheduled)).data)
+    }
+    @Test fun promotionBetweenDeductionsPreservesOldPriceBalanceAndZeroFeeTransition() {
+        val scheduled=Prepaid.changeMonthlyFee(Ledger(plans=listOf(plan())),"phone","0",d("2024-03-15"),d("2024-01-15"))
+        val advanced=Prepaid.accrue(scheduled,d("2024-03-16"))
+        money("40",Prepaid.balance(advanced.plans.single(),d("2024-04-30")))
+        assertEquals(listOf("30","30"),advanced.payments.map {it.amount})
+        assertEquals("2024-03-16",advanced.plans.single().balanceAccount!!.asOf)
+        assertNull(Prepaid.rechargeDate(advanced.plans.single()))
+        val free=plan().copy(amount="0")
+        val paid=Prepaid.changeMonthlyFee(Ledger(plans=listOf(free)),"phone","40",d("2024-03-01"),d("2024-01-15"))
+        assertEquals(d("2024-05-31"),Prepaid.rechargeDate(paid.plans.single()))
+    }
+    @Test fun immediatePriceChangeKeepsTodaysExistingDeductionAndCanReplaceOrCancelFutureChange() {
+        val initial=Ledger(plans=listOf(plan()))
+        val immediate=Prepaid.changeMonthlyFee(initial,"phone","40",d("2024-01-31"),d("2024-01-31"))
+        assertEquals(listOf("30"),immediate.payments.map {it.amount})
+        money("30",Prepaid.balance(immediate.plans.single(),d("2024-02-29")))
+        val future=Prepaid.changeMonthlyFee(immediate,"phone","50",d("2024-04-01"),d("2024-02-01"))
+        val replaced=Prepaid.changeMonthlyFee(future,"phone","60",d("2024-05-01"),d("2024-02-01"))
+        assertEquals(MonthlyFeeChange("60","2024-05-01"),replaced.plans.single().balanceAccount!!.pendingFee)
+        val cancelled=Prepaid.cancelMonthlyFeeChange(replaced,"phone",d("2024-02-01"))
+        assertNull(cancelled.plans.single().balanceAccount!!.pendingFee)
+        assertEquals("40",cancelled.plans.single().amount)
+        assertEquals(immediate.payments,cancelled.payments)
+        assertThrows(Exception::class.java) {Prepaid.changeMonthlyFee(cancelled,"phone","20",d("2024-01-01"),d("2024-02-01"))}
+    }
+    @Test fun balanceOperationsPreserveScheduledFeeAndOldBackupWithoutFieldLoads() {
+        val scheduled=Prepaid.changeMonthlyFee(Ledger(plans=listOf(plan())),"phone","40",d("2024-03-01"),d("2024-01-15"))
+        val topped=Prepaid.topUp(scheduled,"phone","50",d("2024-01-20"))
+        val calibrated=Prepaid.calibrate(topped,"phone","120",d("2024-01-21"))
+        assertEquals(scheduled.plans.single().balanceAccount!!.pendingFee,calibrated.plans.single().balanceAccount!!.pendingFee)
+        val archived=Prepaid.archive(calibrated,"phone",true,d("2024-01-22"))
+        val promoted=Prepaid.accrue(archived,d("2024-03-01"))
+        assertEquals("40",promoted.plans.single().amount)
+        money("120",Prepaid.balance(promoted.plans.single(),d("2024-03-31")))
+        val old=Book.encode(Ledger(plans=listOf(plan()))).replace(",\"pendingFee\":null","")
+        assertNull(Book.decode(old).data.plans.single().balanceAccount!!.pendingFee)
+    }
+
 }

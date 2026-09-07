@@ -17,15 +17,20 @@ class BalanceDeviceTest {
     private lateinit var app: RenewApp
     @Before fun reset() {
         app=ApplicationProvider.getApplicationContext();check(app.packageName.endsWith(".debug"))
+        app.getSharedPreferences("form-drafts",android.content.Context.MODE_PRIVATE).edit().clear().commit()
         WorkManager.getInstance(app).cancelAllWork().result.get()
         runBlocking { app.repository.update { Ledger() } };compose.waitForIdle()
     }
-    @After fun cleanup() { runBlocking { app.repository.update { Ledger() } } }
+    @After fun cleanup() {
+        app.getSharedPreferences("form-drafts",android.content.Context.MODE_PRIVATE).edit().clear().commit()
+        runBlocking { app.repository.update { Ledger() } }
+    }
     private fun fill(label:String,value:String) = compose.onNode(hasText(label) and hasSetTextAction()).performScrollTo().performTextReplacement(value)
     private fun click(text:String) {
+        if(text=="选择常见会员" && compose.onAllNodes(hasText("搜索会员") and hasSetTextAction()).fetchSemanticsNodes().isNotEmpty()) return
         if(text=="保存订阅") {
-            // IME-driven scrolling can move this button during injected pointer events.
-            compose.onNodeWithText(text).performScrollTo().performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.OnClick) { it() }
+            // The save action is fixed outside the form's scroll container.
+            compose.onNodeWithText(text).performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.OnClick) { it() }
             return
         }
         compose.onNodeWithText(text).performScrollTo().performClick()
@@ -64,12 +69,12 @@ class BalanceDeviceTest {
         val corrected=await { it.plans.single().balanceAccount?.balance=="125" }
         assertEquals(recharged.payments,corrected.payments)
         click("修改月费")
-        fill("每月扣费金额","40")
-        click("保存订阅")
+        fill("新月费","40")
+        compose.onNodeWithText("立即",substring=false).performClick()
+        compose.onNodeWithText("保存月费",substring=false).performClick()
         val calibrated=await { it.plans.single().amount=="40" }
         assertEquals(recharged.payments,calibrated.payments)
         assertEquals(calibrated,Book.decode(Book.encode(calibrated)).data)
-        compose.onNodeWithText("中国移动").performClick()
         compose.onNodeWithText("¥125.00").assertExists()
         compose.waitForIdle()
         val bitmap=androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()
@@ -137,6 +142,27 @@ class BalanceDeviceTest {
         compose.onNodeWithText("删除订阅").assertDoesNotExist()
         compose.onNodeWithContentDescription("更多操作").performScrollTo().performClick()
         compose.onNodeWithText("删除订阅").assertExists()
+    }
+
+    @Test fun monthlyFeeDialogSchedulesAndCancelsNextMonthPriceWithoutChangingReceipts() {
+        val today=LocalDate.now()
+        val p=Plan(name="中国移动",amount="30",billingAnchor=today.toString(),paidCycles=0,
+            balanceAccount=BalanceAccount("100",today.toString()))
+        runBlocking {app.repository.update {Ledger(plans=listOf(p))}}
+        compose.waitForIdle();compose.onNodeWithText("中国移动").performClick()
+        click("修改月费")
+        fill("新月费","40")
+        compose.onNodeWithText("下月",substring=false).assertIsSelected()
+        compose.onNodeWithText("保存月费",substring=false).performClick()
+        val scheduled=await {it.plans.single().balanceAccount?.pendingFee!=null}
+        assertEquals("30",scheduled.plans.single().amount)
+        assertTrue(scheduled.payments.isEmpty())
+        assertEquals(java.time.YearMonth.from(today).plusMonths(1).atDay(1).toString(),scheduled.plans.single().balanceAccount!!.pendingFee!!.effectiveDate)
+        click("修改月费")
+        compose.onNodeWithText("取消待生效调整").performScrollTo().performClick()
+        val cancelled=await {it.plans.single().balanceAccount?.pendingFee==null}
+        assertEquals("30",cancelled.plans.single().amount)
+        assertTrue(cancelled.payments.isEmpty())
     }
 
 }

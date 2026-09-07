@@ -66,7 +66,7 @@ object Book {
             var after=maxOf(from.minusDays(1),LocalDate.parse(p.balanceAccount!!.asOf))
             var date=Prepaid.nextDeduction(p,after)
             while(date<until) {
-                totals["CNY"]=(totals["CNY"] ?: BigDecimal.ZERO)+BigDecimal(p.amount)
+                totals["CNY"]=(totals["CNY"] ?: BigDecimal.ZERO)+Prepaid.feeAt(p,date)
                 after=date;date=Prepaid.nextDeduction(p,after)
             }
         }
@@ -109,6 +109,16 @@ object Book {
         return totals.entries.fold(BigDecimal.ZERO) { a, (c, v) -> a + v * if (c == "CNY") BigDecimal.ONE else BigDecimal(rates.getValue(c)) }
     }
     private val paymentTypes=setOf("话费充值","话费扣费","话费额外扣费")
+    /** A reminder only: separate real payments may share a date and amount. */
+    fun suspectedDuplicates(l: Ledger, planId: String, amount: String, date: LocalDate): List<Payment> {
+        val plan=l.plans.find {it.id==planId} ?: return emptyList()
+        if(plan.balanceAccount!=null) return emptyList()
+        val value=amount.trim().toBigDecimalOrNull() ?: return emptyList()
+        return l.payments.filter { payment ->
+            payment.planId==planId && payment.currency==plan.currency && payment.date==date.toString() &&
+                payment.note !in paymentTypes && BigDecimal(payment.amount).compareTo(value)==0
+        }
+    }
     private fun receipt(p: Plan, amount: String, date: LocalDate, note: String, cnyAmount: String?, selected: Set<String> = emptySet()): Payment {
         require(p.currency=="CNY" || !cnyAmount.isNullOrBlank()) { "请填写付款当天的实际人民币金额" }
         require(note.trim() !in paymentTypes) { "话费类型请通过话费账户记录" }
@@ -132,7 +142,8 @@ object Book {
         return l.copy(payments=l.payments.map { if(it.id==paymentId) revised else it }).also(::validate)
     }
     /** restart=null restarts only when all selected benefits have expired; false pays the original next cycle. */
-    fun renew(l: Ledger, planId: String, amount: String, date: LocalDate, selected: Set<String>, note: String, cnyAmount: String? = null, restart: Boolean? = null): Ledger {
+    fun renew(l: Ledger, planId: String, amount: String, date: LocalDate, selected: Set<String>, note: String, cnyAmount: String? = null, restart: Boolean? = null, periods: Int = 1): Ledger {
+        require(periods in 1..120) { "本次续费期数应为1至120" }
         val p = l.plans.single { it.id == planId }
         require(p.balanceAccount == null) { "余额账户请记录充值" }
         require(selected.isNotEmpty()) { "请选择至少一项续费权益" }
@@ -142,11 +153,11 @@ object Book {
         val updated=l.benefits.map { b ->
             when {
                 b.id !in selected -> b
-                reopening -> b.copy(anchor=date.toString(),renewals=1,giftDays=0)
-                else -> b.copy(renewals=b.renewals+1)
+                reopening -> b.copy(anchor=date.toString(),renewals=periods,giftDays=0)
+                else -> b.copy(renewals=b.renewals+periods)
             }
         }
-        val renewedPlan=if(reopening) p.copy(billingAnchor=date.toString(),paidCycles=1) else p.copy(paidCycles=p.paidCycles+1)
+        val renewedPlan=if(reopening) p.copy(billingAnchor=date.toString(),paidCycles=periods) else p.copy(paidCycles=p.paidCycles+periods)
         return l.copy(plans=l.plans.map {if(it.id==p.id) renewedPlan else it},benefits=updated,payments=l.payments+payment).also(::validate)
     }
     fun delete(l: Ledger, id: String, deletePayments: Boolean = false) = l.copy(
@@ -175,6 +186,10 @@ object Book {
                 money(account.balance.removePrefix("-"))
                 date(account.asOf)
                 require(LocalDate.parse(account.asOf)<=LocalDate.now()) { "余额查询日期不能晚于今天" }
+                account.pendingFee?.let { pending ->
+                    money(pending.amount); date(pending.effectiveDate)
+                    require(LocalDate.parse(pending.effectiveDate)>LocalDate.parse(account.asOf)) { "待生效月费日期应晚于余额查询日期" }
+                }
             }
         }
         l.payments.forEach { money(it.amount); it.cnyAmount?.let(::money); currency(it.currency); date(it.date); require(it.planName.isNotBlank()) }
