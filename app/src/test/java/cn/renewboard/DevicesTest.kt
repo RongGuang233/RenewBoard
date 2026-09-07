@@ -33,11 +33,15 @@ class DevicesTest {
         listOf(device().copy(name=" "),device().copy(purchaseAmount="-1"),device().copy(purchaseAmount="1e3"),
             device().copy(startDate=null),device().copy(startDate="2026-09-08"),device().copy(startDate="bad"),
             device().copy(endDate="2026-09-02"),device().copy(saleAmount="10"),
+            device().copy(saleDate="2026-09-02"),
             device().copy(status=DeviceStatus.RETIRED),
             device().copy(status=DeviceStatus.RETIRED,endDate="2026-08-31"),
             device().copy(status=DeviceStatus.RETIRED,endDate="2026-09-08"),
             device().copy(status=DeviceStatus.SOLD,endDate="2026-09-03"),
-            device().copy(status=DeviceStatus.SOLD,endDate="2026-09-03",saleAmount="-1")
+            device().copy(status=DeviceStatus.SOLD,endDate="2026-09-03",saleAmount="-1"),
+            device().copy(status=DeviceStatus.SOLD,endDate="2026-09-03",saleAmount="10",saleDate="2026-09-02"),
+            device().copy(status=DeviceStatus.SOLD,endDate="2026-09-03",saleAmount="10",saleDate="2026-09-08"),
+            device().copy(status=DeviceStatus.RETIRED,endDate="2026-09-03",saleDate="2026-09-04")
         ).forEach {d -> assertThrows(Exception::class.java) {Devices.validate(d,today)} }
     }
     @Test fun backupsRoundTripDevicesAndOldVersionOneBackupsDefaultToEmpty() {
@@ -84,6 +88,31 @@ class DevicesTest {
         assertEquals(BigDecimal("-1000"),Devices.netCost(sold.copy(saleAmount="4000")))
         assertEquals("音箱",DeviceCategory.AUDIO.label)
         assertEquals("游戏主机",DeviceCategory.GAMING.label)
+    }
+
+    @Test fun juneRetirementAndSeptemberSaleKeepServiceDaysAndBothDatesThroughBackup() {
+        val retired=device().copy(status=DeviceStatus.RETIRED,startDate="2026-01-01",endDate="2026-06-30")
+        val sold=retired.copy(status=DeviceStatus.SOLD,saleAmount="2000",saleDate="2026-09-07")
+        Devices.validate(sold,today)
+        assertEquals(181L,Devices.serviceDays(sold,today.plusYears(1)))
+        assertEquals(Devices.dailyCost(retired,today),Devices.dailyCost(sold,today))
+        assertEquals(BigDecimal("16.57"),Devices.dailyCost(sold,today))
+        assertEquals(BigDecimal("1000"),Devices.netCost(sold))
+        assertEquals("2026-09-07",Devices.saleDate(sold))
+        val restored=Book.decode(Book.encode(Ledger(devices=listOf(sold)))).data.devices.single()
+        assertEquals(sold,restored)
+    }
+
+    @Test fun legacySoldDateFallsBackWithoutRewritingStoredRecord() {
+        val legacyJson="""{"id":"legacy","name":"旧设备","status":"SOLD","purchaseAmount":"3000","startDate":"2026-09-01","endDate":"2026-09-03","saleAmount":"2000"}"""
+        val legacy=Book.json.decodeFromString<Device>(legacyJson)
+        Devices.validate(legacy,today)
+        assertNull(legacy.saleDate)
+        assertEquals("2026-09-03",Devices.saleDate(legacy))
+        assertEquals(3L,Devices.serviceDays(legacy,today))
+        val restored=Book.decode(Book.encode(Ledger(devices=listOf(legacy)))).data.devices.single()
+        assertEquals(legacy,restored)
+        assertNull(restored.saleDate)
     }
 
 }

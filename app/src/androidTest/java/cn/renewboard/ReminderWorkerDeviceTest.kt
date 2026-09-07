@@ -81,13 +81,13 @@ class GrantedReminderWorkerDeviceTest {
             assertEquals(first.postTime, second.postTime)
             assertEquals(firstBalance.postTime,manager.activeNotifications.single { it.tag==balanceKey }.postTime)
             assertEquals(settled, repository.read())
-            assertEquals(ListenableWorker.Result.success(),TestListenableWorkerBuilder<SnoozeReminderWorker>(app).setInputData(androidx.work.workDataOf("planId" to phone.id)).build().doWork())
+            assertEquals(ListenableWorker.Result.success(),TestListenableWorkerBuilder<SnoozeReminderWorker>(app).setInputData(Jobs.snoozeData(settled, phone.id, today)).build().doWork())
             val snoozeDeadline=SystemClock.elapsedRealtime()+5000
             while(manager.activeNotifications.none {it.tag=="snooze-${phone.id}"} && SystemClock.elapsedRealtime()<snoozeDeadline) SystemClock.sleep(25)
             assertTrue(manager.activeNotifications.any {it.tag=="snooze-${phone.id}"})
             manager.cancel("snooze-${phone.id}",0)
             repository.update {it.copy(plans=it.plans.map {p->if(p.id==phone.id) p.copy(archived=true) else p})}
-            TestListenableWorkerBuilder<SnoozeReminderWorker>(app).setInputData(androidx.work.workDataOf("planId" to phone.id)).build().doWork()
+            TestListenableWorkerBuilder<SnoozeReminderWorker>(app).setInputData(Jobs.snoozeData(settled, phone.id, today)).build().doWork()
             assertTrue(manager.activeNotifications.none {it.tag=="snooze-${phone.id}"})
         } finally {
             manager.cancel(key, 0)
@@ -97,6 +97,92 @@ class GrantedReminderWorkerDeviceTest {
             app.deleteDatabase(name)
             // Revoking a runtime permission here can kill the instrumentation process.
             // The host must run pm revoke after this isolated test invocation returns.
+        }
+    }
+
+    @Test @SdkSuppress(minSdkVersion = 33)
+    fun catchUpAndSnoozeFollowSuccessfulRenewalAndBalanceResolution() = runBlocking {
+        val app = ApplicationProvider.getApplicationContext<RenewApp>()
+        check(app.packageName.endsWith(".debug"))
+        WorkManager.getInstance(app).cancelAllWork().result.get()
+        InstrumentationRegistry.getInstrumentation().uiAutomation.grantRuntimePermission(app.packageName, Manifest.permission.POST_NOTIFICATIONS)
+        val original = app.repository
+        val databaseName = "reminder-followthrough-${UUID.randomUUID()}.db"
+        val db = Room.databaseBuilder(app, BookDatabase::class.java, databaseName).build()
+        val manager = app.getSystemService(NotificationManager::class.java)
+        fun awaitNotification(predicate: () -> Boolean) {
+            val deadline = SystemClock.elapsedRealtime() + 5_000
+            while (!predicate() && SystemClock.elapsedRealtime() < deadline) SystemClock.sleep(25)
+            assertTrue(predicate())
+        }
+        val today = LocalDate.now()
+        val plan = Plan(id = "followthrough", name = "联合提醒测试", amount = "30", billingAnchor = today.toString())
+        val first = Benefit(id = "followthrough-a", planId = plan.id, name = "权益甲", anchor = today.minusDays(1).toString())
+        val second = first.copy(id = "followthrough-b", name = "权益乙", anchor = today.minusDays(2).toString())
+        try {
+            val repo = Repository(db, ledgerChanged = { before, after -> Jobs.clearResolvedReminders(app, before, after) })
+            app.repository = repo
+            manager.cancel("reminder-catchup", 0)
+            repo.update { Ledger(plans = listOf(plan), benefits = listOf(first, second)) }
+            val initial = repo.read()
+            val snooze = Jobs.snoozeData(initial, plan.id, today)
+            Jobs.snooze(app, plan.id, initial, today).result.get()
+            val scheduled = WorkManager.getInstance(app).getWorkInfosForUniqueWork("snooze-${plan.id}").get().single()
+            assertEquals(androidx.work.WorkInfo.State.ENQUEUED, scheduled.state)
+            TestListenableWorkerBuilder<ReminderWorker>(app).build().deliver(today)
+            awaitNotification { manager.activeNotifications.any { it.tag == "reminder-catchup" } }
+            val catchUp = manager.activeNotifications.single { it.tag == "reminder-catchup" }
+            assertEquals(2, catchUp.notification.extras.getStringArray("eventKeys")!!.size)
+            assertEquals(1, manager.activeNotifications.count { it.tag == "reminder-catchup" })
+            TestListenableWorkerBuilder<ReminderWorker>(app).build().deliver(today.plusDays(1))
+            SystemClock.sleep(100)
+            assertEquals(catchUp.postTime, manager.activeNotifications.single { it.tag == "reminder-catchup" }.postTime)
+
+            repo.update { Book.renew(it, plan.id, "30", today, setOf(first.id), "部分续费") }
+            assertEquals(androidx.work.WorkInfo.State.ENQUEUED,
+                WorkManager.getInstance(app).getWorkInfosForUniqueWork("snooze-${plan.id}").get().single().state)
+            TestListenableWorkerBuilder<SnoozeReminderWorker>(app).setInputData(snooze).build().doWork()
+            awaitNotification { manager.activeNotifications.any { it.tag == "snooze-${plan.id}" } }
+            val partial = manager.activeNotifications.single { it.tag == "snooze-${plan.id}" }
+            assertEquals(listOf("${second.id}:${second.anchor}"), partial.notification.extras.getStringArray("eventKeys")!!.toList())
+            assertFalse(partial.notification.extras.getString("android.text")!!.contains("权益甲"))
+            repo.update { Book.renew(it, plan.id, "30", today, setOf(second.id), "其余续费") }
+            awaitNotification { manager.activeNotifications.none { it.tag == "snooze-${plan.id}" || it.tag == "reminder-catchup" } }
+            TestListenableWorkerBuilder<SnoozeReminderWorker>(app).setInputData(snooze).build().doWork()
+            SystemClock.sleep(100)
+            assertTrue(manager.activeNotifications.none { it.tag == "snooze-${plan.id}" })
+            awaitNotification {
+                WorkManager.getInstance(app).getWorkInfosForUniqueWork("snooze-${plan.id}").get().single().state == androidx.work.WorkInfo.State.CANCELLED
+            }
+
+            val phone = Plan(id = "followthrough-phone", name = "话费测试", amount = "30", billingAnchor = today.toString(),
+                balanceAccount = BalanceAccount("-10", today.toString()))
+            repo.update { Ledger(plans = listOf(phone)) }
+            val phoneSnooze = Jobs.snoozeData(repo.read(), phone.id, today)
+            TestListenableWorkerBuilder<SnoozeReminderWorker>(app).setInputData(phoneSnooze).build().doWork()
+            awaitNotification { manager.activeNotifications.any { it.tag == "snooze-${phone.id}" } }
+            repo.update { Prepaid.topUp(it, phone.id, "100", today) }
+            awaitNotification { manager.activeNotifications.none { it.tag == "snooze-${phone.id}" } }
+            TestListenableWorkerBuilder<SnoozeReminderWorker>(app).setInputData(phoneSnooze).build().doWork()
+            SystemClock.sleep(100)
+            assertTrue(manager.activeNotifications.none { it.tag == "snooze-${phone.id}" })
+
+            repo.update { Ledger(plans = listOf(phone)) }
+            TestListenableWorkerBuilder<SnoozeReminderWorker>(app).setInputData(phoneSnooze).build().doWork()
+            awaitNotification { manager.activeNotifications.any { it.tag == "snooze-${phone.id}" } }
+            repo.update { Prepaid.calibrate(it, phone.id, "100", today) }
+            awaitNotification { manager.activeNotifications.none { it.tag == "snooze-${phone.id}" } }
+            TestListenableWorkerBuilder<SnoozeReminderWorker>(app).setInputData(phoneSnooze).build().doWork()
+            SystemClock.sleep(100)
+            assertTrue(manager.activeNotifications.none { it.tag == "snooze-${phone.id}" })
+        } finally {
+            WorkManager.getInstance(app).cancelUniqueWork("snooze-${plan.id}").result.get()
+            manager.cancel("reminder-catchup", 0)
+            manager.cancel("snooze-${plan.id}", 0)
+            manager.cancel("snooze-followthrough-phone", 0)
+            app.repository = original
+            db.close()
+            app.deleteDatabase(databaseName)
         }
     }
 
@@ -128,6 +214,20 @@ class ReminderWorkerDeviceTest {
             val key = Book.reminderKey(ledger.benefits.single(), ledger.plans.single(), today)
             assertTrue("Denied notifications must not mark a reminder as delivered",
                 database.book().claim(ReminderRow(key, today.toString())) != -1L)
+            database.book().release(key)
+            assertTrue(database.book().reminderEvents().isEmpty())
+            // The user enables notifications the next day: the missed reminder is delivered once.
+            InstrumentationRegistry.getInstrumentation().uiAutomation.grantRuntimePermission(app.packageName, Manifest.permission.POST_NOTIFICATIONS)
+            val manager = app.getSystemService(NotificationManager::class.java)
+            manager.cancel("reminder-catchup", 0)
+            TestListenableWorkerBuilder<ReminderWorker>(app).build().deliver(today.plusDays(1))
+            val deadline = SystemClock.elapsedRealtime() + 5_000
+            while (manager.activeNotifications.none { it.tag == "reminder-catchup" } && SystemClock.elapsedRealtime() < deadline) SystemClock.sleep(25)
+            val posted = manager.activeNotifications.single { it.tag == "reminder-catchup" }
+            TestListenableWorkerBuilder<ReminderWorker>(app).build().deliver(today.plusDays(2))
+            SystemClock.sleep(100)
+            assertEquals(posted.postTime, manager.activeNotifications.single { it.tag == "reminder-catchup" }.postTime)
+            manager.cancel("reminder-catchup", 0)
         } finally {
             app.repository = originalRepository
             database.close()

@@ -66,6 +66,7 @@ class CredentialsStore(private val c: Context) {
 }
 object Jobs {
     val backupMutex = Mutex()
+    private const val SNOOZE_EVENT_TAG = "snooze-event:"
     fun schedule(c: Context) {
         val work = WorkManager.getInstance(c)
         work.enqueueUniquePeriodicWork("reminders",ExistingPeriodicWorkPolicy.KEEP,PeriodicWorkRequestBuilder<ReminderWorker>(6,TimeUnit.HOURS).build())
@@ -78,9 +79,59 @@ object Jobs {
             .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
         return PendingIntent.getActivity(c,0,intent,PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
     }
-    fun snooze(c:Context,planId:String) {
-        WorkManager.getInstance(c).enqueueUniqueWork("snooze-$planId",ExistingWorkPolicy.REPLACE,
-            OneTimeWorkRequestBuilder<SnoozeReminderWorker>().setInitialDelay(1,TimeUnit.DAYS).setInputData(workDataOf("planId" to planId)).build())
+    fun snoozeData(ledger: Ledger, planId: String, today: LocalDate = LocalDate.now()) = workDataOf(
+        "planId" to planId, "eventKeys" to ReminderPolicy.snoozeTargets(ledger, planId, today).map { it.key }.toTypedArray())
+    fun snooze(c:Context,planId:String,ledger:Ledger,today:LocalDate=LocalDate.now()): Operation {
+        val data = snoozeData(ledger, planId, today)
+        val request = OneTimeWorkRequestBuilder<SnoozeReminderWorker>().setInitialDelay(1,TimeUnit.DAYS)
+            .setInputData(data)
+        data.getStringArray("eventKeys").orEmpty().forEach { request.addTag("$SNOOZE_EVENT_TAG$it") }
+        return WorkManager.getInstance(c).enqueueUniqueWork("snooze-$planId",ExistingWorkPolicy.REPLACE,
+            request.build())
+    }
+    /** Call after a successful ledger write; delivery workers independently recheck their bound events. */
+    fun clearResolvedReminders(c: Context, before: Ledger, after: Ledger) {
+        val oldEvents = ReminderPolicy.events(before)
+        val valid = ReminderPolicy.unresolved(after, oldEvents.map { it.key }).map { it.key }.toSet()
+        val resolved = oldEvents.filter { it.key !in valid }
+        if (resolved.isEmpty()) return
+        val work = WorkManager.getInstance(c)
+        resolved.map { it.planId }.distinct().forEach { id ->
+            val pending = work.getWorkInfosForUniqueWork("snooze-$id")
+            pending.addListener({
+                // The future is complete here. Inspect the original bound events, not a
+                // different benefit expiry created by an earlier partial renewal.
+                pending.get().filterNot { it.state.isFinished }.forEach { info ->
+                    val bound = info.tags.filter { it.startsWith(SNOOZE_EVENT_TAG) }.map { it.removePrefix(SNOOZE_EVENT_TAG) }
+                    if (bound.isNotEmpty() && ReminderPolicy.unresolved(after, bound).isEmpty())
+                        work.cancelWorkById(info.id)
+                }
+            }, ContextCompat.getMainExecutor(c))
+        }
+        val manager = c.getSystemService(NotificationManager::class.java)
+        manager.activeNotifications.forEach { active ->
+            val keys = active.notification.extras.getStringArray("eventKeys")?.toList()
+            if (keys != null) {
+                val remaining = ReminderPolicy.unresolved(after, keys)
+                if (remaining.size != keys.size) {
+                    if (remaining.isEmpty()) manager.cancel(active.tag, active.id)
+                    else {
+                        val extras = android.os.Bundle(active.notification.extras).apply {
+                            putStringArray("eventKeys", remaining.map { it.key }.toTypedArray())
+                        }
+                        val builder = Notification.Builder.recoverBuilder(c, active.notification)
+                            .setContentText(ReminderPolicy.summary(remaining)).setExtras(extras)
+                            .setOnlyAlertOnce(true).setContentIntent(detailIntent(c, remaining.first().planId))
+                            .setStyle(Notification.BigTextStyle().bigText(ReminderPolicy.summary(remaining)))
+                        if (active.tag == "reminder-catchup") builder.setContentTitle("有 ${remaining.size} 项近期提醒待处理")
+                        try { manager.notify(active.tag, active.id, builder.build()) } catch (_: SecurityException) {}
+                    }
+                }
+            } else if (resolved.any { active.tag?.startsWith("${it.key}:") == true } ||
+                resolved.any { active.tag == "snooze-${it.planId}" && oldEvents.none { e -> e.planId == it.planId && e.key in valid } }) {
+                manager.cancel(active.tag, active.id)
+            }
+        }
     }
     fun backup(c: Context) {
         if(!CredentialsStore(c).configured) return
@@ -101,34 +152,58 @@ class BackupWorker(c: Context, p: WorkerParameters): CoroutineWorker(c,p) {
         catch(e: Exception) { if(e is kotlinx.coroutines.CancellationException) throw e; config.result(if(e is DavException) e.message else "备份失败，请检查网络与应用密码后重试"); Result.retry() }
     }
 }
+private fun notificationsAllowed(c: Context, manager: NotificationManagerCompat): Boolean {
+    if (Build.VERSION.SDK_INT >= 33 && ContextCompat.checkSelfPermission(c, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return false
+    if (!manager.areNotificationsEnabled()) return false
+    manager.createNotificationChannel(NotificationChannel("expiry", "到期提醒", NotificationManager.IMPORTANCE_DEFAULT))
+    return c.getSystemService(NotificationManager::class.java).getNotificationChannel("expiry")?.importance != NotificationManager.IMPORTANCE_NONE
+}
+
+private fun eventExtras(events: List<ReminderEvent>) = android.os.Bundle().apply {
+    putStringArray("eventKeys", events.map { it.key }.toTypedArray())
+}
+
 class ReminderWorker(c: Context, p: WorkerParameters): CoroutineWorker(c,p) {
-    override suspend fun doWork(): Result {
+    override suspend fun doWork(): Result = deliver(LocalDate.now())
+
+    // Explicit date seam lets device acceptance cross midnight without waiting or changing the clock.
+    internal suspend fun deliver(today: LocalDate): Result {
         val c = applicationContext
         val nm = NotificationManagerCompat.from(c)
-        if((Build.VERSION.SDK_INT >= 33 && ContextCompat.checkSelfPermission(c,Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) || !nm.areNotificationsEnabled()) return Result.success()
-        nm.createNotificationChannel(NotificationChannel("expiry","到期提醒",NotificationManager.IMPORTANCE_DEFAULT))
-        val repo = c.repository(); val l = repo.read(); val today = LocalDate.now()
-        repo.db.book().prune(today.minusDays(370).toString())
-        Book.due(l,today).forEach { b ->
-            val p = l.plans.single { it.id == b.planId }; val key = Book.reminderKey(b,p,today)
-            if(repo.db.book().claim(ReminderRow(key,today.toString())) != -1L) {
+        if (!notificationsAllowed(c, nm)) return Result.success()
+        val repo = c.repository()
+        val l = repo.read()
+        val dao = repo.db.book()
+        dao.prune(today.minusDays(370).toString())
+        ReminderPolicy.scheduled(l, today).forEach { event ->
+            val key = event.deliveryKey(today)
+            if (dao.claim(ReminderRow(key, today.toString())) != -1L) {
                 try {
-                    val intent = Jobs.detailIntent(c,p.id)
-                    nm.notify(key,0,NotificationCompat.Builder(c,"expiry").setSmallIcon(R.drawable.ic_launcher).setContentTitle("${b.name} 即将到期").setContentText("${Book.expiry(b,p)} · ${p.name}").setContentIntent(intent).addAction(0,"确认已扣款",Jobs.detailIntent(c,p.id,"pay")).addAction(0,"明天提醒",Jobs.detailIntent(c,p.id,"snooze")).setAutoCancel(true).build())
-                } catch(e: SecurityException) { repo.db.book().release(key) }
+                    val builder = NotificationCompat.Builder(c, "expiry").setSmallIcon(R.drawable.ic_launcher)
+                        .setContentTitle(if (event.balance) "${event.name} 余额提醒" else "${event.name} 即将到期")
+                        .setContentText(if (event.balance) "预计 ${event.date} 余额不足，请及时充值" else "${event.date} · ${event.planName}")
+                        .setContentIntent(Jobs.detailIntent(c, event.planId)).setExtras(eventExtras(listOf(event)))
+                        .setAutoCancel(true)
+                    if (!event.balance) builder.addAction(0, "确认已扣款", Jobs.detailIntent(c, event.planId, "pay"))
+                    builder.addAction(0, "明天提醒", Jobs.detailIntent(c, event.planId, "snooze"))
+                    nm.notify(key, 0, builder.build())
+                } catch (_: SecurityException) { dao.release(key) }
             }
         }
-        Prepaid.due(l,today).forEach { p ->
-            val date=Prepaid.rechargeDate(p)!!
-            val key="balance:${p.id}:$date:$today"
-            if(repo.db.book().claim(ReminderRow(key,today.toString())) != -1L) {
-                try {
-                    val intent=Jobs.detailIntent(c,p.id)
-                    nm.notify(key,0,NotificationCompat.Builder(c,"expiry").setSmallIcon(R.drawable.ic_launcher)
-                        .setContentTitle("${p.name} 余额提醒").setContentText("预计 $date 余额不足，请及时充值")
-                        .setContentIntent(intent).addAction(0,"明天提醒",Jobs.detailIntent(c,p.id,"snooze")).setAutoCancel(true).build())
-                } catch(e: SecurityException) { repo.db.book().release(key) }
-            }
+        val missed = ReminderPolicy.missed(l, today, dao.reminderEvents().toSet())
+        val claimed = missed.filter { dao.claim(ReminderRow(it.catchUpKey, today.toString())) != -1L }
+        if (claimed.isNotEmpty()) {
+            try {
+                // Retain other unresolved items in the existing aggregate when a later item is added.
+                val activeKeys = c.getSystemService(NotificationManager::class.java).activeNotifications
+                    .find { it.tag == "reminder-catchup" }?.notification?.extras?.getStringArray("eventKeys").orEmpty()
+                val combined = (ReminderPolicy.unresolved(l, activeKeys.toList(), today) + claimed).distinctBy { it.key }
+                val text = ReminderPolicy.summary(combined)
+                nm.notify("reminder-catchup", 0, NotificationCompat.Builder(c, "expiry").setSmallIcon(R.drawable.ic_launcher)
+                    .setContentTitle("有 ${combined.size} 项近期提醒待处理").setContentText(text)
+                    .setStyle(NotificationCompat.BigTextStyle().bigText(text)).setExtras(eventExtras(combined))
+                    .setContentIntent(Jobs.detailIntent(c, combined.first().planId)).setAutoCancel(true).build())
+            } catch (_: SecurityException) { claimed.forEach { dao.release(it.catchUpKey) } }
         }
         return Result.success()
     }
@@ -136,14 +211,22 @@ class ReminderWorker(c: Context, p: WorkerParameters): CoroutineWorker(c,p) {
 
 class SnoozeReminderWorker(c:Context,p:WorkerParameters):CoroutineWorker(c,p) {
     override suspend fun doWork():Result {
-        val c=applicationContext
-        val id=inputData.getString("planId") ?: return Result.success()
-        val l=c.repository().read();val plan=l.plans.find{it.id==id && !it.archived} ?: return Result.success()
-        val nm=NotificationManagerCompat.from(c)
-        if(!nm.areNotificationsEnabled() || (Build.VERSION.SDK_INT>=33 && ContextCompat.checkSelfPermission(c,Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED)) return Result.success()
-        nm.createNotificationChannel(NotificationChannel("expiry","到期提醒",NotificationManager.IMPORTANCE_DEFAULT))
-        val text=if(plan.balanceAccount!=null) "查看话费余额与充值记录" else l.benefits.filter{it.planId==id}.minOfOrNull{Book.expiry(it,plan)}?.let {"到期日 $it"} ?: return Result.success()
-        try {nm.notify("snooze-$id",0,NotificationCompat.Builder(c,"expiry").setSmallIcon(R.drawable.ic_launcher).setContentTitle("${plan.name} · 稍后提醒").setContentText(text).setContentIntent(Jobs.detailIntent(c,id)).setAutoCancel(true).build())} catch(_:SecurityException) {}
+        val c = applicationContext
+        val id = inputData.getString("planId") ?: return Result.success()
+        val keys = inputData.getStringArray("eventKeys")?.toList() ?: return Result.success()
+        val l = c.repository().read()
+        val plan = l.plans.find { it.id == id && !it.archived } ?: return Result.success()
+        val pending = ReminderPolicy.unresolved(l, keys).filter { it.planId == id }
+        if (pending.isEmpty()) return Result.success()
+        val nm = NotificationManagerCompat.from(c)
+        if (!notificationsAllowed(c, nm)) return Result.success()
+        val text = ReminderPolicy.summary(pending)
+        try {
+            nm.notify("snooze-$id", 0, NotificationCompat.Builder(c, "expiry").setSmallIcon(R.drawable.ic_launcher)
+                .setContentTitle("${plan.name} · 稍后提醒").setContentText(text)
+                .setStyle(NotificationCompat.BigTextStyle().bigText(text)).setExtras(eventExtras(pending))
+                .setContentIntent(Jobs.detailIntent(c, id)).setAutoCancel(true).build())
+        } catch (_: SecurityException) {}
         return Result.success()
     }
 }

@@ -8,6 +8,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.MoreVert
+import androidx.compose.material.icons.outlined.CalendarMonth
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -26,18 +29,18 @@ private fun balanceHint(p: Plan, today: LocalDate): String {
     val date=Prepaid.rechargeDate(p) ?: return "暂无需充值日期"
     return if(date<=today) "余额不足，请充值" else "预计 $date 需充值"
 }
-@Composable internal fun BalanceCard(p: Plan, open:()->Unit) {
+@Composable internal fun BalanceCard(p: Plan, compact:Boolean=false, open:()->Unit) {
     val today=LocalDate.now()
     Card(onClick=open,modifier=Modifier.fillMaxWidth().padding(vertical=6.dp),shape=RoundedCornerShape(20.dp),colors=CardDefaults.cardColors(containerColor=Color.White)) {
-        Row(Modifier.padding(16.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(12.dp)) {
-            ServiceIcon(p.name)
+        Row(Modifier.padding(if(compact) 12.dp else 16.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(12.dp)) {
+            ServiceIcon(p.name,size=if(compact) 32.dp else 48.dp)
             Column(Modifier.weight(1f)) {
                 Text(p.name,fontWeight=FontWeight.SemiBold,fontSize=17.sp)
                 Text(balanceHint(p,today),fontSize=13.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
             }
             Column(horizontalAlignment=Alignment.End) {
-                Text(yuan(Prepaid.balance(p,today)),fontSize=20.sp,fontWeight=FontWeight.Bold,color=MaterialTheme.colorScheme.primary)
-                Text("估算余额",fontSize=13.sp)
+                Text(yuan(Prepaid.balance(p,today)),fontSize=if(compact) 18.sp else 20.sp,fontWeight=FontWeight.Bold,color=MaterialTheme.colorScheme.primary)
+                if(!compact) Text("估算余额",fontSize=13.sp)
             }
         }
     }
@@ -51,6 +54,7 @@ private fun balanceHint(p: Plan, today: LocalDate): String {
     var changingFee by remember { mutableStateOf(false) }
     var feeAmount by remember { mutableStateOf("") }
     var feeTiming by remember { mutableStateOf("下月") }
+    var choosingFeeMonth by remember { mutableStateOf(false) }
     var feeMonth by remember { mutableStateOf(YearMonth.now().plusMonths(1).toString()) }
     var confirmedBalance by remember { mutableStateOf("") }
     var recordExpense by remember { mutableStateOf(false) }
@@ -95,7 +99,7 @@ private fun balanceHint(p: Plan, today: LocalDate): String {
     if(p.note.isNotBlank()) Text(p.note,modifier=Modifier.padding(vertical=12.dp))
     Text("话费记录",fontSize=19.sp,fontWeight=FontWeight.SemiBold,modifier=Modifier.padding(top=16.dp))
     l.payments.filter { it.planId==p.id }.sortedByDescending { it.date }.forEach {
-        Text("${it.date} · ${if(it.currency=="CNY") yuan(BigDecimal(it.amount)) else "${it.currency} ${it.amount}"} · ${it.note}",modifier=Modifier.padding(vertical=8.dp))
+        Text("${it.date} · ${if(it.currency=="CNY") yuan(it.signedAmount()) else "${it.currency} ${it.signedAmount().toPlainString()}"} · ${if(it.refundOf!=null) "退款" else it.note}",modifier=Modifier.padding(vertical=8.dp))
     }
     if(recharging) AlertDialog(onDismissRequest={recharging=false},title={Text("记录话费充值")},text={Column(Modifier.verticalScroll(rememberScrollState())) {
         MoneyField("充值金额",amount,{amount=it})
@@ -124,7 +128,11 @@ private fun balanceHint(p: Plan, today: LocalDate): String {
                 FilterChip(selected=feeTiming==timing,onClick={feeTiming=timing},label={Text(timing)})
             }
         }
-        if(feeTiming=="指定月份") Field("生效月份",feeMonth,{feeMonth=it})
+        if(feeTiming=="指定月份") OutlinedButton(onClick={choosingFeeMonth=true},modifier=Modifier.fillMaxWidth().semantics {contentDescription="选择生效月份"}) {
+            Icon(Icons.Outlined.CalendarMonth,null,Modifier.size(20.dp));Spacer(Modifier.width(8.dp))
+            val month=YearMonth.parse(feeMonth)
+            Text("${month.year}年${month.monthValue}月起生效")
+        }
         if(feeTiming=="立即") Text("从今天起，已记录扣费不变。",fontSize=13.sp)
         p.balanceAccount?.pendingFee?.let {
             TextButton({change { ledger -> Prepaid.cancelMonthlyFeeChange(ledger,p.id,today) };changingFee=false}) {Text("取消待生效调整")}
@@ -136,6 +144,9 @@ private fun balanceHint(p: Plan, today: LocalDate): String {
         Prepaid.changeMonthlyFee(l,p.id,value,effective,today)
         change {Prepaid.changeMonthlyFee(it,p.id,value,effective,today)};changingFee=false
     }catch(e:Exception) {error=e.message ?: "请检查月费与生效月份"}}) {Text("保存月费")}},dismissButton={TextButton({changingFee=false}) {Text("取消")}})
+    if(changingFee && choosingFeeMonth) MonthPickerDialog(feeMonth,
+        minimum=YearMonth.from(today).let {if(today.dayOfMonth==1) it else it.plusMonths(1)},
+        dismiss={choosingFeeMonth=false},confirm={feeMonth=it;choosingFeeMonth=false})
     if(calibrating) AlertDialog(onDismissRequest={calibrating=false},title={Text("校准余额")},text={Column(Modifier.verticalScroll(rememberScrollState())) {
         Text("今天的估算余额 ${yuan(Prepaid.balance(p,today))}")
         MoneyField("实际余额",confirmedBalance,{confirmedBalance=it;recordExpense=false})

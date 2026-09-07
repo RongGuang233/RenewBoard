@@ -15,12 +15,15 @@ import java.time.temporal.ChronoUnit
 @Serializable data class Device(
     val id: String = newId(), val name: String, val category: DeviceCategory = DeviceCategory.OTHER,
     val status: DeviceStatus = DeviceStatus.ACTIVE, val purchaseAmount: String,
-    val startDate: String? = null, val endDate: String? = null, val saleAmount: String? = null, val note: String = ""
+    val startDate: String? = null, val endDate: String? = null, val saleAmount: String? = null, val note: String = "",
+    val saleDate: String? = null
 )
 
 enum class DeviceSort(val label: String) { DATE("服役日期 · 最近"), PRICE("价格 · 最高"), SERVICE("服役时长 · 最长") }
 
 object Devices {
+    // Older sold records used endDate for both events; keep their stored data unchanged.
+    fun saleDate(device: Device): String? = if (device.status == DeviceStatus.SOLD) device.saleDate ?: device.endDate else null
     fun netCost(device: Device): BigDecimal = BigDecimal(device.purchaseAmount) -
         if(device.status==DeviceStatus.SOLD) BigDecimal(device.saleAmount ?: "0") else BigDecimal.ZERO
     fun list(items: List<Device>, status: DeviceStatus, query: String, sort: DeviceSort, today: LocalDate = LocalDate.now()): List<Device> {
@@ -38,15 +41,20 @@ object Devices {
         money(device.purchaseAmount)
         val start = device.startDate?.let(::date)
         val end = device.endDate?.let(::date)
+        val soldOn = saleDate(device)?.let(::date)
         if (device.status != DeviceStatus.WISHLIST) {
             require(start != null && start <= today) { "服役日期不能为空或晚于今天" }
             if (device.status == DeviceStatus.ACTIVE) require(end == null) { "服役中的设备无需结束日期" }
-            else require(end != null && end >= start && end <= today) { "结束日期应在服役日期至今天之间" }
+            else require(end != null && end >= start && end <= today) { "停止服役日期应在服役日期至今天之间" }
         } else require(end == null) { "待购买设备无需结束日期" }
         if (device.status == DeviceStatus.SOLD) {
+            require(soldOn != null && end != null && soldOn >= end && soldOn <= today) { "卖出日期应在停止服役日期至今天之间" }
             require(device.saleAmount != null) { "请填写卖出金额" }
             money(device.saleAmount)
-        } else require(device.saleAmount == null) { "仅已卖出设备填写卖出金额" }
+        } else {
+            require(device.saleAmount == null) { "仅已卖出设备填写卖出金额" }
+            require(device.saleDate == null) { "仅已卖出设备填写卖出日期" }
+        }
     }
     fun serviceDays(device: Device, today: LocalDate = LocalDate.now()): Long? {
         if (device.status == DeviceStatus.WISHLIST) return null

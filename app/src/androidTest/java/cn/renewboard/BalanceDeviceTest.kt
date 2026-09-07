@@ -165,4 +165,30 @@ class BalanceDeviceTest {
         assertTrue(cancelled.payments.isEmpty())
     }
 
+    @Test fun customFeeMonthSelectsYearAndMonthAndCancelDoesNotApply() {
+        val today=LocalDate.now()
+        val p=Plan(id="month-choice",name="月份选择话费",amount="39",billingAnchor=today.toString(),paidCycles=0,balanceAccount=BalanceAccount("200",today.toString()))
+        runBlocking {app.repository.update {Ledger(plans=listOf(p))}};compose.waitForIdle()
+        click(p.name);click("修改月费");click("指定月份")
+        compose.onNodeWithContentDescription("选择生效月份").performClick()
+        val nextYear=java.time.YearMonth.from(today).plusMonths(1).year+1
+        compose.onNodeWithContentDescription("下一年").performClick()
+        compose.onNodeWithContentDescription("生效月份 ${nextYear}年2月").performClick()
+        val picker=isDialog() and hasAnyDescendant(hasContentDescription("选择生效年份"))
+        compose.onNode(hasText("取消") and hasAnyAncestor(picker)).performClick()
+        val originalMonth=java.time.YearMonth.from(today).plusMonths(1)
+        compose.onNodeWithText("${originalMonth.year}年${originalMonth.monthValue}月起生效").assertExists()
+        assertNull(ledger().plans.single().balanceAccount!!.pendingFee)
+        compose.onNodeWithContentDescription("选择生效月份").performClick()
+        compose.onNodeWithContentDescription("下一年").performClick()
+        compose.onNodeWithContentDescription("生效月份 ${nextYear}年2月").performClick()
+        compose.onNode(hasText("确定") and hasAnyAncestor(picker)).performClick()
+        fill("新月费","29")
+        compose.onNodeWithText("保存月费",substring=false).performClick()
+        val saved=await {it.plans.single().balanceAccount?.pendingFee!=null}
+        assertEquals(MonthlyFeeChange("29","$nextYear-02-01"),saved.plans.single().balanceAccount!!.pendingFee)
+        assertEquals("39",saved.plans.single().amount)
+        assertTrue(saved.payments.isEmpty())
+    }
+
 }

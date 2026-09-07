@@ -115,16 +115,61 @@ class DeviceDraftDeviceTest {
         field("卖出金额（元）").performScrollTo().assertTextContains("1250.50")
         field("卖出日期").performScrollTo().assertTextContains(today.minusDays(1).toString())
         notes();field("设备备注").performScrollTo().assertTextContains("已转让，保留配件")
+        fill("卖出日期",today.minusDays(2).toString())
         save()
         val saved=awaitDevice {it?.status==DeviceStatus.SOLD}
         assertEquals(original.id,saved.id)
         assertEquals("3000",saved.purchaseAmount)
         assertEquals("1250.50",saved.saleAmount)
-        assertEquals(today.minusDays(1).toString(),saved.endDate)
+        assertEquals(today.minusDays(2).toString(),saved.endDate)
+        assertEquals(today.minusDays(2).toString(),saved.saleDate)
         assertEquals("已转让，保留配件",saved.note)
         assertTrue(runBlocking {app.repository.read()}.payments.isEmpty())
         assertNull(DraftStore(app).read("device:${original.id}"))
         compose.onNodeWithText("净花费").assertExists()
         compose.onNodeWithText("¥1749.50").assertExists()
     }
+    @Test fun retiredSaleRetainsStopDateAndManualDraftSurvivesRecreationAndStateChanges() {
+        val today=LocalDate.now()
+        val stopped=today.minusMonths(3).toString()
+        val original=Device(id="retired-draft",name="退役电脑",purchaseAmount="3000",
+            status=DeviceStatus.RETIRED,startDate=today.minusYears(1).toString(),endDate=stopped)
+        runBlocking {app.repository.update {it.copy(devices=listOf(original))}}
+        compose.onNodeWithContentDescription("筛选设备状态").performClick()
+        compose.onNode(hasText("已退役") and hasAnyAncestor(isPopup())).performClick()
+        compose.waitUntil(10000) {compose.onAllNodesWithText("退役电脑").fetchSemanticsNodes().isNotEmpty()}
+        click("退役电脑");click("编辑设备");awaitEditor()
+        selectStatus("已卖出")
+        field("卖出日期").performScrollTo().assertTextContains(today.toString())
+        field("停止服役日期").performScrollTo().assertTextContains(stopped)
+        fill("卖出日期",today.minusDays(2).toString())
+        fill("卖出金额（元）","1200")
+        compose.onNodeWithContentDescription("返回").performClick();click("保留草稿")
+        // Let the editor leave composition before ActivityScenario snapshots saved state.
+        // Otherwise its old restored=false flag can be captured alongside editing=false.
+        field("设备名称").assertDoesNotExist()
+        assertNotNull(DraftStore(app).read("device:${original.id}"))
+        compose.activityRule.scenario.recreate();compose.waitForIdle()
+        assertNotNull(DraftStore(app).read("device:${original.id}"))
+        click("编辑设备");awaitEditor()
+        compose.onNodeWithText("已恢复上次草稿").assertExists()
+        selectStatus("服役中");selectStatus("已卖出")
+        field("停止服役日期").performScrollTo().assertTextContains(stopped)
+        field("卖出日期").performScrollTo().assertTextContains(today.minusDays(2).toString())
+        fill("卖出日期",today.minusDays(1).toString())
+        field("停止服役日期").performScrollTo().assertTextContains(stopped)
+        save()
+        val saved=awaitDevice {it?.status==DeviceStatus.SOLD}
+        assertEquals(stopped,saved.endDate)
+        assertEquals(today.minusDays(1).toString(),saved.saleDate)
+        assertEquals(Devices.serviceDays(original),Devices.serviceDays(saved))
+        compose.onNodeWithText("停止服役日期",substring=false).assertExists()
+        compose.onNodeWithText("卖出日期",substring=false).assertExists()
+        click("编辑设备");awaitEditor();selectStatus("已退役");save()
+        val reverted=awaitDevice {it?.status==DeviceStatus.RETIRED}
+        assertEquals(stopped,reverted.endDate)
+        assertNull(reverted.saleDate)
+        assertNull(reverted.saleAmount)
+    }
+
 }

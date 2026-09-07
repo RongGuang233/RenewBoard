@@ -16,8 +16,8 @@ object LedgerStats {
         var known = BigDecimal.ZERO
         var missing = 0
         payments.forEach { payment ->
-            val amount = if (payment.currency == "CNY") payment.amount else payment.cnyAmount
-            if (amount == null) missing++ else known += BigDecimal(amount)
+            val amount = payment.signedCny()
+            if (amount == null) missing++ else known += amount
         }
         return CashSummary(known, missing, payments.size)
     }

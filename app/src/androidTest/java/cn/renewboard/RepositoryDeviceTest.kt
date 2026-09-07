@@ -128,6 +128,22 @@ class RepositoryDeviceTest {
         assertEquals(saved, repository.read())
     }
 
+    @Test fun refundsAndSeparateSaleDateSurviveReopenAndBackupRestore() = runBlocking {
+        val sold=Device(id="sold-separated",name="旧手机",status=DeviceStatus.SOLD,purchaseAmount="3000",
+            startDate="2026-01-01",endDate="2026-08-01",saleDate="2026-09-01",saleAmount="1000")
+        val ledger=Book.recordRefund(deviceLedger().copy(devices=listOf(sold)),"payment-device","9.90",java.time.LocalDate.parse("2026-09-02"))
+        repository.update {ledger}
+        database.close();openDatabase()
+        assertEquals(ledger,repository.read())
+        val backup=Book.decode(Book.encode(repository.read()))
+        repository.restore(Backup(data=Ledger()))
+        repository.restore(backup)
+        database.close();openDatabase()
+        assertEquals(ledger,repository.read())
+        assertEquals("payment-device",repository.read().payments.last().refundOf)
+        assertEquals("2026-09-01",Devices.saleDate(repository.read().devices.single()))
+    }
+
     @Test fun monthlyFeeCatchupIsAtomicAndPreservesDeletedReceiptState() = runBlocking {
         val p=Plan(id="phone-fee",name="中国移动",amount="30",billingAnchor="2024-01-31",paidCycles=0,
             balanceAccount=BalanceAccount("100","2024-01-01"))

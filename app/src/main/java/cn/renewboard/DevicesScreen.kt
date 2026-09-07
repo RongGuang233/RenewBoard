@@ -109,7 +109,11 @@ private fun deviceMoney(value: String) = "¥" + BigDecimal(value).setScale(2, Ro
                 }
                 HorizontalDivider()
                 device.startDate?.let { DeviceInfo(if(device.status==DeviceStatus.WISHLIST) "计划日期" else "服役日期",it) }
-                device.endDate?.let { DeviceInfo(if(device.status==DeviceStatus.SOLD) "卖出日期" else "退役日期",it) }
+                if(device.status==DeviceStatus.SOLD) {
+                    val soldOn=Devices.saleDate(device)
+                    if(device.endDate!=soldOn) device.endDate?.let {DeviceInfo("停止服役日期",it)}
+                    soldOn?.let {DeviceInfo(if(device.endDate==soldOn) "停止服役 / 卖出日期" else "卖出日期",it)}
+                } else device.endDate?.let {DeviceInfo("退役日期",it)}
                 if(device.status==DeviceStatus.SOLD) DeviceInfo("购入金额",deviceMoney(device.purchaseAmount))
                 device.saleAmount?.let { DeviceInfo("卖出金额",deviceMoney(it)) }
                 if(device.note.isNotBlank()) Text(device.note)
@@ -163,8 +167,22 @@ private fun deviceMoney(value: String) = "¥" + BigDecimal(value).setScale(2, Ro
 
 @Serializable private data class DeviceDraft(
     val id:String, val name:String, val category:DeviceCategory, val status:DeviceStatus,
-    val price:String, val start:String, val end:String, val sale:String, val note:String
-)
+    val price:String, val start:String, val end:String, val sale:String, val note:String,
+    val saleDate:String? = null, val independentEnd:Boolean = false
+) {
+    val soldOn: String get() = saleDate ?: end
+    fun statusChanged(value:DeviceStatus):DeviceDraft {
+        if(value==status) return this
+        return when(value) {
+            DeviceStatus.SOLD -> copy(status=value,
+                saleDate=saleDate ?: if(sale.isNotEmpty()) end else LocalDate.now().toString(),
+                end=if(status==DeviceStatus.RETIRED || independentEnd || saleDate!=null || sale.isNotEmpty()) end else LocalDate.now().toString(),
+                independentEnd=independentEnd || status==DeviceStatus.RETIRED)
+            DeviceStatus.RETIRED -> copy(status=value,independentEnd=true)
+            else -> copy(status=value)
+        }
+    }
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable private fun DeviceEditor(original:Device?,onClose:()->Unit,onSaved:(Device)->Unit) {
@@ -178,7 +196,10 @@ private fun deviceMoney(value: String) = "¥" + BigDecimal(value).setScale(2, Ro
         id=original?.id ?: newId(),name=original?.name ?: "",category=original?.category ?: DeviceCategory.PHONE,
         status=original?.status ?: DeviceStatus.ACTIVE,price=original?.purchaseAmount ?: "",
         start=original?.startDate ?: LocalDate.now().toString(),end=original?.endDate ?: LocalDate.now().toString(),
-        sale=original?.saleAmount ?: "",note=original?.note ?: ""))}
+        sale=original?.saleAmount ?: "",note=original?.note ?: "",
+        saleDate=original?.let(Devices::saleDate),
+        independentEnd=original?.status==DeviceStatus.RETIRED ||
+            (original?.status==DeviceStatus.SOLD && original.endDate!=Devices.saleDate(original)))) }
     val stored=remember(draftKey) {store.read(draftKey)?.takeIf {runCatching {Book.json.decodeFromString<DeviceDraft>(it)}.isSuccess}}
     var draftJson by rememberSaveable(draftKey) {mutableStateOf(stored ?: baselineJson)}
     val baseline=remember(baselineJson) {Book.json.decodeFromString<DeviceDraft>(baselineJson)}
@@ -207,7 +228,11 @@ private fun deviceMoney(value: String) = "¥" + BigDecimal(value).setScale(2, Ro
                 val saved=Device(id=draft.id,name=draft.name.trim(),category=draft.category,status=draft.status,
                     purchaseAmount=draft.price.trim(),startDate=draft.start.trim().ifEmpty {null},
                     endDate=if(draft.status==DeviceStatus.RETIRED || draft.status==DeviceStatus.SOLD) draft.end.trim().ifEmpty {null} else null,
-                    saleAmount=if(draft.status==DeviceStatus.SOLD) draft.sale.trim() else null,note=draft.note)
+                    saleAmount=if(draft.status==DeviceStatus.SOLD) draft.sale.trim() else null,note=draft.note,
+                    saleDate=if(draft.status!=DeviceStatus.SOLD) null
+                        else if(original?.status==DeviceStatus.SOLD && original.saleDate==null &&
+                            draft.soldOn==original.endDate && draft.end==original.endDate) null
+                        else draft.soldOn.trim().ifEmpty {null})
                 Devices.validate(saved)
                 focus.clearFocus();keyboard?.hide();saving=true
                 scope.launch {
@@ -233,12 +258,20 @@ private fun deviceMoney(value: String) = "¥" + BigDecimal(value).setScale(2, Ro
             Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)) {
                 Box(Modifier.weight(1f)) {DeviceCategoryPicker(draft.category) {value->update {it.copy(category=value)}}}
                 Box(Modifier.weight(1f)) {DeviceDropdown("状态",draft.status.label,DeviceStatus.entries.map {it.label},"选择设备状态") {label->
-                    update {it.copy(status=DeviceStatus.entries.single {item->item.label==label})}
+                    update {it.statusChanged(DeviceStatus.entries.single {item->item.label==label})}
                 }}
             }
             MoneyField(if(draft.status==DeviceStatus.WISHLIST) "购买预算（元）" else "购入金额（元）",draft.price,{value->update {it.copy(price=value)}})
             Field(if(draft.status==DeviceStatus.WISHLIST) "计划日期（选填）" else "服役日期",draft.start,{value->update {it.copy(start=value)}},dateField=true)
-            if(draft.status==DeviceStatus.RETIRED || draft.status==DeviceStatus.SOLD) Field(if(draft.status==DeviceStatus.SOLD) "卖出日期" else "退役日期",draft.end,{value->update {it.copy(end=value)}},dateField=true)
+            if(draft.status==DeviceStatus.RETIRED) Field("退役日期",draft.end,{value->update {it.copy(end=value,independentEnd=true)}},dateField=true)
+            if(draft.status==DeviceStatus.SOLD) {
+                Field("卖出日期",draft.soldOn,{value->update {it.copy(saleDate=value,end=if(it.independentEnd) it.end else value)}},dateField=true)
+                Row(Modifier.fillMaxWidth().clickable {update {it.copy(independentEnd=!it.independentEnd,end=if(it.independentEnd) it.soldOn else it.end)}},verticalAlignment=Alignment.CenterVertically) {
+                    Checkbox(checked=draft.independentEnd,onCheckedChange={checked->update {it.copy(independentEnd=checked,end=if(checked) it.end else it.soldOn)}})
+                    Text("停止服役日期不同",style=MaterialTheme.typography.bodyMedium)
+                }
+                if(draft.independentEnd) Field("停止服役日期",draft.end,{value->update {it.copy(end=value)}},dateField=true)
+            }
             if(draft.status==DeviceStatus.SOLD) MoneyField("卖出金额（元）",draft.sale,{value->update {it.copy(sale=value)}})
             TextButton(onClick={noteExpanded=!noteExpanded}) {Text("设备备注");Icon(if(noteExpanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore,null)}
             if(noteExpanded) Field("设备备注",draft.note,{value->update {it.copy(note=value)}})

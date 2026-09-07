@@ -136,7 +136,7 @@ private fun money(totals: Map<String,BigDecimal>) = if(totals.isEmpty()) "暂无
                 paymentOnlyRecord=false
                 paymentPlanId=if(intent.getStringExtra("subscriptionAction")=="pay" && ledger.plans.single{it.id==id}.balanceAccount==null) id else null
                 when(intent.getStringExtra("subscriptionAction")) {
-                    "snooze" -> {Jobs.snooze(c,id);message("已安排明天提醒")}
+                    "snooze" -> {Jobs.snooze(c,id,ledger);message("已安排明天提醒")}
                 }
             } else message("这项订阅已删除")
         }
@@ -203,28 +203,32 @@ private fun money(totals: Map<String,BigDecimal>) = if(totals.isEmpty()) "暂无
     var showExpired by rememberSaveable { mutableStateOf(false) }
     val forecast=Book.forecastSummary(l,today,today.plusDays(30))
     val soon=upcoming.count { ChronoUnit.DAYS.between(today,Book.expiry(it,l.plans.single { p->p.id==it.planId })) in 0..7 }
-    Title("订阅簿", "${today.monthValue} 月 ${today.dayOfMonth} 日",onAdd)
-    Card(colors=CardDefaults.cardColors(containerColor=Leaf),shape=RoundedCornerShape(28.dp),modifier=Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(24.dp)) {
-            Text("未来 30 天预计扣款",color=Color.White.copy(alpha=.8f),fontSize=15.sp)
-            Text("¥${forecast.known.setScale(2,RoundingMode.HALF_UP)}",fontSize=36.sp,lineHeight=44.sp,fontWeight=FontWeight.Bold,color=Color.White,modifier=Modifier.padding(vertical=16.dp))
+    Row(Modifier.fillMaxWidth().padding(vertical=10.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(12.dp)) {
+        Text("订阅簿",fontSize=28.sp,fontWeight=FontWeight.Bold,modifier=Modifier.weight(1f))
+        Text("${today.monthValue} 月 ${today.dayOfMonth} 日",fontSize=14.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
+        FilledTonalIconButton(onClick=onAdd,modifier=Modifier.size(48.dp)) {Icon(Icons.Outlined.Add,"记一笔订阅")}
+    }
+    Card(colors=CardDefaults.cardColors(containerColor=Leaf),shape=RoundedCornerShape(24.dp),modifier=Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(horizontal=20.dp,vertical=16.dp)) {
+            Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween) {
+                Text("未来 30 天预计扣款",color=Color.White.copy(alpha=.85f),fontSize=14.sp)
+                Text("${l.plans.count { !it.archived }} 个订阅",color=Color.White.copy(alpha=.85f),fontSize=13.sp)
+            }
+            Text("¥${forecast.known.setScale(2,RoundingMode.HALF_UP)}",fontSize=34.sp,lineHeight=42.sp,fontWeight=FontWeight.Bold,color=Color.White,modifier=Modifier.padding(top=8.dp))
             if(forecast.missingPlanIds.isNotEmpty()) {
                 Text("已知金额 · ${forecast.missingPlanIds.size} 项待补录",color=Color.White)
                 forecast.missingPlanIds.forEach { id -> TextButton(onClick={open(id)}) {Text("补录 ${l.plans.single{it.id==id}.name} →",color=Color.White)} }
             }
-            Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween) {
-                Text("${l.plans.count { !it.archived }} 个订阅",color=Color.White.copy(alpha=.8f))
-                Text("自动续费",color=Color.White.copy(alpha=.8f))
-            }
         }
     }
     val balances=l.plans.filter { it.balanceAccount!=null && !it.archived }
-    if(balances.isNotEmpty()) {
-        Section("话费余额")
-        balances.forEach { BalanceCard(it) { open(it.id) } }
+    val urgentBalances=balances.filter {Prepaid.balance(it,today).signum()<0 || Prepaid.rechargeDate(it)?.let {d->d<=today.plusDays(7)}==true}
+    if(urgentBalances.isNotEmpty()) {
+        Section("话费待充值")
+        urgentBalances.forEach {BalanceCard(it,compact=true) {open(it.id)}}
     }
     if(upcoming.isNotEmpty() || balances.isEmpty()) {
-    Row(Modifier.fillMaxWidth().padding(top=24.dp,bottom=12.dp),horizontalArrangement=Arrangement.SpaceBetween,verticalAlignment=Alignment.CenterVertically) {
+    Row(Modifier.fillMaxWidth().padding(top=20.dp,bottom=10.dp),horizontalArrangement=Arrangement.SpaceBetween,verticalAlignment=Alignment.CenterVertically) {
         Text("最近到期",fontSize=22.sp,fontWeight=FontWeight.Bold)
         if(soon>0) Surface(color=Color(0xFFFFE9D8),shape=RoundedCornerShape(12.dp)) { Text("本周 $soon 项",color=Amber,fontWeight=FontWeight.SemiBold,modifier=Modifier.padding(horizontal=12.dp,vertical=8.dp)) }
     }
@@ -235,8 +239,8 @@ private fun money(totals: Map<String,BigDecimal>) = if(totals.isEmpty()) "暂无
     upcoming.filter {showExpired || it !in expired}.forEach { benefit ->
         val plan=l.plans.single { it.id==benefit.planId }; val date=Book.expiry(benefit,plan); val days=ChronoUnit.DAYS.between(today,date)
         Card(onClick={open(plan.id)},colors=CardDefaults.cardColors(containerColor=Color.White),shape=RoundedCornerShape(20.dp),modifier=Modifier.fillMaxWidth().padding(bottom=10.dp)) {
-            Row(Modifier.padding(16.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(12.dp)) {
-                ServiceIcon(benefit.name)
+            Row(Modifier.padding(12.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(12.dp)) {
+                ServiceIcon(benefit.name,size=36.dp)
                 Column(Modifier.weight(1f)) {
                     Text(benefit.name,fontSize=17.sp,fontWeight=FontWeight.SemiBold)
                     Text("${date.monthValue} 月 ${date.dayOfMonth} 日" + if(benefit.name!=plan.name) " · ${plan.name}" else "",fontSize=14.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.padding(top=4.dp))
@@ -248,7 +252,13 @@ private fun money(totals: Map<String,BigDecimal>) = if(totals.isEmpty()) "暂无
             }
         }
     }
+    val healthyBalances=balances.filterNot {it in urgentBalances}
+    if(healthyBalances.isNotEmpty()) {
+        Section("话费余额")
+        healthyBalances.forEach {BalanceCard(it,compact=true) {open(it.id)}}
+    }
 }
+
 @Composable private fun Subscriptions(l: Ledger, onAdd:()->Unit, open: (String)->Unit) {
     var archived by rememberSaveable { mutableStateOf(false) }
     var query by rememberSaveable {mutableStateOf("")}
@@ -302,7 +312,7 @@ private fun money(totals: Map<String,BigDecimal>) = if(totals.isEmpty()) "暂无
             DropdownMenu(more,{more=false}) {
                 DropdownMenuItem(text={Text("编辑订阅与到期日")},onClick={more=false;onEdit()})
                 DropdownMenuItem(text={Text("仅补记付款")},onClick={more=false;recordPayment(true)})
-                DropdownMenuItem(text={Text("明天提醒")},onClick={more=false;Jobs.snooze(context,p.id);snoozed=true})
+                DropdownMenuItem(text={Text("明天提醒")},onClick={more=false;Jobs.snooze(context,p.id,l);snoozed=true})
                 DropdownMenuItem(text={Text(if(p.archived) "恢复使用" else "归档订阅")},onClick={more=false;change {it.copy(plans=it.plans.map {x->if(x.id==p.id)x.copy(archived=!x.archived) else x})}})
                 DropdownMenuItem(text={Text("删除订阅",color=MaterialTheme.colorScheme.error)},onClick={more=false;deleting=true})
             }
@@ -324,7 +334,7 @@ private fun money(totals: Map<String,BigDecimal>) = if(totals.isEmpty()) "暂无
     Section("此套餐已付记录")
     l.payments.filter {it.planId==p.id}.sortedByDescending {it.date}.forEach {receipt->
         TextButton(onClick={openPayment(receipt.id)},modifier=Modifier.fillMaxWidth()) {
-            Text(receipt.date,modifier=Modifier.weight(1f));Text(displayMoney(receipt.currency,receipt.amount));Icon(Icons.Outlined.ChevronRight,null)
+            Text((if(receipt.refundOf!=null) "退款 · " else "")+receipt.date,modifier=Modifier.weight(1f));Text(displayMoney(receipt.currency,receipt.signedAmount().toPlainString()));Icon(Icons.Outlined.ChevronRight,null)
         }
     }
     if(deleting) DeletePlanDialog(l,p,{deleting=false}) {include->change {Book.delete(it,p.id,include)};deleting=false;onDeleted()}

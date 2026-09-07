@@ -28,8 +28,11 @@ fun newId() = UUID.randomUUID().toString()
 @Serializable data class Payment(
     val id: String = newId(), val planId: String, val planName: String, val amount: String,
     val currency: String, val date: String, val note: String = "", val benefitIds: List<String> = emptyList(),
-    val cnyAmount: String? = null
+    val cnyAmount: String? = null, val refundOf: String? = null
 )
+data class RefundBalance(val amount: BigDecimal)
+fun Payment.signedAmount(): BigDecimal = BigDecimal(amount).let { if(refundOf == null) it else it.negate() }
+fun Payment.signedCny(): BigDecimal? = (if(currency == "CNY") amount else cnyAmount)?.let { BigDecimal(it) }?.let { if(refundOf == null) it else it.negate() }
 data class ForecastSummary(val known: BigDecimal, val missingPlanIds: List<String>)
 
 @Serializable data class Settings(val reminderDays: List<Int> = listOf(3, 0), val rates: Map<String, String> = emptyMap())
@@ -82,7 +85,7 @@ object Book {
                 total += amount
             } else {
                 val payment = l.payments.withIndex().filter { (_, p) ->
-                    p.planId == plan.id && p.currency == plan.currency && p.cnyAmount != null &&
+                    p.refundOf == null && p.planId == plan.id && p.currency == plan.currency && p.cnyAmount != null &&
                         BigDecimal(p.amount).signum() > 0 && LocalDate.parse(p.date) <= from
                 }.maxWithOrNull(compareBy<IndexedValue<Payment>> { LocalDate.parse(it.value.date) }.thenBy { it.index })?.value
                 if(payment==null) { missing += plan.id; return@forEach }
@@ -96,12 +99,12 @@ object Book {
         forecastSummary(l,from,until).let { if(it.missingPlanIds.isEmpty()) it.known else null }
     fun paid(l: Ledger, from: LocalDate? = null, until: LocalDate? = null): Map<String, BigDecimal> =
         Prepaid.expenses(l).filter { (from == null || LocalDate.parse(it.date) >= from) && (until == null || LocalDate.parse(it.date) < until) }
-            .groupBy { it.currency }.mapValues { (_, ps) -> ps.fold(BigDecimal.ZERO) { a, p -> a + BigDecimal(p.amount) } }
+            .groupBy { it.currency }.mapValues { (_, ps) -> ps.fold(BigDecimal.ZERO) { a, p -> a + p.signedAmount() } }
     // Historical payments use their recorded settlement amount, never today's exchange rate.
     fun paidCny(l: Ledger, from: LocalDate? = null, until: LocalDate? = null): BigDecimal? {
         var total = BigDecimal.ZERO
         Prepaid.expenses(l).filter { (from == null || LocalDate.parse(it.date) >= from) && (until == null || LocalDate.parse(it.date) < until) }
-            .forEach { p -> total += BigDecimal(if (p.currency == "CNY") p.amount else p.cnyAmount ?: return null) }
+            .forEach { p -> total += p.signedCny() ?: return null }
         return total
     }
     fun estimate(totals: Map<String, BigDecimal>, rates: Map<String, String>): BigDecimal? {
@@ -115,7 +118,7 @@ object Book {
         if(plan.balanceAccount!=null) return emptyList()
         val value=amount.trim().toBigDecimalOrNull() ?: return emptyList()
         return l.payments.filter { payment ->
-            payment.planId==planId && payment.currency==plan.currency && payment.date==date.toString() &&
+            payment.refundOf==null && payment.planId==planId && payment.currency==plan.currency && payment.date==date.toString() &&
                 payment.note !in paymentTypes && BigDecimal(payment.amount).compareTo(value)==0
         }
     }
@@ -166,7 +169,29 @@ object Book {
         payments = if (deletePayments) l.payments.filterNot { it.planId == id } else l.payments
     )
     // Removing a receipt does not undo recorded renewals or a balance calibration/top-up.
-    fun deletePayments(l: Ledger, ids: Set<String>) = l.copy(payments = l.payments.filterNot { it.id in ids })
+    fun paymentDeletionIds(l: Ledger, ids: Set<String>): Set<String> =
+        ids + l.payments.filter { it.refundOf in ids }.map { it.id }
+    fun deletePayments(l: Ledger, ids: Set<String>): Ledger {
+        val allIds = paymentDeletionIds(l, ids)
+        return l.copy(payments = l.payments.filterNot { it.id in allIds }).also(::validate)
+    }
+    fun refundable(l: Ledger, paymentId: String): RefundBalance {
+        val original = l.payments.single { it.id == paymentId }
+        require(original.refundOf == null) { "退款记录不能再次退款" }
+        require(!Prepaid.isTopUp(original)) { "充值不计支出，请通过余额校准调整账户" }
+        return refundBalance(original, l.payments.filter { it.refundOf == paymentId })
+    }
+    private fun refundBalance(original: Payment, refunds: List<Payment>): RefundBalance =
+        RefundBalance(BigDecimal(original.amount) - refunds.fold(BigDecimal.ZERO) { sum, p -> sum + BigDecimal(p.amount) })
+    /** Refunds are separate receipts on their own date; entitlement and balance are unchanged. */
+    fun recordRefund(l: Ledger, paymentId: String, amount: String, date: LocalDate, cnyAmount: String? = null, note: String = ""): Ledger {
+        val original = l.payments.single { it.id == paymentId }
+        refundable(l, paymentId)
+        val refund = Payment(planId = original.planId, planName = original.planName, amount = amount.trim(),
+            currency = original.currency, date = date.toString(), note = note.trim(),
+            cnyAmount = if(original.currency == "CNY") null else cnyAmount?.trim(), refundOf = original.id)
+        return l.copy(payments = l.payments + refund).also(::validate)
+    }
     fun validate(l: Ledger) {
         require(l.plans.size <= 10000 && l.benefits.size <= 50000 && l.payments.size <= 100000) { "记录数量超过支持范围" }
         fun money(s: String) { require(s.matches(Regex("[0-9]{1,12}(\\.[0-9]{1,4})?"))) { "金额格式错误（最多4位小数）" } }
@@ -193,6 +218,24 @@ object Book {
             }
         }
         l.payments.forEach { money(it.amount); it.cnyAmount?.let(::money); currency(it.currency); date(it.date); require(it.planName.isNotBlank()) }
+        val paymentsById = l.payments.associateBy { it.id }
+        l.payments.filter { it.refundOf != null }.groupBy { it.refundOf!! }.forEach { (originalId, refunds) ->
+            val original = paymentsById[originalId]
+            require(original != null && original.refundOf == null) { "退款必须关联原付款，且不能关联另一笔退款" }
+            require(!Prepaid.isTopUp(original)) { "充值记录不支持支出退款" }
+            refunds.forEach { refund ->
+                require(refund.planId == original.planId && refund.currency == original.currency) { "退款应用和币种必须与原付款一致" }
+                require(refund.note !in paymentTypes && refund.benefitIds.isEmpty()) { "退款不能变更权益或作为话费扣费、充值" }
+                require(BigDecimal(refund.amount).signum() > 0) { "退款金额必须大于0" }
+                require(LocalDate.parse(refund.date) >= LocalDate.parse(original.date)) { "退款日期不能早于原付款日期" }
+                if(refund.currency != "CNY") {
+                    require(original.cnyAmount != null) { "请先补录原付款的人民币实付金额" }
+                    require(refund.cnyAmount != null && BigDecimal(refund.cnyAmount).signum() > 0) { "请填写大于0的人民币实退金额" }
+                }
+            }
+            val remaining = refundBalance(original, refunds)
+            require(remaining.amount.signum() >= 0) { "累计退款不能超过原付款金额" }
+        }
         require(l.settings.reminderDays.distinct().size == l.settings.reminderDays.size && l.settings.reminderDays.all { it in 0..365 }) { "提醒天数应为0至365且不能重复" }
         l.settings.rates.forEach { (c, r) -> currency(c); money(r); require(BigDecimal(r) > BigDecimal.ZERO) }
     }

@@ -422,8 +422,8 @@ class MainActivityDeviceTest {
         compose.waitForIdle();compose.onNodeWithText("订阅",substring=false).performClick();click(plan.name)
         click("仅补记付款")
         compose.onNodeWithText("仅记账").assertIsSelected()
-        compose.onNodeWithText("本次续费 1 期").assertDoesNotExist()
-        fill("付款金额 ¥","19.50")
+        compose.onNodeWithText("本次续费 1个月").assertDoesNotExist()
+        fill("本次实付总额 ¥","19.50")
         fill("付款日期",today.minusMonths(1).toString())
         screenshot("subscription-record-only")
         compose.onNodeWithText("确认付款").performSemanticsAction(SemanticsActions.OnClick) {it()}
@@ -481,7 +481,7 @@ class MainActivityDeviceTest {
         runBlocking {app.repository.update {Ledger(plans=listOf(first,target),benefits=benefits)}}
         compose.waitForIdle();compose.onNodeWithText("订阅",substring=false).performClick();click(first.name)
         click("仅补记付款")
-        fill("付款金额 ¥","17.50")
+        fill("本次实付总额 ¥","17.50")
         fill("付款备注","A的未保存草稿")
         compose.onNodeWithText("仅记账").assertIsSelected()
         compose.activityRule.scenario.onActivity {activity->
@@ -493,7 +493,7 @@ class MainActivityDeviceTest {
         }
         compose.waitForIdle()
         compose.onNodeWithText("记录付款").assertExists()
-        compose.onNode(hasText("付款金额 ¥") and hasSetTextAction()).assertTextContains("45")
+        compose.onNode(hasText("本次实付总额 ¥") and hasSetTextAction()).assertTextContains("45")
         compose.onNodeWithText("续费",substring=false).assertIsSelected()
         compose.onNodeWithText("A的未保存草稿",substring=false).assertDoesNotExist()
         compose.onNodeWithText(target.name+"权益 → ",substring=true).assertExists()
@@ -541,6 +541,24 @@ class MainActivityDeviceTest {
         assertEquals(plan.billingAnchor,saved.plans.single().billingAnchor)
         assertEquals(plan.paidCycles+1,saved.plans.single().paidCycles)
         assertEquals(listOf(active.id),saved.payments.single().benefitIds)
+    }
+
+    @Test fun urgentExpiryStaysAboveHealthyBalanceWithCompactHeader() {
+        val today=java.time.LocalDate.now()
+        val plans=(0..5).map {i->Plan(id="home-$i",name="到期事项$i",amount="20",billingAnchor=today.toString())}
+        val benefits=plans.mapIndexed {i,p->Benefit(id="home-benefit-$i",planId=p.id,name=p.name,anchor=today.plusDays(i.toLong()).toString())}
+        val healthy=Plan(id="healthy",name="余额充足话费",amount="30",billingAnchor=today.toString(),paidCycles=0,balanceAccount=BalanceAccount("200",today.toString()))
+        val urgent=healthy.copy(id="urgent",name="需要充值话费",balanceAccount=BalanceAccount("-10",today.toString()))
+        runBlocking {app.repository.update {Ledger(plans=plans+listOf(healthy,urgent),benefits=benefits)}}
+        compose.waitForIdle()
+        compose.onNodeWithText("到期事项0",substring=false).assertIsDisplayed()
+        compose.onNodeWithText("到期事项1",substring=false).assertIsDisplayed()
+        compose.onNodeWithText("需要充值话费",substring=false).assertIsDisplayed()
+        // boundsInRoot clips off-screen rows to zero; compare their layout positions instead.
+        val dueTop=compose.onNodeWithText("到期事项0",substring=false).fetchSemanticsNode().positionInRoot.y
+        val balanceTop=compose.onNodeWithText("余额充足话费",substring=false).fetchSemanticsNode().positionInRoot.y
+        assertTrue(dueTop<balanceTop)
+        screenshot("home-compact-priority")
     }
 
 }

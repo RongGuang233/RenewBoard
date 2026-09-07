@@ -2,6 +2,8 @@ package cn.renewboard
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.verticalScroll
@@ -22,8 +24,18 @@ import java.time.LocalDate
 
 @Serializable internal data class PaymentDraft(
     val planId: String, val amount: String, val date: String, val note: String = "", val cnyAmount: String = "",
-    val onlyRecord: Boolean = false, val selected: Set<String> = emptySet(), val restart: Boolean? = null, val periods: String = "1"
+    val onlyRecord: Boolean = false, val selected: Set<String> = emptySet(), val restart: Boolean? = null, val periods: String = "1", val amountEdited:Boolean = true
 )
+
+internal fun PaymentDraft.withPeriods(p:Plan,value:String):PaymentDraft {
+    val count=value.toIntOrNull()?.takeIf {it in 1..120}
+    return copy(periods=value,amount=if(!amountEdited && count!=null) p.amount.toBigDecimal().multiply(count.toBigDecimal()).toPlainString() else amount)
+}
+internal fun renewalDuration(p:Plan,periods:String):String {
+    val count=periods.toIntOrNull()?.takeIf {it in 1..120}?.times(p.interval)
+    val unit=when(p.cycle) {Cycle.MONTH->"个月";Cycle.WEEK->"周";Cycle.YEAR->"年"}
+    return "${count ?: "—"}$unit"
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable internal fun PaymentEditor(l: Ledger,p: Plan,initialOnlyRecord: Boolean = false,close: () -> Unit,save: suspend ((Ledger) -> Ledger) -> Unit) {
@@ -31,7 +43,7 @@ import java.time.LocalDate
     val store=remember {DraftStore(context)}
     val draftKey="payment:${p.id}"
     val benefits=l.benefits.filter {it.planId==p.id}
-    val defaults=remember(p.id) {PaymentDraft(p.id,p.amount,LocalDate.now().toString(),onlyRecord=initialOnlyRecord,selected=benefits.map {it.id}.toSet())}
+    val defaults=remember(p.id) {PaymentDraft(p.id,p.amount,LocalDate.now().toString(),onlyRecord=initialOnlyRecord,selected=benefits.map {it.id}.toSet(),amountEdited=false)}
     val restored=remember(p.id) {runCatching {store.read(draftKey)?.let {Book.json.decodeFromString<PaymentDraft>(it)}}.getOrNull()?.takeIf {it.planId==p.id}}
     var draft by remember(p.id) {mutableStateOf(restored?.copy(selected=restored.selected.intersect(benefits.map {it.id}.toSet())) ?: defaults)}
     var recovered by remember(p.id) {mutableStateOf(restored!=null)}
@@ -44,8 +56,9 @@ import java.time.LocalDate
     var saving by remember {mutableStateOf(false)}
     var error by remember {mutableStateOf<String?>(null)}
     val scope=rememberCoroutineScope()
-    fun update(next: PaymentDraft) {draft=next;if(next==defaults) {store.remove(draftKey);recovered=false} else store.write(draftKey,Book.json.encodeToString(next));error=null}
-    fun leave() {if(saving) return; if(draft!=defaults || recovered) showExit=true else close()}
+    fun unchanged(entry:PaymentDraft)=entry.copy(amountEdited=defaults.amountEdited)==defaults
+    fun update(next: PaymentDraft) {draft=next;if(unchanged(next)) {store.remove(draftKey);recovered=false} else store.write(draftKey,Book.json.encodeToString(next));error=null}
+    fun leave() {if(saving) return; if(!unchanged(draft) || recovered) showExit=true else close()}
     BackHandler {leave()}
     val selected=draft.selected.intersect(benefits.map {it.id}.toSet())
     val expired=runCatching {benefits.filter {it.id in selected}.any {Book.expiry(it,p)<LocalDate.parse(draft.date)}}.getOrDefault(false)
@@ -69,7 +82,8 @@ import java.time.LocalDate
             }
         } catch(e: Exception) {error=if(e is java.time.format.DateTimeParseException) "请检查付款日期" else e.message ?: "请检查输入"}
     }
-    val preview=runCatching {updated(l)}.getOrNull()
+    // Date preview does not depend on having entered the actual settlement amount yet.
+    val preview=runCatching {updated(l,draft.copy(amount=p.amount,cnyAmount=if(p.currency!="CNY") "0" else "",note=""))}.getOrNull()
     Scaffold(modifier=Modifier.imePadding(),topBar={TopAppBar(title={Text("记录付款")},navigationIcon={PageBack(back=::leave)},windowInsets=WindowInsets(0,0,0,0))},
         bottomBar={Surface {Column(Modifier.fillMaxWidth().padding(horizontal=20.dp,vertical=12.dp)) {
             error?.let {Text(it,color=MaterialTheme.colorScheme.error,modifier=Modifier.padding(bottom=8.dp))}
@@ -85,12 +99,13 @@ import java.time.LocalDate
                 FilterChip(!draft.onlyRecord,{update(draft.copy(onlyRecord=false))},label={Text("续费")},enabled=!saving)
                 FilterChip(draft.onlyRecord,{update(draft.copy(onlyRecord=true))},label={Text("仅记账")},enabled=!saving)
             }
-            MoneyField("付款金额 ${if(p.currency=="CNY") "¥" else p.currency}",draft.amount,{update(draft.copy(amount=it))})
+            MoneyField("本次实付总额 ${if(p.currency=="CNY") "¥" else p.currency}",draft.amount,{update(draft.copy(amount=it,amountEdited=true))})
             Field("付款日期",draft.date,{update(draft.copy(date=it,restart=null))},dateField=true)
             if(p.currency!="CNY") MoneyField("人民币实付金额",draft.cnyAmount,{update(draft.copy(cnyAmount=it))})
             if(!draft.onlyRecord) {
-                TextButton(onClick={periodsExpanded=!periodsExpanded},contentPadding=PaddingValues(0.dp)) {Text("本次续费 ${draft.periods.ifBlank {"—"}} 期");Icon(Icons.Outlined.ExpandMore,null)}
-                if(periodsExpanded) MoneyField("续费期数",draft.periods,{update(draft.copy(periods=it))})
+                TextButton(onClick={periodsExpanded=!periodsExpanded},contentPadding=PaddingValues(0.dp)) {Text("本次续费 ${renewalDuration(p,draft.periods)}");Icon(Icons.Outlined.ExpandMore,null)}
+                if(periodsExpanded) OutlinedTextField(draft.periods,{update(draft.withPeriods(p,it))},label={Text("续费期数")},
+                    suffix={Text("每期${renewalDuration(p,"1")}")},keyboardOptions=KeyboardOptions(keyboardType=KeyboardType.Number),singleLine=true,modifier=Modifier.fillMaxWidth())
                 if(expired) {
                     Row(Modifier.fillMaxWidth().selectable(restarting,role=Role.RadioButton,onClick={update(draft.copy(restart=true))}),verticalAlignment=Alignment.CenterVertically) {RadioButton(restarting,null);Text("从付款日重新开通")}
                     Row(Modifier.fillMaxWidth().selectable(!restarting,role=Role.RadioButton,onClick={update(draft.copy(restart=false))}),verticalAlignment=Alignment.CenterVertically) {RadioButton(!restarting,null);Text("补交原周期账单")}
