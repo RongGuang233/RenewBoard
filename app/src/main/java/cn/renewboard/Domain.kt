@@ -60,6 +60,14 @@ object Book {
                 index++; date = advance(LocalDate.parse(p.billingAnchor), p.cycle, index * p.interval)
             }
         }
+        l.plans.filter { it.autoRenew && !it.archived && it.balanceAccount != null }.forEach { p ->
+            var after=maxOf(from.minusDays(1),LocalDate.parse(p.balanceAccount!!.asOf))
+            var date=Prepaid.nextDeduction(p,after)
+            while(date<until) {
+                totals["CNY"]=(totals["CNY"] ?: BigDecimal.ZERO)+BigDecimal(p.amount)
+                after=date;date=Prepaid.nextDeduction(p,after)
+            }
+        }
         return totals
     }
     // Forecast uses the latest recorded settlement ratio for each plan, not mutable settings rates.
@@ -82,12 +90,12 @@ object Book {
         return total
     }
     fun paid(l: Ledger, from: LocalDate? = null, until: LocalDate? = null): Map<String, BigDecimal> =
-        l.payments.filter { (from == null || LocalDate.parse(it.date) >= from) && (until == null || LocalDate.parse(it.date) < until) }
+        Prepaid.expenses(l).filter { (from == null || LocalDate.parse(it.date) >= from) && (until == null || LocalDate.parse(it.date) < until) }
             .groupBy { it.currency }.mapValues { (_, ps) -> ps.fold(BigDecimal.ZERO) { a, p -> a + BigDecimal(p.amount) } }
     // Historical payments use their recorded settlement amount, never today's exchange rate.
     fun paidCny(l: Ledger, from: LocalDate? = null, until: LocalDate? = null): BigDecimal? {
         var total = BigDecimal.ZERO
-        l.payments.filter { (from == null || LocalDate.parse(it.date) >= from) && (until == null || LocalDate.parse(it.date) < until) }
+        Prepaid.expenses(l).filter { (from == null || LocalDate.parse(it.date) >= from) && (until == null || LocalDate.parse(it.date) < until) }
             .forEach { p -> total += BigDecimal(if (p.currency == "CNY") p.amount else p.cnyAmount ?: return null) }
         return total
     }
@@ -135,7 +143,7 @@ object Book {
                 require(p.currency == "CNY" && p.cycle == Cycle.MONTH && p.interval == 1) { "余额账户按人民币月费管理" }
                 money(account.balance.removePrefix("-"))
                 date(account.asOf)
-                require(LocalDate.parse(account.asOf)<=LocalDate.now()) { "余额日期不能晚于今天" }
+                require(LocalDate.parse(account.asOf)<=LocalDate.now()) { "余额查询日期不能晚于今天" }
             }
         }
         l.payments.forEach { money(it.amount); it.cnyAmount?.let(::money); currency(it.currency); date(it.date); require(it.planName.isNotBlank()) }

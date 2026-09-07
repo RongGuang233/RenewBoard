@@ -50,6 +50,10 @@ class GrantedReminderWorkerDeviceTest {
             val repository = Repository(database)
             app.repository = repository
             repository.update { withPhone }
+            repository.recordMonthlyFees(today)
+            val settled=repository.read()
+            assertEquals("话费扣费",settled.payments.single().note)
+            assertEquals("30",settled.payments.single().amount)
             assertTrue(manager.areNotificationsEnabled())
             assertEquals(ListenableWorker.Result.success(),
                 TestListenableWorkerBuilder<ReminderWorker>(app).build().doWork())
@@ -74,7 +78,7 @@ class GrantedReminderWorkerDeviceTest {
             assertEquals(first.key, second.key)
             assertEquals(first.postTime, second.postTime)
             assertEquals(firstBalance.postTime,manager.activeNotifications.single { it.tag==balanceKey }.postTime)
-            assertEquals(withPhone, repository.read())
+            assertEquals(settled, repository.read())
         } finally {
             manager.cancel(key, 0)
             manager.cancel(balanceKey,0)

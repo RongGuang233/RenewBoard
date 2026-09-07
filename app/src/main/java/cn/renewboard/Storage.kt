@@ -32,6 +32,16 @@ class Repository(val db: BookDatabase, private val changed: () -> Unit = {}) {
         }
         changed()
     }
+    suspend fun recordMonthlyFees(today:java.time.LocalDate=java.time.LocalDate.now()) {
+        val didChange=db.withTransaction {
+            val old=read();val next=Prepaid.accrue(old,today)
+            if(next==old) false else {
+                Book.validate(next)
+                db.book().put(BookRow(payload=Book.json.encodeToString(next)));true
+            }
+        }
+        if(didChange) changed()
+    }
     suspend fun restore(backup: Backup) { Book.validate(backup.data); update { backup.data } }
 }
 class RenewApp: Application() {

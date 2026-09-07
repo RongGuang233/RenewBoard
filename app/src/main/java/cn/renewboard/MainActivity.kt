@@ -28,6 +28,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.launch
 import java.time.LocalDate
 import java.time.temporal.ChronoUnit
@@ -67,6 +70,12 @@ private fun money(totals: Map<String,BigDecimal>) = if(totals.isEmpty()) "暂无
 @Composable fun RenewBoard() {
     val c = LocalContext.current; val repo = remember { c.repository() }
     val ledger by repo.flow.collectAsStateWithLifecycle(initialValue=Ledger())
+    val lifecycleOwner=LocalLifecycleOwner.current
+    LaunchedEffect(ledger.plans,lifecycleOwner) {
+        lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            repo.recordMonthlyFees()
+        }
+    }
     var tab by rememberSaveable { mutableIntStateOf(0) }
     var subpage by remember(tab) { mutableStateOf(false) }
     var editId by rememberSaveable { mutableStateOf<String?>(null) }; var creating by rememberSaveable { mutableStateOf(false) }
@@ -215,6 +224,7 @@ private fun money(totals: Map<String,BigDecimal>) = if(totals.isEmpty()) "暂无
     var prepaid by rememberSaveable { mutableStateOf(existing?.balanceAccount!=null) }
     var balance by rememberSaveable { mutableStateOf(existing?.balanceAccount?.let { Prepaid.balance(existing,today).toPlainString() } ?: "") }
     var balanceDate by rememberSaveable { mutableStateOf(today.toString()) }
+    var deductionDay by rememberSaveable { mutableStateOf(existing?.billingAnchor?.let { LocalDate.parse(it).dayOfMonth.toString() } ?: "1") }
     var name by rememberSaveable { mutableStateOf(existing?.name ?: "") }; var amount by rememberSaveable { mutableStateOf(existing?.amount ?: "") }
     var currency by rememberSaveable { mutableStateOf(existing?.currency ?: "CNY") }; var cycle by remember { mutableStateOf(existing?.cycle ?: Cycle.MONTH) }
     var interval by rememberSaveable { mutableStateOf((existing?.interval ?: 1).toString()) }; var auto by rememberSaveable { mutableStateOf(existing?.autoRenew ?: true) }
@@ -255,10 +265,12 @@ private fun money(totals: Map<String,BigDecimal>) = if(totals.isEmpty()) "暂无
     }
     Field(if(prepaid) "每月扣费金额" else "套餐价格",amount,{amount=it})
     if(prepaid) {
-        Field("当前余额",balance,{balance=it})
-        Field("余额日期",balanceDate,{balanceDate=it},dateField=true)
-        Field("每月扣费日期",anchor,{anchor=it},dateField=true)
-        Hint("余额填当天扣费后的金额；按固定月费估算，可随时校准。")
+        Field("查询到的余额",balance,{balance=it})
+        Field("余额查询日期",balanceDate,{balanceDate=it},dateField=true)
+        Hint("填写运营商显示的余额，以及查到这笔余额的日期，默认今天。")
+        OutlinedTextField(deductionDay,{deductionDay=it},label={Text("每月扣费日")},suffix={Text("日")},
+            keyboardOptions=KeyboardOptions(keyboardType=KeyboardType.Number),singleLine=true,modifier=Modifier.fillMaxWidth())
+        Hint("每月 1–31 日；无该日期时按月末。查询日期之后的月费计入账本。")
     } else {
     Field("币种，如 CNY / USD",currency,{currency=it.trim().uppercase()})
     Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(12.dp),verticalAlignment=Alignment.CenterVertically) {
@@ -306,9 +318,18 @@ private fun money(totals: Map<String,BigDecimal>) = if(totals.isEmpty()) "暂无
     Field("备注",note,{note=it})
     if(error.isNotBlank()) Text(error,color=MaterialTheme.colorScheme.error)
     Button(onClick={ try {
-        if(prepaid) require(LocalDate.parse(balanceDate)<=today) { "余额日期不能晚于今天" }
+        if(prepaid) {
+            require(LocalDate.parse(balanceDate)<=today) { "余额查询日期不能晚于今天" }
+            existing?.balanceAccount?.let { require(LocalDate.parse(balanceDate)>=LocalDate.parse(it.asOf)) { "余额查询日期不能早于最近余额记录 ${it.asOf}" } }
+        }
+        val billingAnchor=if(prepaid) {
+            val day=deductionDay.toIntOrNull()
+            require(day!=null && day in 1..31) { "每月扣费日请填写 1–31" }
+            if(existing?.balanceAccount!=null && LocalDate.parse(existing.billingAnchor).dayOfMonth==day) existing.billingAnchor
+            else LocalDate.of(LocalDate.parse(balanceDate).year,1,day).toString()
+        } else anchor
         val p=Plan(id,name.trim(),amount,if(prepaid) "CNY" else currency,if(prepaid) Cycle.MONTH else cycle,
-            if(prepaid) 1 else interval.toInt(),if(prepaid) true else auto,anchor,
+            if(prepaid) 1 else interval.toInt(),if(prepaid) true else auto,billingAnchor,
             if(prepaid) 0 else existing?.paidCycles ?: if(paid) 1 else 0,existing?.archived ?: false,note,
             if(prepaid) BalanceAccount(balance,balanceDate) else null)
         val bs=if(prepaid) l.benefits.filter { it.planId==id } else benefits.map { b ->

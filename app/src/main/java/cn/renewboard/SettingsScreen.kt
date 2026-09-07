@@ -216,7 +216,13 @@ private enum class SettingsPage(val title: String) {
                         }
                     }
                     SettingsPage.ABOUT -> {
-                        SettingsPanel { UpdateSection() }
+                        SettingsPanel {
+                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Text("订阅簿", fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
+                                SettingsNote("作者 RongGuang233")
+                            }
+                            UpdateSection()
+                        }
                         SettingsGroup("关于订阅簿") {
                             SettingsLink("开源许可证", "MIT", Icons.Outlined.Description) { navigate(SettingsPage.LICENSES) }
                         }

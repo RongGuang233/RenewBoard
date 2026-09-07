@@ -47,9 +47,18 @@ class SettingsNavigationDeviceTest {
         compose.onNodeWithText("返回", substring = false).performClick()
 
         compose.onNodeWithText("更新与关于").performScrollTo().performClick()
+        compose.onNodeWithText("作者 RongGuang233", substring = false).assertIsDisplayed()
+        compose.onNodeWithText("当前版本 ${BuildConfig.VERSION_NAME}").assertIsDisplayed()
+        compose.waitForIdle()
+        val aboutBitmap = InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()
+        java.io.File(compose.activity.filesDir, "settings-about.png").outputStream().use {
+            aboutBitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it)
+        }
+        aboutBitmap.recycle()
         compose.onNodeWithText("开源许可证").performScrollTo().performClick()
         back()
         compose.onNodeWithText("更新与关于").assertExists()
+        compose.onNodeWithText("作者 RongGuang233", substring = false).assertIsDisplayed()
         try {compose.onNodeWithText("检查更新", substring = false).assertExists()}
         catch(e:AssertionError) {throw AssertionError(compose.onRoot(useUnmergedTree=true).printToString(),e)}
         back()

@@ -13,6 +13,10 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
@@ -55,47 +59,54 @@ private fun deviceMoney(value: String) = "¥" + BigDecimal(value).setScale(2, Ro
                 selectedId=saved.id; editing=false
             }) }
         } else if(selectedId!=null) {
-            if(device!=null) Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),verticalArrangement=Arrangement.spacedBy(16.dp)) {
-                Icon(deviceIcon(device.category),null,Modifier.size(52.dp),tint=MaterialTheme.colorScheme.primary)
-                Text(device.name,fontSize=28.sp,fontWeight=FontWeight.Bold)
-                Text("${device.category.label} · ${device.status.label}",color=MaterialTheme.colorScheme.onSurfaceVariant)
-                Card(colors=CardDefaults.cardColors(containerColor=Color.White),modifier=Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(20.dp),verticalArrangement=Arrangement.spacedBy(8.dp)) {
-                        Text(if(device.status==DeviceStatus.WISHLIST) "购买预算" else "购入金额")
-                        Text(deviceMoney(device.purchaseAmount),fontSize=32.sp,fontWeight=FontWeight.Bold,color=MaterialTheme.colorScheme.primary)
-                        Devices.serviceDays(device)?.let { Text("已服役 $it 天",fontSize=20.sp,fontWeight=FontWeight.SemiBold) }
-                        Devices.dailyCost(device)?.let { Text("日均 ${deviceMoney(it.toPlainString())}") }
+            if(device!=null) Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal=20.dp,vertical=12.dp),verticalArrangement=Arrangement.spacedBy(14.dp)) {
+                Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(12.dp)) {
+                    Icon(deviceIcon(device.category),null,Modifier.size(28.dp),tint=MaterialTheme.colorScheme.primary)
+                    Column(Modifier.weight(1f)) {
+                        Text(device.name,fontSize=23.sp,fontWeight=FontWeight.Bold)
+                        Text("${device.category.label} · ${device.status.label}",style=MaterialTheme.typography.bodyMedium,color=MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
-                if(device.status!=DeviceStatus.WISHLIST) Text("日均按购入金额 ÷ 服役天数计算，首日计1天。",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
-                device.startDate?.let { Text("${if(device.status==DeviceStatus.WISHLIST) "计划日期" else "开始服役"}  $it") }
-                device.endDate?.let { Text("结束服役  $it") }
-                device.saleAmount?.let { Text("卖出金额  ${deviceMoney(it)}") }
+                Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween,verticalAlignment=Alignment.CenterVertically) {
+                    Column {
+                        Text(if(device.status==DeviceStatus.WISHLIST) "购买预算" else "购入金额",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(deviceMoney(device.purchaseAmount),fontSize=26.sp,fontWeight=FontWeight.Bold,color=MaterialTheme.colorScheme.primary)
+                    }
+                    Devices.serviceDays(device)?.let { days -> Column(horizontalAlignment=Alignment.End) {
+                        Text("已服役 $days 天",fontWeight=FontWeight.SemiBold)
+                        Devices.dailyCost(device)?.let { Text("日均 ${deviceMoney(it.toPlainString())}",style=MaterialTheme.typography.bodyMedium,color=MaterialTheme.colorScheme.onSurfaceVariant) }
+                    } }
+                }
+                HorizontalDivider()
+                device.startDate?.let { DeviceInfo(if(device.status==DeviceStatus.WISHLIST) "计划日期" else "服役日期",it) }
+                device.endDate?.let { DeviceInfo(if(device.status==DeviceStatus.SOLD) "卖出日期" else "退役日期",it) }
+                device.saleAmount?.let { DeviceInfo("卖出金额",deviceMoney(it)) }
                 if(device.note.isNotBlank()) Text(device.note)
-                Button(onClick={editing=true},modifier=Modifier.fillMaxWidth()) { Text("编辑设备") }
-                TextButton(onClick={deleting=true},modifier=Modifier.fillMaxWidth()) { Text("删除设备",color=MaterialTheme.colorScheme.error) }
+                if(device.status!=DeviceStatus.WISHLIST) Text("日均 = 购入金额 ÷ 服役天数，首日计1天",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                Row(horizontalArrangement=Arrangement.spacedBy(12.dp)) {
+                    Button(onClick={editing=true},modifier=Modifier.weight(1f)) { Text("编辑设备") }
+                    TextButton(onClick={deleting=true}) { Text("删除设备",color=MaterialTheme.colorScheme.error) }
+                }
             }
-        } else Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal=20.dp).padding(bottom=24.dp),verticalArrangement=Arrangement.spacedBy(16.dp)) {
-            Row(Modifier.fillMaxWidth().padding(top=16.dp),verticalAlignment=Alignment.CenterVertically) {
-                Text("我的设备",fontSize=28.sp,fontWeight=FontWeight.Bold,modifier=Modifier.weight(1f))
+        } else Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal=20.dp).padding(bottom=24.dp),verticalArrangement=Arrangement.spacedBy(10.dp)) {
+            Row(Modifier.fillMaxWidth().padding(top=12.dp),verticalAlignment=Alignment.CenterVertically) {
+                Text("我的设备",fontSize=26.sp,fontWeight=FontWeight.Bold,modifier=Modifier.weight(1f))
                 FilledTonalIconButton(onClick={selectedId=null;editing=true}) { Icon(Icons.Outlined.Add,"添加设备") }
             }
-            Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(4.dp)) {
-                DeviceStatus.entries.forEach { status ->
-                    FilterChip(selected=filter==status.name,onClick={filter=status.name},label={Text(status.label,fontSize=12.sp)},modifier=Modifier.weight(1f))
-                }
+            DeviceDropdown("",DeviceStatus.valueOf(filter).label,DeviceStatus.entries.map { it.label },"筛选设备状态") { label ->
+                filter=DeviceStatus.entries.single {it.label==label}.name
             }
             val visible=l.devices.filter { it.status.name==filter }
             if(visible.isEmpty()) {
-                Text("还没有${DeviceStatus.valueOf(filter).label}的设备",fontSize=20.sp,modifier=Modifier.padding(top=32.dp))
+                Text("还没有${DeviceStatus.valueOf(filter).label}的设备",fontSize=18.sp,modifier=Modifier.padding(top=20.dp))
                 Text("记录设备，看看它陪伴了你多久。",color=MaterialTheme.colorScheme.onSurfaceVariant)
             }
             visible.forEach { item ->
-                Card(Modifier.fillMaxWidth().clickable {selectedId=item.id},shape=RoundedCornerShape(20.dp),colors=CardDefaults.cardColors(containerColor=Color.White)) {
-                    Row(Modifier.padding(18.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(14.dp)) {
-                        Icon(deviceIcon(item.category),null,Modifier.size(36.dp),tint=MaterialTheme.colorScheme.primary)
-                        Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(5.dp)) {
-                            Text(item.name,fontSize=18.sp,fontWeight=FontWeight.SemiBold)
+                Card(Modifier.fillMaxWidth().clickable {selectedId=item.id},shape=RoundedCornerShape(14.dp),colors=CardDefaults.cardColors(containerColor=Color.White)) {
+                    Row(Modifier.padding(14.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(10.dp)) {
+                        Icon(deviceIcon(item.category),null,Modifier.size(26.dp),tint=MaterialTheme.colorScheme.primary)
+                        Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(3.dp)) {
+                            Text(item.name,fontSize=16.sp,fontWeight=FontWeight.SemiBold)
                             Text(Devices.serviceDays(item)?.let {"服役 $it 天"} ?: "购买预算",color=MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                         Text(deviceMoney(item.purchaseAmount),fontWeight=FontWeight.SemiBold)
@@ -120,19 +131,19 @@ private fun deviceMoney(value: String) = "¥" + BigDecimal(value).setScale(2, Ro
     var note by rememberSaveable { mutableStateOf(original?.note ?: "") }
     var error by remember { mutableStateOf<String?>(null) }
     val currentStatus=DeviceStatus.valueOf(status)
-    Column(Modifier.fillMaxSize().imePadding().verticalScroll(rememberScrollState()).padding(20.dp),verticalArrangement=Arrangement.spacedBy(12.dp)) {
+    Column(Modifier.fillMaxSize().imePadding().verticalScroll(rememberScrollState()).padding(horizontal=20.dp,vertical=8.dp),verticalArrangement=Arrangement.spacedBy(8.dp)) {
         Field("设备名称",name,{name=it})
-        Text("分类",fontWeight=FontWeight.SemiBold)
-        DeviceCategory.entries.chunked(3).forEach { row -> Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) { row.forEach { item ->
-            FilterChip(selected=category==item.name,onClick={category=item.name},label={Text(item.label)})
-        } } }
-        Text("状态",fontWeight=FontWeight.SemiBold)
-        DeviceStatus.entries.chunked(2).forEach {row -> Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) { row.forEach { item ->
-            FilterChip(selected=status==item.name,onClick={status=item.name},label={Text(item.label)})
-        } } }
+        Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+            Box(Modifier.weight(1f)) { DeviceDropdown("分类",DeviceCategory.valueOf(category).label,DeviceCategory.entries.map {it.label},"选择设备分类") { label ->
+                category=DeviceCategory.entries.single {it.label==label}.name
+            } }
+            Box(Modifier.weight(1f)) { DeviceDropdown("状态",currentStatus.label,DeviceStatus.entries.map {it.label},"选择设备状态") { label ->
+                status=DeviceStatus.entries.single {it.label==label}.name
+            } }
+        }
         Field(if(currentStatus==DeviceStatus.WISHLIST) "购买预算（元）" else "购入金额（元）",price,{price=it})
         Field(if(currentStatus==DeviceStatus.WISHLIST) "计划日期（选填）" else "服役日期",start,{start=it},dateField=true)
-        if(currentStatus==DeviceStatus.RETIRED || currentStatus==DeviceStatus.SOLD) Field("结束日期",end,{end=it},dateField=true)
+        if(currentStatus==DeviceStatus.RETIRED || currentStatus==DeviceStatus.SOLD) Field(if(currentStatus==DeviceStatus.SOLD) "卖出日期" else "退役日期",end,{end=it},dateField=true)
         if(currentStatus==DeviceStatus.SOLD) Field("卖出金额（元）",sale,{sale=it})
         Field("设备备注",note,{note=it})
         error?.let {Text(it,color=MaterialTheme.colorScheme.error)}
@@ -145,5 +156,28 @@ private fun deviceMoney(value: String) = "¥" + BigDecimal(value).setScale(2, Ro
                 Devices.validate(saved); onSave(saved)
             } catch(e: Exception) { error=if(e is java.time.format.DateTimeParseException) "请使用 YYYY-MM-DD 日期格式" else e.message ?: "请检查输入" }
         },modifier=Modifier.fillMaxWidth().heightIn(min=48.dp)) {Text("保存设备")}
+    }
+}
+
+@Composable private fun DeviceInfo(label: String,value: String) {
+    Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween) {
+        Text(label,color=MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(value)
+    }
+}
+
+@Composable private fun DeviceDropdown(label: String,value: String,options: List<String>,description: String,onSelect: (String)->Unit) {
+    var expanded by remember { mutableStateOf(false) }
+    val focus=LocalFocusManager.current
+    val keyboard=LocalSoftwareKeyboardController.current
+    Box {
+        TextButton(onClick={focus.clearFocus();keyboard?.hide();expanded=true},contentPadding=PaddingValues(horizontal=4.dp),modifier=Modifier.semantics {contentDescription=description}) {
+            if(label.isNotEmpty()) Text("$label  ",color=MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(value,fontWeight=FontWeight.SemiBold)
+            Icon(Icons.Outlined.ExpandMore,null,Modifier.size(20.dp))
+        }
+        DropdownMenu(expanded=expanded,onDismissRequest={expanded=false}) {
+            options.forEach { option -> DropdownMenuItem(text={Text(option)},onClick={onSelect(option);expanded=false}) }
+        }
     }
 }

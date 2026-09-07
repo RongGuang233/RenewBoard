@@ -28,6 +28,10 @@ class DevicesDeviceTest {
     @After fun clean() {if(::app.isInitialized) runBlocking {app.repository.update {Ledger()}}}
     private fun fill(label: String,value: String) {compose.onNode(hasText(label) and hasSetTextAction()).performScrollTo().performTextReplacement(value)}
     private fun click(text: String) {compose.onNodeWithText(text,substring=false).performScrollTo().performClick()}
+    private fun select(description: String,value: String) {
+        compose.onNodeWithContentDescription(description).performScrollTo().performClick()
+        compose.onNode(hasText(value) and hasAnyAncestor(isPopup())).performClick()
+    }
     private fun back() {compose.onNodeWithContentDescription("返回").performClick()}
     private fun awaitDevice(predicate: (Ledger)->Boolean): Ledger {
         compose.waitUntil(10000) {predicate(runBlocking {app.repository.read()})}
@@ -41,6 +45,8 @@ class DevicesDeviceTest {
         bitmap.recycle()
     }
     @Test fun createPersistEditRetireSellAndDeleteDeviceWithBackNavigation() {
+        compose.onNodeWithContentDescription("筛选设备状态").assertExists()
+        compose.onNodeWithText("已退役",substring=false).assertDoesNotExist()
         compose.onNodeWithContentDescription("添加设备").performClick()
         fill("设备名称","测试手机")
         fill("购入金额（元）","3000")
@@ -52,21 +58,30 @@ class DevicesDeviceTest {
         back();shot("devices-list");click("测试手机")
         compose.activityRule.scenario.recreate();compose.waitForIdle()
         click("编辑设备")
-        click("已退役")
-        fill("结束日期","2026-09-03")
+        select("选择设备状态","已退役")
+        compose.onNode(hasText("卖出日期") and hasSetTextAction()).assertDoesNotExist()
+        fill("退役日期","2026-09-03")
         click("保存设备")
         awaitDevice {it.devices.singleOrNull()?.status==DeviceStatus.RETIRED}
         compose.onNodeWithText("已服役 3 天").assertExists()
         back()
-        click("已退役")
+        select("筛选设备状态","已退役")
         click("测试手机")
         click("编辑设备")
-        click("已卖出")
+        select("选择设备状态","已卖出")
+        compose.onNode(hasText("退役日期") and hasSetTextAction()).assertDoesNotExist()
+        fill("卖出日期","2026-09-04")
         fill("卖出金额（元）","2000")
+        select("选择设备分类","手机")
+        shot("device-editor")
         click("保存设备")
         val sold=awaitDevice {it.devices.singleOrNull()?.status==DeviceStatus.SOLD}
         assertEquals(created.devices.single().id,sold.devices.single().id)
         assertEquals("2000",sold.devices.single().saleAmount)
+        assertEquals("2026-09-04",sold.devices.single().endDate)
+        compose.onNodeWithText("卖出日期",substring=false).assertExists()
+        compose.onNodeWithText("已服役 4 天").assertExists()
+        shot("device-sold-detail")
         click("删除设备")
         compose.onNodeWithText("取消",substring=false).performClick()
         compose.onNodeWithText("测试手机").assertExists()
@@ -78,7 +93,7 @@ class DevicesDeviceTest {
     @Test fun invalidInputCanBeCorrectedAndWishlistHasNoServiceStats() {
         compose.onNodeWithContentDescription("添加设备").performClick()
         fill("设备名称","未来电脑")
-        click("待购买")
+        select("选择设备状态","待购买")
         fill("购买预算（元）","-1")
         fill("计划日期（选填）","")
         click("保存设备")
@@ -95,7 +110,13 @@ class DevicesDeviceTest {
         back()
         compose.onNodeWithText("未来电脑").assertExists()
         back()
-        click("待购买")
+        select("筛选设备状态","待购买")
         compose.onNodeWithText("未来电脑").assertExists()
+        compose.onNodeWithContentDescription("添加设备").performClick()
+        compose.onNode(hasText("购入金额（元）") and hasSetTextAction()).assertExists()
+        compose.onNode(hasText("购买预算（元）") and hasSetTextAction()).assertDoesNotExist()
+        back()
+        compose.onNodeWithText("未来电脑").assertExists()
+        assertEquals(1,runBlocking {app.repository.read()}.devices.size)
     }
 }

@@ -52,23 +52,23 @@ private fun balanceHint(p: Plan, today: LocalDate): String {
             Text("估算余额")
             Text(yuan(Prepaid.balance(p,today)),fontSize=36.sp,fontWeight=FontWeight.Bold,modifier=Modifier.padding(vertical=12.dp))
             Text(balanceHint(p,today),fontWeight=FontWeight.SemiBold)
-            Text("每月 ¥${p.amount} · 下次扣费 ${Prepaid.nextDeduction(p,today)}",modifier=Modifier.padding(top=12.dp))
+            Text("每月 ${LocalDate.parse(p.billingAnchor).dayOfMonth} 日 · ¥${p.amount}\n下次扣费 ${Prepaid.nextDeduction(p,today)}",modifier=Modifier.padding(top=12.dp))
         }
     }
-    Text("按固定月费推算；额外消费或优惠后可校准余额。",fontSize=13.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.padding(vertical=12.dp))
+    Text("月费按设置记入支出，充值不重复计算；额外消费后可校准余额。",fontSize=13.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.padding(vertical=12.dp))
     Button({recharging=true;error=null},Modifier.fillMaxWidth()) { Text("记录充值") }
     OutlinedButton(onEdit,Modifier.fillMaxWidth()) { Text("校准余额 / 修改月费") }
     if(p.note.isNotBlank()) Text(p.note,modifier=Modifier.padding(vertical=12.dp))
-    TextButton({change { it.copy(plans=it.plans.map { x->if(x.id==p.id)x.copy(archived=!x.archived) else x }) }}) { Text(if(p.archived) "恢复使用" else "归档订阅") }
+    TextButton({change { Prepaid.archive(it,p.id,!p.archived,today) }}) { Text(if(p.archived) "恢复使用" else "归档订阅") }
     TextButton({deleting=true}) { Text("删除订阅",color=MaterialTheme.colorScheme.error) }
-    Text("付款记录",fontSize=19.sp,fontWeight=FontWeight.SemiBold,modifier=Modifier.padding(top=16.dp))
+    Text("话费记录",fontSize=19.sp,fontWeight=FontWeight.SemiBold,modifier=Modifier.padding(top=16.dp))
     l.payments.filter { it.planId==p.id }.sortedByDescending { it.date }.forEach {
         Text("${it.date} · ${it.currency} ${it.amount} · ${it.note}",modifier=Modifier.padding(vertical=8.dp))
     }
     if(recharging) AlertDialog(onDismissRequest={recharging=false},title={Text("记录话费充值")},text={Column(Modifier.verticalScroll(rememberScrollState())) {
         Field("充值金额",amount,{amount=it})
         Field("充值日期",date,{date=it},dateField=true)
-        Text("余额与月费推算同步更新，账本只记这笔充值。",fontSize=13.sp,modifier=Modifier.padding(top=12.dp))
+        Text("余额与月费推算同步更新，充值不计支出，月费扣除时计入账本。",fontSize=13.sp,modifier=Modifier.padding(top=12.dp))
         error?.let { Text(it,color=MaterialTheme.colorScheme.error) }
     }},confirmButton={TextButton({try {
         val day=LocalDate.parse(date)

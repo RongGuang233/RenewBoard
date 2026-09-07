@@ -128,6 +128,20 @@ class RepositoryDeviceTest {
         assertEquals(saved, repository.read())
     }
 
+    @Test fun monthlyFeeCatchupIsAtomicAndPreservesDeletedReceiptState() = runBlocking {
+        val p=Plan(id="phone-fee",name="中国移动",amount="30",billingAnchor="2024-01-31",paidCycles=0,
+            balanceAccount=BalanceAccount("100","2024-01-01"))
+        repository.update {Ledger(plans=listOf(p))}
+        coroutineScope { List(3) {async {repository.recordMonthlyFees(java.time.LocalDate.parse("2024-03-31"))}}.awaitAll() }
+        val saved=repository.read()
+        assertEquals(3,saved.payments.size)
+        repository.update {Book.deletePayments(it,setOf(saved.payments.last().id))}
+        database.close();openDatabase()
+        repository.recordMonthlyFees(java.time.LocalDate.parse("2024-03-31"))
+        assertEquals(2,repository.read().payments.size)
+        assertEquals(saved.plans,repository.read().plans)
+    }
+
     @Test fun concurrentReminderClaimsDeduplicateAndPersistUntilReleased() = runBlocking {
         val event = ReminderRow("benefit-device:2026-09-09:2026-09-06", "2026-09-06")
         val results = coroutineScope {
