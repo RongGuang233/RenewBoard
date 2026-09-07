@@ -30,14 +30,15 @@ class LedgerDeviceTest {
         val bitmap=androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()
         java.io.File(app.filesDir,"$name.png").outputStream().use {bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG,100,it)};bitmap.recycle()
     }
-    @Test fun overviewRangesDrilldownAndRankingWorkWithFrozenCash() {
+    @Test fun overviewRangesSelectRankingAndOpenFullPagesWithFrozenCash() {
         val today=LocalDate.now()
         val names=listOf("ChatGPT","哔哩哔哩大会员","网易云音乐","百度网盘","中国移动","YouTube","Netflix")
         val rows=(0..6).map { i ->Payment(planId="app-$i",planName=names[i],amount=listOf("20","25","18","30","100","13","16")[i],currency=if(i==0) "USD" else "CNY",date=today.toString(),cnyAmount=if(i==0) "142.80" else null,note=if(i==4) "话费充值" else "") }+
             (1..16).map {i->Payment(planId="old",planName="ChatGPT",amount=(75+i*12).toString(),currency="CNY",date=today.withDayOfMonth(1).minusMonths(i.toLong()).toString())}
         seed(Ledger(payments=rows))
         compose.onNodeWithText("账本",substring=false).performClick()
-        compose.onNodeWithText("¥344.80",substring=false).assertExists()
+        compose.onNodeWithText("本月实付").assertDoesNotExist()
+        compose.onNodeWithText("支出概览").assertExists()
         shot("ledger-overview")
         for(range in TrendRange.entries) {
             compose.onNodeWithContentDescription("趋势范围 ${range.label}").performScrollTo().performClick()
@@ -47,15 +48,27 @@ class LedgerDeviceTest {
         compose.onNodeWithText("${today.year-1} 年",substring=false).assertExists()
         compose.onNodeWithContentDescription("趋势范围 3月").performScrollTo().performClick()
         compose.onNode(hasContentDescription("${today.year}/${today.monthValue}，实付",substring=true)).performScrollTo().performClick()
-        compose.onNodeWithText("${today.year}/${today.monthValue}付款").assertExists()
-        compose.onNodeWithContentDescription("返回概览").performClick()
+        compose.onAllNodes(isDialog()).assertCountEquals(0)
+        compose.onNodeWithText("${today.year}年${today.monthValue}月 · 按应用").assertExists()
+        compose.onNodeWithContentDescription("返回概览").assertDoesNotExist()
         click("展开全部 7 项")
         click("最近付款")
         shot("ledger-ranking")
         click("全部明细")
+        shot("ledger-receipts")
         compose.onNodeWithText("话费充值",substring=false).performClick()
-        compose.onNode(hasText("中国移动",substring=false) and hasAnyAncestor(isDialog())).assertExists()
-        compose.onNode(hasText("ChatGPT",substring=false) and hasAnyAncestor(isDialog())).assertDoesNotExist()
+        compose.onAllNodes(isDialog()).assertCountEquals(0)
+        compose.onNodeWithText("中国移动",substring=false).assertExists()
+        compose.onNodeWithText("ChatGPT",substring=false).assertDoesNotExist()
+        compose.onAllNodesWithText(today.toString(),substring=false).assertCountEquals(1)
+        compose.onNodeWithText("中国移动",substring=false).performClick()
+        compose.onNodeWithText("付款详情").assertExists()
+        compose.onAllNodes(isDialog()).assertCountEquals(0)
+        compose.activityRule.scenario.onActivity {it.onBackPressedDispatcher.onBackPressed()};compose.waitForIdle()
+        compose.onNodeWithText("全部付款").assertExists()
+        compose.onNodeWithText("ChatGPT",substring=false).assertDoesNotExist()
+        compose.activityRule.scenario.onActivity {it.onBackPressedDispatcher.onBackPressed()};compose.waitForIdle()
+        compose.onNodeWithText("支出概览").assertExists()
     }
     @Test fun deleteOrphanPaymentsInBatchAndSingleReceiptWithoutChangingBalance() {
         val today=LocalDate.now()
@@ -71,12 +84,51 @@ class LedgerDeviceTest {
         compose.onNodeWithText("取消",substring=false).performClick();assertEquals(3,read().payments.size)
         compose.onNodeWithText("删除所选").performClick();compose.onNodeWithText("确认删除").performClick()
         waitFor {it.payments.size==1};assertEquals(plan,read().plans.single())
-        compose.onNodeWithText("完成").performClick();compose.onNode(hasText("全部",substring=false) and hasAnyAncestor(isDialog())).performClick()
-        compose.onNode(hasText("中国移动",substring=false) and hasAnyAncestor(isDialog())).performClick()
+        compose.onNodeWithText("完成").performClick();compose.onNodeWithText("全部",substring=false).performClick()
+        compose.onNodeWithText("中国移动",substring=false).performClick()
         compose.onNodeWithText("删除这笔付款").performClick();compose.onNodeWithText("确认删除").performClick()
         waitFor {it.payments.isEmpty()};assertEquals(plan,read().plans.single())
         compose.onNodeWithContentDescription("返回概览").performClick()
-        compose.onNodeWithText("¥0.00",substring=false).assertExists()
+        compose.onNodeWithText("范围实付 ¥0.00",substring=false).assertExists()
+    }
+    @Test fun selectedChartBucketFiltersExactDayMonthAndYearAndRangeResetsSelection() {
+        val today=LocalDate.now()
+        val rows=listOf(
+            Payment(planId="one",planName="ChatGPT",amount="10",currency="CNY",date=today.toString()),
+            Payment(planId="one",planName="ChatGPT",amount="20",currency="CNY",date=today.minusDays(1).toString()),
+            Payment(planId="one",planName="ChatGPT",amount="40",currency="CNY",date=today.withDayOfYear(1).minusDays(1).toString())
+        )
+        seed(Ledger(payments=rows));compose.onNodeWithText("账本",substring=false).performClick()
+        compose.onNodeWithContentDescription("趋势范围 近1月").performScrollTo().performClick()
+        compose.onNode(hasContentDescription("${today.monthValue}/${today.dayOfMonth}，实付",substring=true)).performScrollTo().performClick().assertIsSelected()
+        compose.onNode(hasContentDescription("ChatGPT，支出¥10.00",substring=true)).assertExists()
+        compose.onAllNodes(isDialog()).assertCountEquals(0)
+        for(range in listOf(TrendRange.THREE,TrendRange.SIX,TrendRange.TWELVE,TrendRange.YEAR)) {
+            compose.onNodeWithContentDescription("趋势范围 ${range.label}").performScrollTo().performClick()
+            compose.onNode(hasContentDescription("${today.year}/${today.monthValue}，实付",substring=true)).performScrollTo().performClick().assertIsSelected()
+            val amount=if(today.dayOfMonth==1) "10.00" else "30.00"
+            compose.onNode(hasContentDescription("ChatGPT，支出¥$amount",substring=true)).assertExists()
+            compose.onAllNodes(isDialog()).assertCountEquals(0)
+        }
+        compose.onNodeWithContentDescription("趋势范围 5年").performScrollTo().performClick()
+        compose.onNode(hasContentDescription("${today.year-1}，实付",substring=true)).performScrollTo().performClick().assertIsSelected()
+        val previousYearAmount=if(today.dayOfYear==1) "60.00" else "40.00"
+        compose.onNode(hasContentDescription("ChatGPT，支出¥$previousYearAmount",substring=true)).assertExists()
+        compose.onNodeWithContentDescription("趋势范围 全部").performScrollTo().performClick()
+        compose.onNodeWithText("全部 · 按应用").assertExists()
+        compose.onNode(hasContentDescription("ChatGPT，支出¥70.00",substring=true)).assertExists()
+    }
+    @Test fun missingForeignCashCanBeSupplementedOnFullPage() {
+        val today=LocalDate.now()
+        val p=Payment(planId="foreign",planName="ChatGPT",amount="20",currency="USD",date=today.toString())
+        seed(Ledger(payments=listOf(p)));compose.onNodeWithText("账本",substring=false).performClick();click("全部明细")
+        compose.onNodeWithText("补录人民币").performClick()
+        compose.onAllNodes(isDialog()).assertCountEquals(0)
+        compose.onNodeWithText("人民币实付金额").performTextInput("142.80")
+        compose.onNodeWithText("保存金额").performScrollTo().performClick()
+        waitFor {it.payments.single().cnyAmount=="142.80"}
+        compose.onNodeWithText("全部付款").assertExists()
+        compose.onNodeWithText("¥142.80",substring=false).assertExists()
     }
     @Test fun deleteSubscriptionCanExplicitlyRemoveLinkedReceipts() {
         val today=LocalDate.now();val p=Plan(name="清理测试",amount="30",billingAnchor=today.toString())

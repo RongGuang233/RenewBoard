@@ -31,7 +31,7 @@ fun newId() = UUID.randomUUID().toString()
     val cnyAmount: String? = null
 )
 @Serializable data class Settings(val reminderDays: List<Int> = listOf(3, 0), val rates: Map<String, String> = emptyMap())
-@Serializable data class Ledger(val plans: List<Plan> = emptyList(), val benefits: List<Benefit> = emptyList(), val payments: List<Payment> = emptyList(), val settings: Settings = Settings())
+@Serializable data class Ledger(val plans: List<Plan> = emptyList(), val benefits: List<Benefit> = emptyList(), val payments: List<Payment> = emptyList(), val settings: Settings = Settings(), val devices: List<Device> = emptyList())
 @Serializable data class Backup(val version: Int = 1, val createdAt: String = Instant.now().toString(), val data: Ledger)
 
 object Book {
@@ -123,6 +123,8 @@ object Book {
         fun date(s: String) { require(LocalDate.parse(s).year in 1900..2200) { "日期应在1900至2200年" } }
         fun currency(s: String) { Currency.getInstance(s) }
         fun ids(xs: List<String>) { require(xs.all { it.isNotBlank() } && xs.distinct().size == xs.size) { "记录标识重复或缺失" } }
+        require(l.devices.size <= 10000) { "设备数量超过支持范围" }
+        ids(l.devices.map { it.id }); l.devices.forEach { Devices.validate(it) }
         ids(l.plans.map { it.id }); ids(l.benefits.map { it.id }); ids(l.payments.map { it.id })
         l.plans.forEach { require(it.name.isNotBlank() && it.name.length <= 100); money(it.amount); currency(it.currency); date(it.billingAnchor); require(it.interval in 1..120 && it.paidCycles in 0..10000) }
         l.benefits.forEach { b -> require(b.name.isNotBlank() && b.name.length <= 100 && l.plans.any { it.id == b.planId }); date(b.anchor); require(b.renewals in 0..10000 && b.giftDays in 0..36500); require(expiry(b, l.plans.single { it.id == b.planId }).year <= 2200) }

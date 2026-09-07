@@ -106,6 +106,28 @@ class RepositoryDeviceTest {
         assertEquals(deviceLedger(), repository.read())
     }
 
+    @Test fun legacyPayloadAddsDevicesWithoutChangingSubscriptionsAndSurvivesRestore() = runBlocking {
+        val old = deviceLedger()
+        val oldPayload = Book.json.encodeToString(Ledger.serializer(), old).replace(",\"devices\":[]", "")
+        assertFalse(oldPayload.contains("\"devices\""))
+        database.book().put(BookRow(payload = oldPayload))
+        assertEquals(old, repository.read())
+        val device = Device(id = "personal-device", name = "测试手机", category = DeviceCategory.PHONE,
+            purchaseAmount = "3600", startDate = "2026-01-01")
+        repository.update { it.copy(devices = listOf(device)) }
+        database.close()
+        openDatabase()
+        val saved = repository.read()
+        assertEquals(old.plans, saved.plans)
+        assertEquals(old.benefits, saved.benefits)
+        assertEquals(old.payments, saved.payments)
+        assertEquals(listOf(device), saved.devices)
+        val backup = Book.decode(Book.encode(saved))
+        repository.restore(Backup(data = Ledger()))
+        repository.restore(backup)
+        assertEquals(saved, repository.read())
+    }
+
     @Test fun concurrentReminderClaimsDeduplicateAndPersistUntilReleased() = runBlocking {
         val event = ReminderRow("benefit-device:2026-09-09:2026-09-06", "2026-09-06")
         val results = coroutineScope {

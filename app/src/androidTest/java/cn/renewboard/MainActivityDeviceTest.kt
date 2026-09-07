@@ -306,7 +306,7 @@ class MainActivityDeviceTest {
         compose.onNodeWithText("账本",substring=false).performClick()
         click("补录人民币")
         compose.onNode(hasText("人民币实付金额") and hasSetTextAction()).performTextReplacement("108.50")
-        compose.onNodeWithText("保存金额").performClick()
+        compose.onNodeWithText("保存金额").performScrollTo().performClick()
         val completed=awaitLedger { it.payments.singleOrNull()?.cnyAmount=="108.50" }
         val restored=Book.decode(Book.encode(completed))
         runBlocking { app.repository.restore(restored) }

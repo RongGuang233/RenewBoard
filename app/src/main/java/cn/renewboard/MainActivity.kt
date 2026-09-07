@@ -1,13 +1,9 @@
 package cn.renewboard
 
-import android.Manifest
-import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.foundation.background
@@ -33,8 +29,6 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 import java.time.LocalDate
 import java.time.temporal.ChronoUnit
 import java.math.BigDecimal
@@ -67,7 +61,6 @@ class MainActivity: ComponentActivity() {
     }
 }
 @Composable private fun Hint(text: String) { Text(text,color=MaterialTheme.colorScheme.onSurfaceVariant,fontSize=14.sp,modifier=Modifier.padding(vertical=8.dp)) }
-private fun displayTime(value: String) = runCatching { java.time.Instant.parse(value).atZone(java.time.ZoneId.systemDefault()).format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")) }.getOrDefault(value)
 private fun money(totals: Map<String,BigDecimal>) = if(totals.isEmpty()) "暂无费用" else totals.entries.sortedBy { it.key }.joinToString("\n") { "${it.key} ${it.value.setScale(2,RoundingMode.HALF_UP).toPlainString()}" }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -75,6 +68,7 @@ private fun money(totals: Map<String,BigDecimal>) = if(totals.isEmpty()) "暂无
     val c = LocalContext.current; val repo = remember { c.repository() }
     val ledger by repo.flow.collectAsStateWithLifecycle(initialValue=Ledger())
     var tab by rememberSaveable { mutableIntStateOf(0) }
+    var subpage by remember(tab) { mutableStateOf(false) }
     var editId by rememberSaveable { mutableStateOf<String?>(null) }; var creating by rememberSaveable { mutableStateOf(false) }
     var detailId by rememberSaveable { mutableStateOf<String?>(null) }
     val snack = remember { SnackbarHostState() }; val scope = rememberCoroutineScope()
@@ -99,10 +93,18 @@ private fun money(totals: Map<String,BigDecimal>) = if(totals.isEmpty()) "暂无
                 }
             }
         }
-    }, bottomBar={ if(!creating && editId==null && detailId==null) NavigationBar(containerColor=Paper) {
-        listOf("到期","订阅","账本","设置").forEachIndexed { i,s -> NavigationBarItem(selected=tab==i,onClick={tab=i},icon={Icon(listOf(Icons.Outlined.Event,Icons.Outlined.Bookmarks,Icons.Outlined.ReceiptLong,Icons.Outlined.Settings)[i],null)},label={Text(s)}) }
+    }, bottomBar={ if(!hasPreviousPage && !subpage) NavigationBar(containerColor=Paper) {
+        listOf("到期","订阅","账本","设备","设置").forEachIndexed { i,s -> NavigationBarItem(selected=tab==i,onClick={tab=i},icon={Icon(listOf(Icons.Outlined.Event,Icons.Outlined.Bookmarks,Icons.Outlined.ReceiptLong,Icons.Outlined.Devices,Icons.Outlined.Settings)[i],null)},label={Text(s)}) }
     } }) { padding ->
-        Column(Modifier.fillMaxSize().padding(padding).padding(horizontal=20.dp).imePadding().verticalScroll(rememberScrollState()).padding(bottom=96.dp)) {
+        if(!hasPreviousPage && tab>=2) {
+            Box(Modifier.fillMaxSize().padding(padding).imePadding()) {
+                when(tab) {
+                    2 -> LedgerScreen(ledger,::change) { subpage=it }
+                    3 -> DevicesScreen(ledger,::change) { subpage=it }
+                    4 -> SettingsScreen(ledger,::change,::message) { subpage=it }
+                }
+            }
+        } else Column(Modifier.fillMaxSize().padding(padding).padding(horizontal=20.dp).imePadding().verticalScroll(rememberScrollState()).padding(bottom=24.dp)) {
             if(creating || editId!=null) {
                 PlanEditor(ledger,ledger.plans.find { it.id==editId }) { p,bs,initial ->
                     scope.launch { try {
@@ -116,12 +118,11 @@ private fun money(totals: Map<String,BigDecimal>) = if(totals.isEmpty()) "暂无
             } else when(tab) {
                 0 -> Overview(ledger,onAdd={creating=true}) { detailId=it }
                 1 -> Subscriptions(ledger,onAdd={creating=true}) { detailId=it }
-                2 -> LedgerScreen(ledger,::change)
-                3 -> SettingsScreen(ledger,::change,::message)
             }
         }
     }
 }
+
 @Composable private fun Overview(l: Ledger, onAdd:()->Unit, open: (String)->Unit) {
     val today=LocalDate.now()
     val upcoming=l.benefits.filter { b->l.plans.any { it.id==b.planId && !it.archived && it.balanceAccount==null } }.sortedBy { Book.expiry(it,l.plans.single { p->p.id==it.planId }) }
@@ -358,60 +359,4 @@ private fun money(totals: Map<String,BigDecimal>) = if(totals.isEmpty()) "暂无
         l.benefits.filter { it.planId==p.id }.forEach { b->Row(verticalAlignment=Alignment.CenterVertically) { Checkbox(b.id in selected,{selected=if(it)selected+b.id else selected-b.id}); Text(b.name) } }
         if(error.isNotBlank()) Text(error,color=MaterialTheme.colorScheme.error)
     }},confirmButton={TextButton({try { val d=LocalDate.parse(date); Book.renew(l,p.id,amount,d,selected,note,cnyAmount.takeIf { p.currency!="CNY" }); change { Book.renew(it,p.id,amount,d,selected,note,cnyAmount.takeIf { p.currency!="CNY" }) };close() }catch(e:Exception){error=e.message ?: "请检查日期、金额与权益选择"}}){Text("确认付款")}},dismissButton={TextButton(close){Text("取消")}})
-}
-
-@Composable private fun SettingsScreen(l: Ledger,change:((Ledger)->Ledger)->Unit,message:(String)->Unit) {
-    val c=LocalContext.current; val scope=rememberCoroutineScope(); val config=remember { CredentialsStore(c) }
-    var url by remember { mutableStateOf(config.url) }; var user by remember { mutableStateOf(config.user) }; var password by remember { mutableStateOf("") }
-    var reminder by remember(l.settings.reminderDays) { mutableStateOf(l.settings.reminderDays.joinToString(",")) }
-    var busy by remember { mutableStateOf(false) }; var status by remember { mutableStateOf(config.status) }; var success by remember { mutableStateOf(config.lastSuccess) }
-    var preview by remember { mutableStateOf<Backup?>(null) }; var remote by remember { mutableStateOf<List<String>?>(null) }
-    var disconnect by remember { mutableStateOf(false) }
-    var licenseText by remember { mutableStateOf<String?>(null) }
-    val permission=rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { allowed -> message(if(allowed) "已允许通知" else "通知未授权，订阅和备份仍可使用"); Jobs.schedule(c) }
-    fun operation(block:suspend ()->Unit) { scope.launch { busy=true; try { block() } catch(e:Exception) { if(e is kotlinx.coroutines.CancellationException) throw e; message(if(e is DavException) e.message ?: "WebDAV 失败" else "操作失败，请检查文件、网络或应用密码") } finally { busy=false;status=config.status;success=config.lastSuccess } } }
-    val export=rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri -> if(uri!=null) operation {
-        withContext(Dispatchers.IO) { val text=Book.encode(c.repository().read()); c.contentResolver.openOutputStream(uri,"wt")?.use { it.write(text.toByteArray()) } ?: error("无法写入") };message("已导出，不包含 WebDAV 密码")
-    } }
-    val import=rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if(uri!=null) operation {
-        preview=withContext(Dispatchers.IO) { val input=c.contentResolver.openInputStream(uri) ?: error("无法读取"); input.use { val bytes=it.readBytesLimited(); Book.decode(String(bytes,Charsets.UTF_8)) } }
-    } }
-    Title("设置")
-    Section("到期提醒")
-    Field("提前天数，用逗号分隔；0 表示当天",reminder,{reminder=it})
-    Hint("清空可关闭提醒；系统省电可能延迟通知。")
-    OutlinedButton({if(Build.VERSION.SDK_INT>=33) permission.launch(Manifest.permission.POST_NOTIFICATIONS) else message("请在系统应用设置中管理通知授权")}) { Text("允许到期通知") }
-    Button({try {
-        val days=if(reminder.isBlank()) emptyList() else reminder.replace('，',',').split(',').map { it.trim().toInt() }
-        val next=l.copy(settings=l.settings.copy(reminderDays=days));Book.validate(next);change { it.copy(settings=it.settings.copy(reminderDays=days)) };message("提醒已保存")
-    }catch(e:Exception){message("请检查提醒天数")}}) { Text("保存提醒") }
-    Section("备份与恢复")
-    Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) { OutlinedButton({export.launch("订阅簿-${LocalDate.now()}.json")},enabled=!busy) { Text("导出 JSON") }; OutlinedButton({import.launch(arrayOf("application/json","text/plain","application/octet-stream"))},enabled=!busy){Text("从文件恢复") } }
-    Section("坚果云 · WebDAV")
-    Hint("使用专用应用密码。自动保留最近 10 份备份，手动备份长期保留。")
-    Field("WebDAV 地址",url,{url=it});Field("坚果云账号",user,{user=it});Field(if(config.configured) "应用密码（留空保留）" else "专用应用密码",password,{password=it},secret=true)
-    Button({try { config.save(url.trim(),user.trim(),password);password="";Jobs.backup(c);message("已保存，将在联网后自动备份") }catch(e:Exception){message(e.message ?: "配置无效")}},enabled=!busy) { Text("保存并启用自动备份") }
-    Text("最后成功：${displayTime(success)}",fontSize=13.sp,modifier=Modifier.padding(top=8.dp)); Hint(status)
-    if(busy) LinearProgressIndicator(Modifier.fillMaxWidth())
-    Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
-        OutlinedButton({operation { withContext(Dispatchers.IO) { try { config.client().upload(c.repository().read(),false);config.result() } catch(e:Exception){config.result("手动备份失败，请检查网络与应用密码");throw e} };message("手动备份成功，已下载核验") }},enabled=!busy) { Text("立即备份") }
-        OutlinedButton({operation { remote=withContext(Dispatchers.IO) { config.client().list() } }},enabled=!busy) { Text("选择云端备份") }
-    }
-    TextButton({disconnect=true},enabled=!busy) { Text("断开 WebDAV") }
-    Section("应用更新")
-    UpdateSection()
-    TextButton({ operation { licenseText=withContext(Dispatchers.IO) { c.assets.list("licenses").orEmpty().sorted().joinToString("\n\n") { name -> name+"\n"+c.assets.open("licenses/$name").bufferedReader().use { it.readText() } } } } }) { Text("开源许可证") }
-    if(licenseText!=null) AlertDialog(onDismissRequest={licenseText=null},title={Text("开源许可证")},text={Text(licenseText!!,Modifier.heightIn(max=420.dp).verticalScroll(rememberScrollState()),fontSize=12.sp)},confirmButton={TextButton({licenseText=null}){Text("关闭")}})
-    Hint("订阅簿 1.1 · MIT")
-    if(remote!=null) AlertDialog(onDismissRequest={remote=null},title={Text("选择备份")},text={Column(Modifier.heightIn(max=380.dp).verticalScroll(rememberScrollState())) {
-        if(remote!!.isEmpty()) Text("专用目录中没有备份")
-        remote!!.forEach { name->TextButton({remote=null;operation { preview=withContext(Dispatchers.IO){config.client().download(name)} }}) { Text(name,fontSize=12.sp) } }
-    }},confirmButton={TextButton({remote=null}) { Text("关闭") }})
-    if(preview!=null) { val b=preview!!;AlertDialog(onDismissRequest={preview=null},title={Text("确认替换本机数据？")},text={Text("备份日期：${displayTime(b.createdAt)}\n${b.data.plans.size} 个订阅 · ${b.data.benefits.size} 项权益 · ${b.data.payments.size} 笔付款\n\n将整体替换本机账本、提醒与汇率。WebDAV 凭据不变。可取消后先导出本机备份。")},confirmButton={TextButton({preview=null;operation { c.repository().restore(b);message("恢复完成") }}){Text("确认替换")}},dismissButton={TextButton({preview=null}){Text("取消")}}) }
-    if(disconnect) AlertDialog(onDismissRequest={disconnect=false},title={Text("断开 WebDAV？")},text={Text("删除本机保存的账号和应用密码，停止后续自动备份。本机账本和远端备份不删除。")},confirmButton={TextButton({config.disconnect();password="";user="";disconnect=false;status=config.status;success=config.lastSuccess;message("已断开")}){Text("断开")}},dismissButton={TextButton({disconnect=false}){Text("取消")}})
-}
-private fun java.io.InputStream.readBytesLimited(): ByteArray {
-    val result=java.io.ByteArrayOutputStream();val buffer=ByteArray(8192)
-    while(true) { val n=read(buffer);if(n<0)break;result.write(buffer,0,n);require(result.size()<=16*1024*1024) }
-    return result.toByteArray()
 }
