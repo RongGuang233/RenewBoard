@@ -18,7 +18,8 @@ fun newId() = UUID.randomUUID().toString()
 @Serializable data class Plan(
     val id: String = newId(), val name: String, val amount: String, val currency: String = "CNY",
     val cycle: Cycle = Cycle.MONTH, val interval: Int = 1, val autoRenew: Boolean = true,
-    val billingAnchor: String, val paidCycles: Int = 1, val archived: Boolean = false, val note: String = ""
+    val billingAnchor: String, val paidCycles: Int = 1, val archived: Boolean = false, val note: String = "",
+    val balanceAccount: BalanceAccount? = null
 )
 @Serializable data class Benefit(
     val id: String = newId(), val planId: String, val name: String,
@@ -50,7 +51,7 @@ object Book {
     }
     fun forecast(l: Ledger, from: LocalDate, until: LocalDate): Map<String, BigDecimal> {
         val totals = mutableMapOf<String, BigDecimal>()
-        l.plans.filter { it.autoRenew && !it.archived }.forEach { p ->
+        l.plans.filter { it.autoRenew && !it.archived && it.balanceAccount == null }.forEach { p ->
             var date = nextCharge(p, from)
             var index = p.paidCycles.toLong()
             while (advance(LocalDate.parse(p.billingAnchor), p.cycle, index * p.interval) < date) index++
@@ -96,6 +97,7 @@ object Book {
     }
     fun renew(l: Ledger, planId: String, amount: String, date: LocalDate, selected: Set<String>, note: String, cnyAmount: String? = null): Ledger {
         val p = l.plans.single { it.id == planId }
+        require(p.balanceAccount == null) { "余额账户请记录充值" }
         require(p.currency == "CNY" || !cnyAmount.isNullOrBlank()) { "请填写付款当天的实际人民币金额" }
         require(selected.isNotEmpty()) { "请选择至少一项续费权益" }
         require(selected.all { id -> l.benefits.any { it.id == id && it.planId == planId } })
@@ -108,7 +110,13 @@ object Book {
         return l.copy(plans = l.plans.map { if (it.id == p.id) it.copy(paidCycles = index + 1) else it }, benefits = updated,
             payments = l.payments + Payment(planId = p.id, planName = p.name, amount = amount, currency = p.currency, date = date.toString(), note = note, benefitIds = selected.toList(), cnyAmount = if (p.currency == "CNY") null else cnyAmount)).also(::validate)
     }
-    fun delete(l: Ledger, id: String) = l.copy(plans = l.plans.filterNot { it.id == id }, benefits = l.benefits.filterNot { it.planId == id }) // Preserve actual receipts.
+    fun delete(l: Ledger, id: String, deletePayments: Boolean = false) = l.copy(
+        plans = l.plans.filterNot { it.id == id },
+        benefits = l.benefits.filterNot { it.planId == id },
+        payments = if (deletePayments) l.payments.filterNot { it.planId == id } else l.payments
+    )
+    // Removing a receipt does not undo recorded renewals or a balance calibration/top-up.
+    fun deletePayments(l: Ledger, ids: Set<String>) = l.copy(payments = l.payments.filterNot { it.id in ids })
     fun validate(l: Ledger) {
         require(l.plans.size <= 10000 && l.benefits.size <= 50000 && l.payments.size <= 100000) { "记录数量超过支持范围" }
         fun money(s: String) { require(s.matches(Regex("[0-9]{1,12}(\\.[0-9]{1,4})?"))) { "金额格式错误（最多4位小数）" } }
@@ -118,7 +126,16 @@ object Book {
         ids(l.plans.map { it.id }); ids(l.benefits.map { it.id }); ids(l.payments.map { it.id })
         l.plans.forEach { require(it.name.isNotBlank() && it.name.length <= 100); money(it.amount); currency(it.currency); date(it.billingAnchor); require(it.interval in 1..120 && it.paidCycles in 0..10000) }
         l.benefits.forEach { b -> require(b.name.isNotBlank() && b.name.length <= 100 && l.plans.any { it.id == b.planId }); date(b.anchor); require(b.renewals in 0..10000 && b.giftDays in 0..36500); require(expiry(b, l.plans.single { it.id == b.planId }).year <= 2200) }
-        l.plans.forEach { p -> require(l.benefits.any { it.planId == p.id }) { "每个订阅至少需要一项权益" } }
+        l.plans.forEach { p ->
+            if(p.balanceAccount == null) require(l.benefits.any { it.planId == p.id }) { "每个订阅至少需要一项权益" }
+            else {
+                val account=p.balanceAccount
+                require(p.currency == "CNY" && p.cycle == Cycle.MONTH && p.interval == 1) { "余额账户按人民币月费管理" }
+                money(account.balance.removePrefix("-"))
+                date(account.asOf)
+                require(LocalDate.parse(account.asOf)<=LocalDate.now()) { "余额日期不能晚于今天" }
+            }
+        }
         l.payments.forEach { money(it.amount); it.cnyAmount?.let(::money); currency(it.currency); date(it.date); require(it.planName.isNotBlank()) }
         require(l.settings.reminderDays.distinct().size == l.settings.reminderDays.size && l.settings.reminderDays.all { it in 0..365 }) { "提醒天数应为0至365且不能重复" }
         l.settings.rates.forEach { (c, r) -> currency(c); money(r); require(BigDecimal(r) > BigDecimal.ZERO) }
@@ -140,6 +157,6 @@ object Book {
     fun reminderKey(b: Benefit, p: Plan, today: LocalDate) = "${b.id}:${expiry(b,p)}:$today"
     fun due(l: Ledger, today: LocalDate) = l.benefits.filter { b ->
         val p = l.plans.single { it.id == b.planId }
-        !p.archived && java.time.temporal.ChronoUnit.DAYS.between(today, expiry(b, p)).toInt() in l.settings.reminderDays
+        !p.archived && p.balanceAccount == null && java.time.temporal.ChronoUnit.DAYS.between(today, expiry(b, p)).toInt() in l.settings.reminderDays
     }
 }

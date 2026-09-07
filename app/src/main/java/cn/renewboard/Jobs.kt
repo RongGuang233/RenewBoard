@@ -108,6 +108,18 @@ class ReminderWorker(c: Context, p: WorkerParameters): CoroutineWorker(c,p) {
                 } catch(e: SecurityException) { repo.db.book().release(key) }
             }
         }
+        Prepaid.due(l,today).forEach { p ->
+            val date=Prepaid.rechargeDate(p)!!
+            val key="balance:${p.id}:$date:$today"
+            if(repo.db.book().claim(ReminderRow(key,today.toString())) != -1L) {
+                try {
+                    val intent=PendingIntent.getActivity(c,0,Intent(c,MainActivity::class.java),PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+                    nm.notify(key,0,NotificationCompat.Builder(c,"expiry").setSmallIcon(R.drawable.ic_launcher)
+                        .setContentTitle("${p.name} 余额提醒").setContentText("预计 $date 余额不足，请及时充值")
+                        .setContentIntent(intent).setAutoCancel(true).build())
+                } catch(e: SecurityException) { repo.db.book().release(key) }
+            }
+        }
         return Result.success()
     }
 }

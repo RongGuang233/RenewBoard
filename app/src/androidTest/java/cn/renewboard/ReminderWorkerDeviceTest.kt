@@ -41,22 +41,29 @@ class GrantedReminderWorkerDeviceTest {
         val ledger = deviceLedger().let { it.copy(benefits = it.benefits.map { b ->
             b.copy(id = "notification-${UUID.randomUUID()}", anchor = today.toString())
         }, payments = emptyList()) }
+        val phone = Plan(id="balance-notification",name="中国移动",amount="30",billingAnchor=today.toString(),
+            balanceAccount=BalanceAccount("0",today.minusDays(1).toString()))
+        val withPhone=ledger.copy(plans=ledger.plans+phone)
+        val balanceKey="balance:${phone.id}:$today:$today"
         val key = Book.reminderKey(ledger.benefits.single(), ledger.plans.single(), today)
         try {
             val repository = Repository(database)
             app.repository = repository
-            repository.update { ledger }
+            repository.update { withPhone }
             assertTrue(manager.areNotificationsEnabled())
             assertEquals(ListenableWorker.Result.success(),
                 TestListenableWorkerBuilder<ReminderWorker>(app).build().doWork())
             val deadline = SystemClock.elapsedRealtime() + 5_000
-            while (manager.activeNotifications.none { it.tag == key } && SystemClock.elapsedRealtime() < deadline) {
+            while ((manager.activeNotifications.none { it.tag == key } || manager.activeNotifications.none { it.tag == balanceKey }) && SystemClock.elapsedRealtime() < deadline) {
                 SystemClock.sleep(25)
             }
             val first = manager.activeNotifications.single { it.tag == key }
             assertEquals(0, first.id)
             assertEquals("设备测试权益 即将到期", first.notification.extras.getString("android.title"))
             assertEquals(-1L, database.book().claim(ReminderRow(key, today.toString())))
+            val firstBalance=manager.activeNotifications.single { it.tag==balanceKey }
+            assertEquals("中国移动 余额提醒",firstBalance.notification.extras.getString("android.title"))
+            assertEquals(-1L,database.book().claim(ReminderRow(balanceKey,today.toString())))
 
             // Ensure a second post would receive a distinct wall-clock postTime.
             SystemClock.sleep(100)
@@ -66,9 +73,11 @@ class GrantedReminderWorkerDeviceTest {
             val second = manager.activeNotifications.single { it.tag == key }
             assertEquals(first.key, second.key)
             assertEquals(first.postTime, second.postTime)
-            assertEquals(ledger, repository.read())
+            assertEquals(firstBalance.postTime,manager.activeNotifications.single { it.tag==balanceKey }.postTime)
+            assertEquals(withPhone, repository.read())
         } finally {
             manager.cancel(key, 0)
+            manager.cancel(balanceKey,0)
             app.repository = originalRepository
             database.close()
             app.deleteDatabase(name)

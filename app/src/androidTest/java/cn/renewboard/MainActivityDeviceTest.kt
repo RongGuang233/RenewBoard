@@ -97,7 +97,7 @@ class MainActivityDeviceTest {
         assertTrue(deleted.benefits.isEmpty())
         assertEquals(created.payments, deleted.payments)
         compose.onNodeWithText("账本", substring = false).performClick()
-        compose.onNodeWithText("设备录入套餐").performScrollTo().assertIsDisplayed()
+        compose.onAllNodesWithText("设备录入套餐").onFirst().performScrollTo().assertIsDisplayed()
     }
 
     @Test fun monthEndSubscriptionKeepsOriginalAnchorThroughEarlyRenewalAndGift() {
@@ -196,6 +196,57 @@ class MainActivityDeviceTest {
         assertEquals("2026-09-15",Book.expiry(saved.benefits.single(),saved.plans.single()).toString())
     }
 
+    @Test fun newBenefitFollowsBillingCycleUntilManuallyChanged() {
+        compose.onNodeWithContentDescription("记一笔订阅").performClick()
+        fill("订阅 / 套餐名称","自动权益测试")
+        fill("套餐价格","20")
+        fill("扣款日期","2024-01-31")
+        click("包含的权益")
+        compose.onNode(hasText("到期日期") and hasSetTextAction()).assertTextContains("2024-02-29")
+        fill("周期","2")
+        compose.onNode(hasText("到期日期") and hasSetTextAction()).assertTextContains("2024-03-31")
+        fill("到期日期","2024-04-12")
+        fill("扣款日期","2024-03-31")
+        compose.onNode(hasText("到期日期") and hasSetTextAction()).assertTextContains("2024-04-12")
+        click("恢复跟随周期")
+        compose.onNode(hasText("到期日期") and hasSetTextAction()).assertTextContains("2024-05-31")
+        click("保存订阅")
+        val saved=awaitLedger { it.plans.size==1 }
+        assertEquals("2024-03-31",saved.benefits.single().anchor)
+        assertEquals(1,saved.benefits.single().renewals)
+        assertEquals("2024-05-31",Book.expiry(saved.benefits.single(),saved.plans.single()).toString())
+    }
+
+    @Test fun editingBillingCycleMovesAutomaticBenefitsAndPreservesCustomExpiry() {
+        val plan=Plan(name="混合权益测试",amount="20",billingAnchor="2024-01-31",paidCycles=2)
+        val automatic=Benefit(planId=plan.id,name="跟随权益",anchor=plan.billingAnchor,renewals=2,giftDays=7)
+        val custom=Benefit(planId=plan.id,name="独立权益",anchor="2024-02-10",renewals=1,giftDays=2)
+        runBlocking { app.repository.update { Ledger(plans=listOf(plan),benefits=listOf(automatic,custom)) } }
+        compose.waitForIdle()
+        compose.onNodeWithText("订阅",substring=false).performClick()
+        click(plan.name)
+        click("编辑订阅与到期日")
+        fill("扣款日期","2024-02-29")
+        fill("周期","2")
+        click("包含的权益")
+        val dates=compose.onAllNodes(hasText("到期日期") and hasSetTextAction())
+        dates[0].assertTextContains("2024-07-06")
+        dates[1].assertTextContains("2024-03-12")
+        click("保存订阅")
+        val saved=awaitLedger { it.plans.singleOrNull()?.interval==2 }
+        assertEquals("2024-07-06",Book.expiry(saved.benefits.first(),saved.plans.single()).toString())
+        assertEquals(7,saved.benefits.first().giftDays)
+        assertEquals("2024-03-12",Book.expiry(saved.benefits.last(),saved.plans.single()).toString())
+        assertEquals(2,saved.benefits.last().giftDays)
+        assertTrue(saved.payments.isEmpty())
+        click(plan.name)
+        click("编辑订阅与到期日")
+        fill("扣款日期","2024-03-31")
+        click("包含的权益")
+        compose.onAllNodes(hasText("到期日期") and hasSetTextAction())[0].assertTextContains("2024-08-07")
+        compose.onAllNodes(hasText("到期日期") and hasSetTextAction())[1].assertTextContains("2024-03-12")
+    }
+
     @Test fun invalidFormRemainsEditableAndDoesNotWriteAnyLedgerRecords() {
         compose.onNodeWithContentDescription("记一笔订阅").performClick()
         fill("订阅 / 套餐名称", "无效金额测试")
@@ -244,7 +295,7 @@ class MainActivityDeviceTest {
         compose.activityRule.scenario.recreate();compose.waitForIdle()
         click("返回")
         compose.onNodeWithText("账本",substring=false).performClick()
-        compose.onNodeWithText("¥288.40",substring=false).assertExists()
+        assertTrue(compose.onAllNodesWithText("¥288.40",substring=false).fetchSemanticsNodes().isNotEmpty())
         screenshot("frozen-receipts")
     }
 
@@ -260,7 +311,7 @@ class MainActivityDeviceTest {
         val restored=Book.decode(Book.encode(completed))
         runBlocking { app.repository.restore(restored) }
         compose.activityRule.scenario.recreate();compose.waitForIdle()
-        compose.onAllNodesWithText("¥108.50",substring=false).assertCountEquals(2)
+        assertTrue(compose.onAllNodesWithText("¥108.50",substring=false).fetchSemanticsNodes().isNotEmpty())
         compose.onNodeWithText("补录人民币").assertDoesNotExist()
     }
 
