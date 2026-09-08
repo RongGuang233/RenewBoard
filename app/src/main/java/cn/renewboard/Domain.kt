@@ -34,6 +34,8 @@ data class RefundBalance(val amount: BigDecimal)
 fun Payment.signedAmount(): BigDecimal = BigDecimal(amount).let { if(refundOf == null) it else it.negate() }
 fun Payment.signedCny(): BigDecimal? = (if(currency == "CNY") amount else cnyAmount)?.let { BigDecimal(it) }?.let { if(refundOf == null) it else it.negate() }
 data class ForecastSummary(val known: BigDecimal, val missingPlanIds: List<String>)
+data class ForecastCharge(val planId: String, val planName: String, val date: LocalDate,
+    val amount: BigDecimal, val currency: String, val cnyAmount: BigDecimal?)
 
 @Serializable data class Settings(val reminderDays: List<Int> = listOf(3, 0), val rates: Map<String, String> = emptyMap())
 @Serializable data class Ledger(val plans: List<Plan> = emptyList(), val benefits: List<Benefit> = emptyList(), val payments: List<Payment> = emptyList(), val settings: Settings = Settings(), val devices: List<Device> = emptyList())
@@ -54,46 +56,59 @@ object Book {
         while (date < today) { i++; date = advance(anchor, p.cycle, i * p.interval) }
         return date
     }
-    fun forecast(l: Ledger, from: LocalDate, until: LocalDate): Map<String, BigDecimal> {
-        val totals = mutableMapOf<String, BigDecimal>()
-        l.plans.filter { it.autoRenew && !it.archived && it.balanceAccount == null }.forEach { p ->
-            var date = nextCharge(p, from)
-            var index = p.paidCycles.toLong()
-            while (advance(LocalDate.parse(p.billingAnchor), p.cycle, index * p.interval) < date) index++
-            while (date < until) {
-                totals[p.currency] = (totals[p.currency] ?: BigDecimal.ZERO) + BigDecimal(p.amount)
-                index++; date = advance(LocalDate.parse(p.billingAnchor), p.cycle, index * p.interval)
+    // All forecast views share these events and the latest recorded settlement ratio.
+    fun forecastCharges(l: Ledger, from: LocalDate, until: LocalDate): List<ForecastCharge> {
+        if(until<=from) return emptyList()
+        val charges=mutableListOf<ForecastCharge>()
+        l.plans.filter { it.autoRenew && !it.archived }.forEach { plan ->
+            val settlement=if(plan.currency=="CNY") null else l.payments.withIndex().filter { (_, p) ->
+                p.refundOf==null && p.planId==plan.id && p.currency==plan.currency && p.cnyAmount!=null &&
+                    BigDecimal(p.amount).signum()>0 && LocalDate.parse(p.date)<=from
+            }.maxWithOrNull(compareBy<IndexedValue<Payment>> { LocalDate.parse(it.value.date) }.thenBy { it.index })?.value
+            var originalTotal=BigDecimal.ZERO
+            var settledTotal=BigDecimal.ZERO
+            fun add(date:LocalDate,amount:BigDecimal) {
+                if(amount.signum()==0) return
+                originalTotal+=amount
+                // Cumulative conversion preserves the existing aggregate precision across repeated charges.
+                val converted=when {
+                    plan.currency=="CNY" -> originalTotal
+                    settlement!=null -> originalTotal.multiply(BigDecimal(settlement.cnyAmount!!))
+                        .divide(BigDecimal(settlement.amount),MathContext.DECIMAL128)
+                    else -> null
+                }
+                val cny=converted?.minus(settledTotal)
+                if(converted!=null) settledTotal=converted
+                charges+=ForecastCharge(plan.id,plan.name,date,amount,plan.currency,cny)
             }
-        }
-        l.plans.filter { it.autoRenew && !it.archived && it.balanceAccount != null }.forEach { p ->
-            var after=maxOf(from.minusDays(1),LocalDate.parse(p.balanceAccount!!.asOf))
-            var date=Prepaid.nextDeduction(p,after)
-            while(date<until) {
-                totals["CNY"]=(totals["CNY"] ?: BigDecimal.ZERO)+Prepaid.feeAt(p,date)
-                after=date;date=Prepaid.nextDeduction(p,after)
-            }
-        }
-        return totals
-    }
-    // Forecast uses the latest recorded settlement ratio for each plan, not mutable settings rates.
-    fun forecastSummary(l: Ledger, from: LocalDate, until: LocalDate): ForecastSummary {
-        var total = BigDecimal.ZERO
-        val missing=mutableListOf<String>()
-        l.plans.forEach { plan ->
-            val amount = forecast(l.copy(plans = listOf(plan)), from, until)[plan.currency] ?: return@forEach
-            if (plan.currency == "CNY" || amount.signum() == 0) {
-                total += amount
+            val account=plan.balanceAccount
+            if(account!=null) {
+                var date=Prepaid.nextDeduction(plan,maxOf(from.minusDays(1),LocalDate.parse(account.asOf)))
+                while(date<until) {
+                    add(date,Prepaid.feeAt(plan,date))
+                    date=Prepaid.nextDeduction(plan,date)
+                }
             } else {
-                val payment = l.payments.withIndex().filter { (_, p) ->
-                    p.refundOf == null && p.planId == plan.id && p.currency == plan.currency && p.cnyAmount != null &&
-                        BigDecimal(p.amount).signum() > 0 && LocalDate.parse(p.date) <= from
-                }.maxWithOrNull(compareBy<IndexedValue<Payment>> { LocalDate.parse(it.value.date) }.thenBy { it.index })?.value
-                if(payment==null) { missing += plan.id; return@forEach }
-                total += amount.multiply(BigDecimal(payment.cnyAmount!!))
-                    .divide(BigDecimal(payment.amount), MathContext.DECIMAL128)
+                val anchor=LocalDate.parse(plan.billingAnchor)
+                var index=plan.paidCycles.toLong()
+                var date=advance(anchor,plan.cycle,index*plan.interval)
+                while(date<from) { index++;date=advance(anchor,plan.cycle,index*plan.interval) }
+                while(date<until) {
+                    add(date,BigDecimal(plan.amount))
+                    index++;date=advance(anchor,plan.cycle,index*plan.interval)
+                }
             }
         }
-        return ForecastSummary(total,missing)
+        return charges.sortedWith(compareBy<ForecastCharge> {it.date}.thenBy {it.planName}.thenBy {it.planId})
+    }
+    fun forecast(l: Ledger, from: LocalDate, until: LocalDate): Map<String, BigDecimal> =
+        forecastCharges(l,from,until).groupBy {it.currency}.mapValues { (_,charges) ->
+            charges.fold(BigDecimal.ZERO) {total,charge -> total+charge.amount}
+        }
+    fun forecastSummary(l: Ledger, from: LocalDate, until: LocalDate): ForecastSummary {
+        val charges=forecastCharges(l,from,until)
+        return ForecastSummary(charges.fold(BigDecimal.ZERO) {total,charge -> total+(charge.cnyAmount ?: BigDecimal.ZERO)},
+            charges.filter {it.cnyAmount==null}.map {it.planId}.distinct())
     }
     fun forecastCny(l: Ledger, from: LocalDate, until: LocalDate): BigDecimal? =
         forecastSummary(l,from,until).let { if(it.missingPlanIds.isEmpty()) it.known else null }

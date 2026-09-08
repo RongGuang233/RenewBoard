@@ -1,6 +1,7 @@
 package cn.renewboard
 
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -45,7 +46,7 @@ private fun balanceHint(p: Plan, today: LocalDate): String {
         }
     }
 }
-@Composable internal fun BalanceDetail(l: Ledger,p: Plan,onEdit:()->Unit,change:((Ledger)->Ledger)->Unit,onDeleted:()->Unit) {
+@Composable internal fun BalanceDetail(l: Ledger,p: Plan,onEdit:()->Unit,change:((Ledger)->Ledger)->Unit,onDeleted:()->Unit,openPayment:(String)->Unit={},openHistory:()->Unit={}) {
     val today=LocalDate.now()
     var recharging by remember { mutableStateOf(false) }
     var deleting by remember { mutableStateOf(false) }
@@ -75,17 +76,20 @@ private fun balanceHint(p: Plan, today: LocalDate): String {
         }
     }
     Card(colors=CardDefaults.cardColors(containerColor=MaterialTheme.colorScheme.primaryContainer),modifier=Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(24.dp)) {
+        Column(Modifier.padding(16.dp)) {
             Text("估算余额")
-            Text(yuan(Prepaid.balance(p,today)),fontSize=36.sp,fontWeight=FontWeight.Bold,modifier=Modifier.padding(vertical=12.dp))
+            Text(yuan(Prepaid.balance(p,today)),fontSize=32.sp,fontWeight=FontWeight.Bold,modifier=Modifier.padding(vertical=6.dp))
             Text(balanceHint(p,today),fontWeight=FontWeight.SemiBold)
-            Text("每月 ${LocalDate.parse(p.billingAnchor).dayOfMonth} 日 · ${yuan(Prepaid.feeAt(p,today))}\n下次扣费 ${Prepaid.nextDeduction(p,today)}",modifier=Modifier.padding(top=12.dp))
+            Row(Modifier.fillMaxWidth().padding(top=12.dp),horizontalArrangement=Arrangement.SpaceBetween) {
+                Column {Text("每月 ${LocalDate.parse(p.billingAnchor).dayOfMonth} 日",style=MaterialTheme.typography.bodySmall);Text(yuan(Prepaid.feeAt(p,today)),fontWeight=FontWeight.SemiBold)}
+                Column(horizontalAlignment=Alignment.End) {Text("下次扣费",style=MaterialTheme.typography.bodySmall);Text(Prepaid.nextDeduction(p,today).toString(),fontWeight=FontWeight.SemiBold)}
+            }
             p.balanceAccount?.pendingFee?.let { pending ->
                 Text("${pending.effectiveDate} 起 ${yuan(BigDecimal(pending.amount))}/月",fontSize=13.sp,modifier=Modifier.padding(top=8.dp))
             }
         }
     }
-    Text("月费按设置记入支出，充值不重复计算；额外消费后可校准余额。",fontSize=13.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.padding(vertical=12.dp))
+    Spacer(Modifier.height(8.dp))
     Button({recharging=true;error=null;date=today.toString();historyAffectsBalance=null},Modifier.fillMaxWidth()) { Text("记录充值") }
     Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(12.dp)) {
         OutlinedButton({calibrating=true;confirmedBalance="";recordExpense=false;error=null},Modifier.weight(1f)) { Text("校准余额") }
@@ -97,9 +101,20 @@ private fun balanceHint(p: Plan, today: LocalDate): String {
         },Modifier.weight(1f)) { Text("修改月费") }
     }
     if(p.note.isNotBlank()) Text(p.note,modifier=Modifier.padding(vertical=12.dp))
-    Text("话费记录",fontSize=19.sp,fontWeight=FontWeight.SemiBold,modifier=Modifier.padding(top=16.dp))
-    l.payments.filter { it.planId==p.id }.sortedByDescending { it.date }.forEach {
-        Text("${it.date} · ${if(it.currency=="CNY") yuan(it.signedAmount()) else "${it.currency} ${it.signedAmount().toPlainString()}"} · ${if(it.refundOf!=null) "退款" else it.note}",modifier=Modifier.padding(vertical=8.dp))
+    val history=l.payments.filter {it.planId==p.id}.sortedByDescending {it.date}
+    Row(Modifier.fillMaxWidth().padding(top=12.dp),verticalAlignment=Alignment.CenterVertically) {
+        Text("最近记录",fontSize=19.sp,fontWeight=FontWeight.SemiBold,modifier=Modifier.weight(1f))
+        if(history.isNotEmpty()) TextButton(onClick=openHistory) {Text("全部记录")}
+    }
+    if(history.isEmpty()) Hint("还没有话费记录")
+    history.take(3).forEach { payment ->
+        Row(Modifier.fillMaxWidth().clickable {openPayment(payment.id)}.heightIn(min=56.dp).padding(vertical=8.dp),verticalAlignment=Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(when {payment.refundOf!=null -> "退款";Prepaid.isTopUp(payment) -> "充值";payment.note=="话费扣费" -> "月费";payment.note=="话费额外扣费" -> "额外扣费";else -> payment.note.ifBlank {"付款"}},fontWeight=FontWeight.Medium)
+                Text(payment.date,style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Text(displayMoney(payment.currency,payment.signedAmount().toPlainString()),fontWeight=FontWeight.SemiBold)
+        }
     }
     if(recharging) AlertDialog(onDismissRequest={recharging=false},title={Text("记录话费充值")},text={Column(Modifier.verticalScroll(rememberScrollState())) {
         MoneyField("充值金额",amount,{amount=it})

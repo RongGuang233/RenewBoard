@@ -113,7 +113,7 @@ class BalanceDeviceTest {
         compose.onNodeWithText("订阅",substring=false).performClick()
         compose.onNodeWithText("中国移动").assertExists()
         compose.onNodeWithText("账本",substring=false).performClick()
-        compose.onNodeWithText("范围支出 ¥60.00").assertExists()
+        compose.onNodeWithText("净支出 ¥60.00").assertExists()
     }
 
     @Test fun historicalRechargeRequiresExplicitBalanceChoiceAndCalibrationCanRecordExpense() {

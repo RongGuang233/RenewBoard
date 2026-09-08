@@ -7,6 +7,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -15,10 +16,12 @@ import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.selected
@@ -38,7 +41,7 @@ private fun smallAmount(value: BigDecimal): String = when {
 }
 private fun within(p: Payment, from: LocalDate?, until: LocalDate?) =
     (from==null || LocalDate.parse(p.date)>=from) && (until==null || LocalDate.parse(p.date)<until)
-private data class ReceiptRange(val title:String,val from:LocalDate?,val until:LocalDate?,val planName:String?=null)
+private data class ReceiptRange(val title:String,val from:LocalDate?,val until:LocalDate?,val planName:String?=null,val planId:String?=null,val refundOf:String?=null)
 
 @Composable internal fun LedgerScreen(l:Ledger,change:((Ledger)->Ledger)->Unit,onSubpageChange:(Boolean)->Unit={}) {
     val today=LocalDate.now()
@@ -48,6 +51,7 @@ private data class ReceiptRange(val title:String,val from:LocalDate?,val until:L
     var range by rememberSaveable { mutableStateOf(TrendRange.SIX) }
     var year by rememberSaveable { mutableIntStateOf(today.year) }
     var expandedRank by rememberSaveable { mutableStateOf(false) }
+    var expandedCash by rememberSaveable { mutableStateOf(false) }
     var detail by remember { mutableStateOf<ReceiptRange?>(null) }
     var payment by remember { mutableStateOf<Payment?>(null) }
     val expenses=Prepaid.expenses(l)
@@ -80,7 +84,9 @@ private data class ReceiptRange(val title:String,val from:LocalDate?,val until:L
     DisposableEffect(Unit) {onDispose {onSubpageChange(false)}}
     BackHandler(subpageOpen) {if(payment!=null) payment=null else detail=null}
     payment?.let { selected ->
-        l.payments.find {it.id==selected.id}?.let { PaymentDetailScreen(l,it,{payment=null},change,"返回概览") }
+        val current=l.payments.find {it.id==selected.id}
+        if(current!=null) PaymentDetailScreen(l,current,{payment=null},change,"返回概览")
+        else LaunchedEffect(selected.id) {payment=null}
         return
     }
     detail?.let { target -> ReceiptList(l,target,{detail=null},change);return }
@@ -100,9 +106,19 @@ private data class ReceiptRange(val title:String,val from:LocalDate?,val until:L
     }
     Surface(color=Color.White,shape=RoundedCornerShape(22.dp),modifier=Modifier.fillMaxWidth().padding(top=8.dp)) {
         Column(Modifier.padding(16.dp)) {
-            Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween) {
-                Text("范围支出 ${cash(rangeSum.known)}",fontWeight=FontWeight.SemiBold)
+            Row(Modifier.fillMaxWidth().heightIn(min=48.dp).clickable {expandedCash=!expandedCash}.semantics {
+                contentDescription=if(expandedCash) "收起支出构成" else "展开支出构成"
+            },verticalAlignment=Alignment.CenterVertically) {
+                Text("净支出 ${cash(rangeSum.known)}",fontWeight=FontWeight.SemiBold,modifier=Modifier.weight(1f))
                 Text("${rangeSum.count} 笔",color=MaterialTheme.colorScheme.onSurfaceVariant,fontSize=13.sp)
+                Icon(if(expandedCash) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore,null,modifier=Modifier.size(20.dp))
+            }
+            if(expandedCash) {
+                val breakdown=LedgerStats.breakdown(rangePayments)
+                Row(Modifier.fillMaxWidth().padding(bottom=8.dp),horizontalArrangement=Arrangement.spacedBy(16.dp)) {
+                    CashPart("付款",breakdown.payments,Modifier.weight(1f))
+                    CashPart("退款",breakdown.refunds,Modifier.weight(1f))
+                }
             }
             if(rangeSum.missing>0) Text("${rangeSum.missing} 笔金额待补录",color=MaterialTheme.colorScheme.tertiary,fontSize=13.sp)
             if(buckets.isEmpty()) Text("记录第一笔付款后，这里会显示趋势。",modifier=Modifier.padding(vertical=30.dp),color=MaterialTheme.colorScheme.onSurfaceVariant)
@@ -163,6 +179,13 @@ private data class ReceiptRange(val title:String,val from:LocalDate?,val until:L
     }
 }
 
+@Composable private fun CashPart(label:String,summary:CashSummary,modifier:Modifier=Modifier) {
+    Column(modifier) {
+        Text("$label ${cash(summary.known)}",fontSize=13.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
+        if(summary.missing>0) Text("${summary.missing} 笔待补录",fontSize=12.sp,color=MaterialTheme.colorScheme.tertiary)
+    }
+}
+
 @Composable private fun Heading(title:String,subtitle:String) {
     Row(Modifier.fillMaxWidth().padding(top=26.dp,bottom=10.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.SpaceBetween) {
         Text(title,fontSize=20.sp,fontWeight=FontWeight.SemiBold)
@@ -207,6 +230,7 @@ private data class ReceiptRange(val title:String,val from:LocalDate?,val until:L
         Column(Modifier.weight(1f)) {
             Text(p.planName,fontSize=16.sp,fontWeight=FontWeight.Medium,maxLines=1,overflow=TextOverflow.Ellipsis)
             if(p.refundOf!=null) Text("退款",fontSize=12.sp,color=MaterialTheme.colorScheme.tertiary)
+            else if(p.note=="话费扣费") Text("按月费记录",fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
             if(Prepaid.isTopUp(p)) Text("充值 · 不计支出",fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.padding(top=4.dp))
         }
         val known=if(p.currency=="CNY") p.amount else p.cnyAmount
@@ -220,14 +244,15 @@ private data class ReceiptRange(val title:String,val from:LocalDate?,val until:L
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
-@Composable private fun ReceiptList(l:Ledger,target:ReceiptRange,close:()->Unit,change:((Ledger)->Ledger)->Unit) {
+@Composable private fun ReceiptList(l:Ledger,target:ReceiptRange,close:()->Unit,change:((Ledger)->Ledger)->Unit,backDescription:String="返回概览",openPayment:((Payment)->Unit)?=null) {
+    val listState=rememberLazyListState()
     var query by rememberSaveable { mutableStateOf("") }
     var kind by rememberSaveable { mutableStateOf("全部") }
     var managing by rememberSaveable { mutableStateOf(false) }
     var selected by remember { mutableStateOf(emptySet<String>()) }
     var deleting by remember { mutableStateOf<Set<String>?>(null) }
     var payment by remember { mutableStateOf<Payment?>(null) }
-    val visible=l.payments.filter { p -> within(p,target.from,target.until) && (target.planName==null || p.planName==target.planName) && p.planName.contains(query.trim(),ignoreCase=true) && when(kind) {
+    val visible=l.payments.filter { p -> within(p,target.from,target.until) && (target.planName==null || p.planName==target.planName) && (target.planId==null || p.planId==target.planId) && (target.refundOf==null || p.refundOf==target.refundOf) && p.planName.contains(query.trim(),ignoreCase=true) && when(kind) {
         "订阅付款" -> !Prepaid.isTopUp(p)
         "退款" -> p.refundOf!=null
         "话费扣费" -> p.note in setOf("话费扣费","话费额外扣费")
@@ -240,11 +265,13 @@ private data class ReceiptRange(val title:String,val from:LocalDate?,val until:L
     val topups=LedgerStats.summary(visible.filter(Prepaid::isTopUp))
     BackHandler {if(payment!=null) payment=null else close()}
     payment?.let { selectedPayment ->
-        l.payments.find {it.id==selectedPayment.id}?.let { PaymentDetailScreen(l,it,{payment=null},change,"返回明细") }
+        val current=l.payments.find {it.id==selectedPayment.id}
+        if(current!=null) PaymentDetailScreen(l,current,{payment=null},change,"返回明细")
+        else LaunchedEffect(selectedPayment.id) {payment=null}
         return
     }
     Column(Modifier.fillMaxSize()) {
-        Scaffold(containerColor=MaterialTheme.colorScheme.background,topBar={TopAppBar(windowInsets=WindowInsets(0,0,0,0),title={Text(target.title,fontWeight=FontWeight.SemiBold)},navigationIcon={ReceiptBack("返回概览",close)},actions={
+        Scaffold(containerColor=MaterialTheme.colorScheme.background,topBar={TopAppBar(windowInsets=WindowInsets(0,0,0,0),title={Text(target.title,fontWeight=FontWeight.SemiBold)},navigationIcon={ReceiptBack(backDescription,close)},actions={
             TextButton({managing=!managing;selected=emptySet()}) {Text(if(managing) "完成" else "管理")}
         })},bottomBar={if(managing) Surface(shadowElevation=4.dp) {
             Row(Modifier.fillMaxWidth().navigationBarsPadding().padding(16.dp),verticalAlignment=Alignment.CenterVertically) {
@@ -254,19 +281,22 @@ private data class ReceiptRange(val title:String,val from:LocalDate?,val until:L
             }
         }}) { padding ->
             Column(Modifier.fillMaxSize().padding(padding).padding(horizontal=20.dp)) {
-                OutlinedTextField(query,{query=it;selected=emptySet()},label={Text("搜索应用")},leadingIcon={Icon(Icons.Outlined.Search,null)},singleLine=true,modifier=Modifier.fillMaxWidth())
-                Row(Modifier.horizontalScroll(rememberScrollState()),horizontalArrangement=Arrangement.spacedBy(6.dp)) {
-                    listOf("全部","订阅付款","退款","话费扣费","话费充值","已删订阅").forEach { option -> FilterChip(kind==option,{kind=option;selected=emptySet()},label={Text(option)}) }
+                if(target.refundOf==null) {
+                    if(target.planId==null) OutlinedTextField(query,{query=it;selected=emptySet()},label={Text("搜索应用")},leadingIcon={Icon(Icons.Outlined.Search,null)},singleLine=true,modifier=Modifier.fillMaxWidth())
+                    Row(Modifier.horizontalScroll(rememberScrollState()),horizontalArrangement=Arrangement.spacedBy(6.dp)) {
+                        val options=if(target.planId!=null) listOf("全部","话费扣费","话费充值","退款") else listOf("全部","订阅付款","退款","话费扣费","话费充值","已删订阅")
+                        options.forEach { option -> FilterChip(kind==option,{kind=option;selected=emptySet()},label={Text(option)}) }
+                    }
                 }
                 Column(Modifier.padding(vertical=12.dp),verticalArrangement=Arrangement.spacedBy(4.dp)) {
-                    Text("${visible.size} 笔 · 支出 ${cash(sum.known)}"+if(sum.missing>0) " · ${sum.missing} 笔待补录" else "",color=MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("${visible.size} 笔 · ${if(target.refundOf!=null) "退款 ${cash(sum.known.abs())}" else "净支出 ${cash(sum.known)}"}"+if(sum.missing>0) " · ${sum.missing} 笔待补录" else "",color=MaterialTheme.colorScheme.onSurfaceVariant)
                     if(topups.count>0) Text("充值 ${cash(topups.known)} · 不计支出"+if(topups.missing>0) " · ${topups.missing} 笔待补录" else "",fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                LazyColumn(Modifier.fillMaxSize()) {
+                LazyColumn(Modifier.fillMaxSize(),state=listState) {
                     if(visible.isEmpty()) item {Text("没有符合条件的付款",modifier=Modifier.padding(vertical=32.dp),color=MaterialTheme.colorScheme.onSurfaceVariant)}
                     visible.groupBy { it.date }.forEach { (date,payments) ->
                         item(key="date-$date") {ReceiptDate(date)}
-                        items(payments,key={it.id}) { p -> PaymentRow(p,{payment=p},if(managing) p.id in effective else null) { selected=if(p.id in selected) selected-p.id else selected+p.id } }
+                        items(payments,key={it.id}) { p -> PaymentRow(p,{if(openPayment!=null) openPayment(p) else payment=p},if(managing) p.id in effective else null) { selected=if(p.id in selected) selected-p.id else selected+p.id } }
                     }
                 }
             }
@@ -274,6 +304,11 @@ private data class ReceiptRange(val title:String,val from:LocalDate?,val until:L
         deleting?.let { ids -> DeletePaymentsDialog(l,ids,{deleting=null}) { change { Book.deletePayments(it,ids) };deleting=null;selected=emptySet() } }
     }
 }
+@Composable internal fun AccountHistoryScreen(l:Ledger,planId:String,close:()->Unit,change:((Ledger)->Ledger)->Unit) {
+    val name=l.plans.find {it.id==planId}?.name ?: l.payments.find {it.planId==planId}?.planName ?: "话费"
+    ReceiptList(l,ReceiptRange("$name · 全部记录",null,null,planId=planId),close,change,"返回话费详情")
+}
+
 @Composable private fun DeletePaymentsDialog(l:Ledger,ids:Set<String>,close:()->Unit,confirm:()->Unit) {
     val allIds=Book.paymentDeletionIds(l,ids)
     val records=l.payments.filter { it.id in allIds }
@@ -291,8 +326,25 @@ private data class ReceiptRange(val title:String,val from:LocalDate?,val until:L
 @Composable private fun ReceiptBack(description:String,close:()->Unit) {
     Box(Modifier.padding(start=8.dp)) {PageBack(description,close)}
 }
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable internal fun PaymentDetailScreen(l:Ledger,p:Payment,close:()->Unit,change:((Ledger)->Ledger)->Unit,backDescription:String="返回") {
+    var path by rememberSaveable(p.id) { mutableStateOf(listOf("payment:${p.id}")) }
+    val states=rememberSaveableStateHolder()
+    val back:()->Unit={if(path.size>1) path=path.dropLast(1) else close()}
+    val route=path.last()
+    val id=route.substringAfter(':')
+    val current=l.payments.find {it.id==id}
+    if(current==null) {LaunchedEffect(path) {back()};return}
+    states.SaveableStateProvider(path.joinToString("/")) {
+        if(route.startsWith("refunds:")) ReceiptList(l,ReceiptRange("关联退款",null,null,refundOf=id),back,change,"返回付款详情",openPayment={path=path+"payment:${it.id}"})
+        else PaymentDetailContent(l,current,back,change,if(path.size==1) backDescription else if(path[path.lastIndex-1].startsWith("refunds:")) "返回关联退款" else "返回退款详情",
+            openOriginal={path=path+"payment:$it"},openRefunds={path=path+"refunds:$it"})
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable private fun PaymentDetailContent(l:Ledger,p:Payment,close:()->Unit,change:((Ledger)->Ledger)->Unit,backDescription:String,
+    openOriginal:(String)->Unit,openRefunds:(String)->Unit) {
+    val context=LocalContext.current
     var deleting by remember { mutableStateOf(false) }
     var refunding by rememberSaveable(p.id) { mutableStateOf(false) }
     var more by remember { mutableStateOf(false) }
@@ -301,7 +353,7 @@ private data class ReceiptRange(val title:String,val from:LocalDate?,val until:L
     var error by remember { mutableStateOf<String?>(null) }
     val missing=p.currency!="CNY" && p.cnyAmount==null
     BackHandler {if(refunding) refunding=false else if(editing) editing=false else close()}
-    if(refunding) {RefundEditor(l,p,{refunding=false},change);return}
+    if(refunding) {RefundEditor(l,p,{refunding=false},save={context.repository().update(it)});return}
     if(editing) {PaymentEditor(l,p,{editing=false},change);return}
     Scaffold(containerColor=MaterialTheme.colorScheme.background,topBar={
         TopAppBar(windowInsets=WindowInsets(0,0,0,0),title={Text(if(missing) "补录实付金额" else if(p.refundOf!=null) "退款详情" else "付款详情",fontWeight=FontWeight.SemiBold)},navigationIcon={ReceiptBack(backDescription,close)},actions={
@@ -324,17 +376,22 @@ private data class ReceiptRange(val title:String,val from:LocalDate?,val until:L
                     if(!missing && p.currency!="CNY") Text("原币 ${p.currency} ${p.amount}",color=MaterialTheme.colorScheme.onSurfaceVariant)
                     Text(p.date,color=MaterialTheme.colorScheme.onSurfaceVariant)
                     if(Prepaid.isTopUp(p)) Text("充值 · 不计支出",color=MaterialTheme.colorScheme.onSurfaceVariant)
-                    else if(p.note.isNotBlank() && p.note!="订阅付款") Text(p.note,color=MaterialTheme.colorScheme.onSurfaceVariant)
-                    if(p.note=="话费扣费") Text("按设置的月费记录，非运营商账单。",fontSize=13.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                    else if(p.note.isNotBlank() && p.note !in setOf("订阅付款","话费扣费")) Text(p.note,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                    if(p.note=="话费扣费") Text("按月费记录",fontSize=13.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
             if(p.refundOf!=null) {
                 val original=l.payments.find { it.id==p.refundOf }
                 Text("退款 · 冲减退款当期支出",color=MaterialTheme.colorScheme.tertiary)
-                original?.let { Text("原付款：${it.date} · ${it.currency} ${it.amount}",fontSize=13.sp,color=MaterialTheme.colorScheme.onSurfaceVariant) }
+                original?.let {
+                    ReceiptLink("查看原付款", "${it.date} · ${it.signedCny()?.let(::cash) ?: "${it.currency} ${it.amount}"}") {openOriginal(it.id)}
+                }
             } else if(!Prepaid.isTopUp(p)) {
-                val remaining=Book.refundable(l,p.id)
-                if(l.payments.any { it.refundOf==p.id }) Text("剩余可退 ${p.currency} ${remaining.amount.stripTrailingZeros().toPlainString()}",fontSize=13.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                val refunds=l.payments.filter {it.refundOf==p.id}
+                if(refunds.isNotEmpty()) {
+                    val total=LedgerStats.breakdown(refunds).refunds
+                    ReceiptLink("已退款 ${refunds.size} 笔 · ${cash(total.known)}",if(total.missing>0) "${total.missing} 笔人民币待补录" else null) {openRefunds(p.id)}
+                }
             }
             if(l.plans.none { it.id==p.planId }) Text("关联订阅已删除",fontSize=13.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
             if(missing) {
@@ -353,6 +410,16 @@ private data class ReceiptRange(val title:String,val from:LocalDate?,val until:L
     }
     if(deleting) DeletePaymentsDialog(l,setOf(p.id),{deleting=false}) {change {Book.deletePayments(it,setOf(p.id))};deleting=false;close()}
 }
+@Composable private fun ReceiptLink(title:String,subtitle:String?,open:()->Unit) {
+    Row(Modifier.fillMaxWidth().heightIn(min=48.dp).clickable(onClick=open).padding(vertical=8.dp),verticalAlignment=Alignment.CenterVertically) {
+        Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(4.dp)) {
+            Text(title,fontWeight=FontWeight.Medium,color=MaterialTheme.colorScheme.primary)
+            subtitle?.let {Text(it,fontSize=13.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)}
+        }
+        Icon(Icons.Outlined.ChevronRight,null,tint=MaterialTheme.colorScheme.primary)
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable private fun PaymentEditor(l:Ledger,p:Payment,close:()->Unit,change:((Ledger)->Ledger)->Unit) {
     var amount by rememberSaveable(p.id) {mutableStateOf(p.amount)}

@@ -152,9 +152,12 @@ private fun deviceMoney(value: String) = "¥" + BigDecimal(value).setScale(2, Ro
                         Icon(deviceIcon(item.category),null,Modifier.size(26.dp),tint=MaterialTheme.colorScheme.primary)
                         Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(3.dp)) {
                             Text(item.name,fontSize=16.sp,fontWeight=FontWeight.SemiBold)
-                            Text(Devices.serviceDays(item)?.let {"服役 $it 天"} ?: "购买预算",color=MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(Devices.serviceDays(item)?.let {"服役 $it 天"} ?: item.category.label,color=MaterialTheme.colorScheme.onSurfaceVariant)
                         }
-                        Text(deviceMoney(item.purchaseAmount),fontWeight=FontWeight.SemiBold)
+                        Column(horizontalAlignment=Alignment.End,verticalArrangement=Arrangement.spacedBy(3.dp)) {
+                            Text(deviceMoney(if(item.status==DeviceStatus.SOLD) Devices.netCost(item).toPlainString() else item.purchaseAmount),fontWeight=FontWeight.SemiBold)
+                            Text(when(item.status) {DeviceStatus.SOLD -> "净花费";DeviceStatus.WISHLIST -> "预算";else -> "购入金额"},style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
                     }
                 }
             }

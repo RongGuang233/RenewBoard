@@ -9,9 +9,17 @@ enum class TrendRange(val label: String) {
 }
 
 data class CashSummary(val known: BigDecimal, val missing: Int, val count: Int)
+data class CashBreakdown(val payments: CashSummary, val refunds: CashSummary)
 data class CashBucket(val label: String, val from: LocalDate, val until: LocalDate, val summary: CashSummary)
 
 object LedgerStats {
+    /** Expense components use frozen receipts; top-ups only add balance and are excluded. */
+    fun breakdown(payments: List<Payment>): CashBreakdown {
+        val expenses = payments.filterNot(Prepaid::isTopUp)
+        val refunds = summary(expenses.filter { it.refundOf != null })
+        return CashBreakdown(summary(expenses.filter { it.refundOf == null }), refunds.copy(known = refunds.known.abs()))
+    }
+
     fun summary(payments: List<Payment>): CashSummary {
         var known = BigDecimal.ZERO
         var missing = 0

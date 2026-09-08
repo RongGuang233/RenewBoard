@@ -20,7 +20,7 @@ class LedgerDeviceTest {
         WorkManager.getInstance(app).cancelAllWork().result.get()
         runBlocking {app.repository.update {Ledger()}};compose.waitForIdle()
     }
-    @After fun cleanup() {runBlocking {app.repository.update {Ledger()}}}
+    @After fun cleanup() {runBlocking {app.repository.update {Ledger()}};compose.waitForIdle()}
     private fun seed(l:Ledger) {runBlocking {app.repository.update {l}};compose.waitForIdle()}
     private fun click(text:String) {compose.onNodeWithText(text).performScrollTo().performClick()}
     private fun read()=runBlocking {app.repository.read()}
@@ -90,7 +90,7 @@ class LedgerDeviceTest {
         compose.onNodeWithText("删除这笔付款").performClick();compose.onNodeWithText("确认删除").performClick()
         waitFor {it.payments.isEmpty()};assertEquals(plan,read().plans.single())
         compose.onNodeWithContentDescription("返回概览").performClick()
-        compose.onNodeWithText("范围支出 ¥0.00",substring=false).assertExists()
+        compose.onNodeWithText("净支出 ¥0.00",substring=false).assertExists()
     }
     @Test fun selectedChartBucketFiltersExactDayMonthAndYearAndRangeResetsSelection() {
         val today=LocalDate.now()
@@ -137,21 +137,21 @@ class LedgerDeviceTest {
         val topup=fee.copy(id="recharge",amount="100",note="话费充值")
         seed(Ledger(payments=listOf(fee,topup)))
         compose.onNodeWithText("账本",substring=false).performClick()
-        compose.onNodeWithText("范围支出 ¥30.00",substring=false).assertExists()
+        compose.onNodeWithText("净支出 ¥30.00",substring=false).assertExists()
         compose.onNode(hasContentDescription("中国移动，支出¥30.00",substring=true)).assertExists()
         compose.onNodeWithText("充值 · 不计支出",substring=false).assertDoesNotExist()
         click("全部明细")
-        compose.onNodeWithText("2 笔 · 支出 ¥30.00",substring=false).assertExists()
+        compose.onNodeWithText("2 笔 · 净支出 ¥30.00",substring=false).assertExists()
         compose.onNodeWithText("充值 ¥100.00 · 不计支出",substring=false).assertExists()
         compose.onNodeWithText("充值 · 不计支出",substring=false).assertExists()
         compose.onNodeWithText("话费扣费",substring=false).performScrollTo().performClick()
-        compose.onNodeWithText("1 笔 · 支出 ¥30.00",substring=false).assertExists()
+        compose.onNodeWithText("1 笔 · 净支出 ¥30.00",substring=false).assertExists()
         compose.onNodeWithText("¥100.00",substring=false).assertDoesNotExist()
         compose.onNodeWithText("中国移动",substring=false).performClick()
-        compose.onNodeWithText("按设置的月费记录，非运营商账单。",substring=false).assertExists()
+        compose.onNodeWithText("按月费记录",substring=false).assertExists()
         compose.onNodeWithContentDescription("返回明细").performClick()
         compose.onNodeWithText("话费充值",substring=false).performScrollTo().performClick()
-        compose.onNodeWithText("1 笔 · 支出 ¥0.00",substring=false).assertExists()
+        compose.onNodeWithText("1 笔 · 净支出 ¥0.00",substring=false).assertExists()
         compose.onNodeWithText("¥100.00",substring=false).assertExists()
     }
     @Test fun correctingReceiptUsesFullPageAndDoesNotRenewBenefits() {
@@ -197,22 +197,22 @@ class LedgerDeviceTest {
         compose.onNodeWithContentDescription("趋势范围 近30天").performScrollTo().performClick()
         compose.onNode(hasContentDescription("${today.monthValue}/${today.dayOfMonth}，支出",substring=true)).performScrollTo().performClick()
         click("所选时段明细")
-        compose.onNodeWithText("2 笔 · 支出 ¥40.00",substring=false).assertExists()
+        compose.onNodeWithText("2 笔 · 净支出 ¥40.00",substring=false).assertExists()
         compose.onNodeWithText("搜索应用").performTextInput("时段")
-        compose.onNodeWithText("1 笔 · 支出 ¥10.00",substring=false).assertExists()
+        compose.onNodeWithText("1 笔 · 净支出 ¥10.00",substring=false).assertExists()
         compose.onNodeWithText("时段应用",substring=false).performClick()
         compose.onNodeWithContentDescription("返回明细").performClick()
         compose.onNodeWithText("搜索应用").assertTextContains("时段")
-        compose.onNodeWithText("1 笔 · 支出 ¥10.00",substring=false).assertExists()
+        compose.onNodeWithText("1 笔 · 净支出 ¥10.00",substring=false).assertExists()
         compose.onNodeWithContentDescription("返回概览").performClick()
         compose.onNode(hasContentDescription("${today.monthValue}/${today.dayOfMonth}，支出",substring=true)).assertIsSelected()
         compose.onNode(hasContentDescription("时段应用，支出¥10.00",substring=true)).performScrollTo().performClick()
-        compose.onNodeWithText("1 笔 · 支出 ¥10.00",substring=false).assertExists()
+        compose.onNodeWithText("1 笔 · 净支出 ¥10.00",substring=false).assertExists()
         compose.onNodeWithText("另一应用",substring=false).assertDoesNotExist()
         compose.onNodeWithText("¥20.00",substring=false).assertDoesNotExist()
         compose.onNodeWithText("时段应用",substring=false).performClick()
         compose.onNodeWithContentDescription("返回明细").performClick()
-        compose.onNodeWithText("1 笔 · 支出 ¥10.00",substring=false).assertExists()
+        compose.onNodeWithText("1 笔 · 净支出 ¥10.00",substring=false).assertExists()
     }
 
     @Test fun refundCreatesIndependentReceiptAndNegativePeriodThenCascadesOnDeletion() {
@@ -241,7 +241,7 @@ class LedgerDeviceTest {
         compose.onNode(hasContentDescription("退款测试，支出¥-40.00，净支出",substring=true)).performScrollTo()
         shot("ledger-net-refund-ranking")
         compose.onNode(hasContentDescription("退款测试，支出¥-40.00，净支出",substring=true)).performClick()
-        compose.onNodeWithText("1 笔 · 支出 ¥-40.00",substring=false).assertExists()
+        compose.onNodeWithText("1 笔 · 净支出 ¥-40.00",substring=false).assertExists()
         compose.onNodeWithText("退款测试",substring=false).performClick()
         compose.onNodeWithText("退款详情",substring=false).assertExists()
         compose.onNodeWithContentDescription("付款更多操作").performClick()
@@ -263,6 +263,57 @@ class LedgerDeviceTest {
         compose.onNodeWithText("包含关联退款 1 笔，将一并删除。",substring=false).assertExists()
         compose.onNodeWithText("确认删除",substring=false).performClick()
         waitFor {it.payments.isEmpty()};assertEquals(listOf(benefit),read().benefits)
+    }
+
+    @Test fun netSpendingShowsPaymentAndRefundComponentsOnlyOnRequest() {
+        val today=LocalDate.now().toString()
+        val original=Payment(id="net-original",planId="net",planName="构成测试",amount="100",currency="CNY",date=today)
+        val refund=original.copy(id="net-refund",amount="40",refundOf=original.id)
+        val fee=Payment(planId="phone",planName="中国移动",amount="30",currency="CNY",date=today,note="话费扣费")
+        seed(Ledger(payments=listOf(original,refund,fee,fee.copy(id="top-up",amount="200",note="话费充值"))))
+        compose.onNodeWithText("账本",substring=false).performClick()
+        compose.onNodeWithText("净支出 ¥90.00",substring=false).assertExists()
+        compose.onNodeWithText("付款 ¥130.00",substring=false).assertDoesNotExist()
+        compose.onNodeWithContentDescription("展开支出构成").performClick()
+        compose.onNodeWithText("付款 ¥130.00",substring=false).assertExists()
+        compose.onNodeWithText("退款 ¥40.00",substring=false).assertExists()
+        compose.onAllNodes(isDialog()).assertCountEquals(0)
+        compose.onNodeWithContentDescription("收起支出构成").performClick()
+        compose.onNodeWithText("付款 ¥130.00",substring=false).assertDoesNotExist()
+        compose.onNodeWithText("净支出 ¥90.00",substring=false).assertExists()
+    }
+
+    @Test fun linkedRefundsOpenOriginalAndReturnThroughEachPageKeepingLedgerSearch() {
+        val today=LocalDate.now().toString()
+        val original=Payment(id="linked-original",planId="linked",planName="关联测试",amount="100",currency="CNY",date=today)
+        val first=original.copy(id="linked-refund-one",amount="20",refundOf=original.id)
+        val second=original.copy(id="linked-refund-two",amount="15",refundOf=original.id)
+        val other=original.copy(id="other-original",amount="75")
+        val unrelated=other.copy(id="other-refund",amount="25",refundOf=other.id)
+        seed(Ledger(payments=listOf(original,first,second,other,unrelated)))
+        compose.onNodeWithText("账本",substring=false).performClick();click("全部明细")
+        compose.onNodeWithText("搜索应用").performTextInput("关联")
+        compose.onNode(hasText("¥100.00") and hasClickAction()).performClick()
+        click("已退款 2 笔 · ¥35.00")
+        compose.onNodeWithText("关联退款",substring=false).assertExists()
+        compose.onNodeWithText("2 笔 · 退款 ¥35.00",substring=false).assertExists()
+        compose.onNodeWithText("¥-25.00",substring=false).assertDoesNotExist()
+        compose.onNode(hasText("¥-20.00") and hasClickAction()).performClick()
+        compose.onNodeWithText("退款详情",substring=false).assertExists()
+        click("查看原付款")
+        compose.onNodeWithText("付款详情",substring=false).assertExists()
+        compose.onNodeWithText("¥100.00",substring=false).assertExists()
+        compose.onNodeWithContentDescription("返回退款详情").performClick()
+        compose.onNodeWithText("退款详情",substring=false).assertExists()
+        compose.onNodeWithText("¥-20.00",substring=false).assertExists()
+        compose.onNodeWithContentDescription("返回关联退款").performClick()
+        compose.onNodeWithText("2 笔 · 退款 ¥35.00",substring=false).assertExists()
+        compose.onNodeWithContentDescription("返回付款详情").performClick()
+        compose.onNodeWithText("付款详情",substring=false).assertExists()
+        compose.onNodeWithContentDescription("返回明细").performClick()
+        compose.onNodeWithText("搜索应用").assertTextContains("关联")
+        compose.onNodeWithText("5 笔 · 净支出 ¥115.00",substring=false).assertExists()
+        compose.onAllNodes(isDialog()).assertCountEquals(0)
     }
 
 }

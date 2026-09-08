@@ -121,6 +121,8 @@ private fun money(totals: Map<String,BigDecimal>) = if(totals.isEmpty()) "暂无
     var editId by rememberSaveable { mutableStateOf<String?>(null) }; var creating by rememberSaveable { mutableStateOf(false) }
     var detailId by rememberSaveable { mutableStateOf<String?>(null) }
     var receiptId by rememberSaveable { mutableStateOf<String?>(null) }
+    var forecastOpen by rememberSaveable { mutableStateOf(false) }
+    var accountHistoryId by rememberSaveable { mutableStateOf<String?>(null) }
     var paymentPlanId by rememberSaveable {mutableStateOf<String?>(null)}
     var paymentOnlyRecord by rememberSaveable {mutableStateOf(false)}
     val snack = remember { SnackbarHostState() }; val scope = rememberCoroutineScope()
@@ -132,7 +134,7 @@ private fun money(totals: Map<String,BigDecimal>) = if(totals.isEmpty()) "暂无
         val id=intent.getStringExtra("planId")
         if(id!=null) {
             if(ledger.plans.any {it.id==id}) {
-                creating=false;editId=null;receiptId=null;detailId=id;tab=1
+                creating=false;editId=null;receiptId=null;forecastOpen=false;accountHistoryId=null;detailId=id;tab=1
                 paymentOnlyRecord=false
                 paymentPlanId=if(intent.getStringExtra("subscriptionAction")=="pay" && ledger.plans.single{it.id==id}.balanceAccount==null) id else null
                 when(intent.getStringExtra("subscriptionAction")) {
@@ -141,6 +143,9 @@ private fun money(totals: Map<String,BigDecimal>) = if(totals.isEmpty()) "暂无
             } else message("这项订阅已删除")
         }
         onIntentHandled()
+    }
+    LaunchedEffect(receiptId,ledger.payments,received) {
+        if(received!=null && receiptId!=null && ledger.payments.none {it.id==receiptId}) receiptId=null
     }
     val hasPreviousPage=creating || editId!=null || detailId!=null
     fun goBack() {
@@ -152,12 +157,12 @@ private fun money(totals: Map<String,BigDecimal>) = if(totals.isEmpty()) "暂无
     }
     BackHandler(enabled=hasPreviousPage && !creating && editId==null && paymentPlanId==null) { goBack() }
     Scaffold(snackbarHost={SnackbarHost(snack)}, topBar={
-        if(hasPreviousPage && !creating && editId==null && paymentPlanId==null && receiptId==null) Surface(color=Paper) {
+        if(hasPreviousPage && !creating && editId==null && paymentPlanId==null && receiptId==null && accountHistoryId==null) Surface(color=Paper) {
             Row(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal=20.dp,vertical=8.dp)) {
                 PageBack(back=::goBack)
             }
         }
-    }, bottomBar={ if(!hasPreviousPage && !subpage && paymentPlanId==null && receiptId==null) NavigationBar(containerColor=Paper) {
+    }, bottomBar={ if(!hasPreviousPage && !subpage && paymentPlanId==null && receiptId==null && !forecastOpen && accountHistoryId==null) NavigationBar(containerColor=Paper) {
         listOf("到期","订阅","账本","设备","设置").forEachIndexed { i,s -> NavigationBarItem(selected=tab==i,onClick={tab=i},icon={Icon(listOf(Icons.Outlined.Event,Icons.Outlined.Bookmarks,Icons.Outlined.ReceiptLong,Icons.Outlined.Devices,Icons.Outlined.Settings)[i],null)},label={Text(s)}) }
     } }) { padding ->
         val receipt=ledger.payments.find {it.id==receiptId}
@@ -177,6 +182,10 @@ private fun money(totals: Map<String,BigDecimal>) = if(totals.isEmpty()) "暂无
             }
         } else if(receiptId!=null && receipt!=null) {
             Box(Modifier.fillMaxSize().padding(padding).imePadding()) {PaymentDetailScreen(ledger,receipt,{receiptId=null},::change)}
+        } else if(accountHistoryId!=null) {
+            Box(Modifier.fillMaxSize().padding(padding)) {AccountHistoryScreen(ledger,accountHistoryId!!,{accountHistoryId=null},::change)}
+        } else if(forecastOpen && !hasPreviousPage) {
+            Box(Modifier.fillMaxSize().padding(padding)) {ForecastScreen(ledger,{forecastOpen=false},{detailId=it})}
         } else if(!hasPreviousPage && tab>=2) {
             Box(Modifier.fillMaxSize().padding(padding).imePadding()) {
                 when(tab) {
@@ -188,16 +197,16 @@ private fun money(totals: Map<String,BigDecimal>) = if(totals.isEmpty()) "暂无
         } else Column(Modifier.fillMaxSize().padding(padding).padding(horizontal=20.dp).imePadding().verticalScroll(rememberScrollState()).padding(bottom=24.dp)) {
             if(detailId!=null) {
                 val p = ledger.plans.find { it.id==detailId }
-                if(p==null) { detailId=null } else key(p.id) {Detail(ledger,p,onEdit={editId=p.id},change=::change,onDeleted={DraftStore(c).remove("subscription:${p.id}");DraftStore(c).remove("payment:${p.id}");detailId=null},openPayment={receiptId=it},recordPayment={only->paymentOnlyRecord=only;paymentPlanId=p.id})}
+                if(p==null) { detailId=null } else key(p.id) {Detail(ledger,p,onEdit={editId=p.id},change=::change,onDeleted={DraftStore(c).remove("subscription:${p.id}");DraftStore(c).remove("payment:${p.id}");detailId=null},openPayment={receiptId=it},openHistory={accountHistoryId=p.id},recordPayment={only->paymentOnlyRecord=only;paymentPlanId=p.id})}
             } else when(tab) {
-                0 -> Overview(ledger,onAdd={creating=true}) { detailId=it }
+                0 -> Overview(ledger,onAdd={creating=true},openForecast={forecastOpen=true}) { detailId=it }
                 1 -> Subscriptions(ledger,onAdd={creating=true}) { detailId=it }
             }
         }
     }
 }
 
-@Composable private fun Overview(l: Ledger, onAdd:()->Unit, open: (String)->Unit) {
+@Composable private fun Overview(l: Ledger, onAdd:()->Unit, openForecast:()->Unit, open: (String)->Unit) {
     val today=LocalDate.now()
     val upcoming=l.benefits.filter { b->l.plans.any { it.id==b.planId && !it.archived && it.balanceAccount==null } }.sortedBy { Book.expiry(it,l.plans.single { p->p.id==it.planId }) }
     var showExpired by rememberSaveable { mutableStateOf(false) }
@@ -208,11 +217,11 @@ private fun money(totals: Map<String,BigDecimal>) = if(totals.isEmpty()) "暂无
         Text("${today.monthValue} 月 ${today.dayOfMonth} 日",fontSize=14.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
         FilledTonalIconButton(onClick=onAdd,modifier=Modifier.size(48.dp)) {Icon(Icons.Outlined.Add,"记一笔订阅")}
     }
-    Card(colors=CardDefaults.cardColors(containerColor=Leaf),shape=RoundedCornerShape(24.dp),modifier=Modifier.fillMaxWidth()) {
+    Card(onClick=openForecast,colors=CardDefaults.cardColors(containerColor=Leaf),shape=RoundedCornerShape(24.dp),modifier=Modifier.fillMaxWidth()) {
         Column(Modifier.padding(horizontal=20.dp,vertical=16.dp)) {
             Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween) {
                 Text("未来 30 天预计扣款",color=Color.White.copy(alpha=.85f),fontSize=14.sp)
-                Text("${l.plans.count { !it.archived }} 个订阅",color=Color.White.copy(alpha=.85f),fontSize=13.sp)
+                Text("预计扣款 ${Book.forecastCharges(l,today,today.plusDays(30)).size} 笔",color=Color.White.copy(alpha=.85f),fontSize=13.sp)
             }
             Text("¥${forecast.known.setScale(2,RoundingMode.HALF_UP)}",fontSize=34.sp,lineHeight=42.sp,fontWeight=FontWeight.Bold,color=Color.White,modifier=Modifier.padding(top=8.dp))
             if(forecast.missingPlanIds.isNotEmpty()) {
@@ -297,8 +306,8 @@ private fun money(totals: Map<String,BigDecimal>) = if(totals.isEmpty()) "暂无
         }
     }
 }
-@Composable private fun Detail(l: Ledger,p: Plan,onEdit:()->Unit,change:((Ledger)->Ledger)->Unit,onDeleted:()->Unit,openPayment:(String)->Unit={},recordPayment:(Boolean)->Unit={}) {
-    if(p.balanceAccount!=null) { BalanceDetail(l,p,onEdit,change,onDeleted); return }
+@Composable private fun Detail(l: Ledger,p: Plan,onEdit:()->Unit,change:((Ledger)->Ledger)->Unit,onDeleted:()->Unit,openPayment:(String)->Unit={},openHistory:()->Unit={},recordPayment:(Boolean)->Unit={}) {
+    if(p.balanceAccount!=null) { BalanceDetail(l,p,onEdit,change,onDeleted,openPayment,openHistory); return }
     var deleting by remember { mutableStateOf(false) }
     var more by remember {mutableStateOf(false)}
     var giftId by remember { mutableStateOf<String?>(null) }; var gift by remember { mutableStateOf("7") }
