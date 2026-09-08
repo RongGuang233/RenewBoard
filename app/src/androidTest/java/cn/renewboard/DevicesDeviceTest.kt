@@ -141,6 +141,7 @@ class DevicesDeviceTest {
         assertEquals(DeviceCategory.EREADER,saved.devices.single().category)
         assertNull(saved.devices.single().startDate)
         compose.onAllNodes(hasText("已服役",substring=true)).assertCountEquals(0)
+        compose.onNodeWithContentDescription("设备更多操作").performClick()
         click("编辑设备")
         fill("设备名称","不会保存的名字")
         back()

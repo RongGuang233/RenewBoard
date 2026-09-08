@@ -58,4 +58,17 @@ class SubscriptionNavigationDeviceTest {
         compose.onNode(hasText("搜索订阅") and hasSetTextAction()).assertTextContains("导航测试")
         compose.onNodeWithText("导航测试 手动",substring=false).assertDoesNotExist()
     }
+    @Test fun activeFilterCanBeClearedWithoutLosingQueryOrSort() {
+        compose.onNodeWithText("订阅",substring=false).performClick()
+        compose.onNodeWithContentDescription("清除续费筛选").assertDoesNotExist()
+        compose.onNode(hasText("搜索订阅") and hasSetTextAction()).performTextInput("导航测试")
+        menu();compose.onNodeWithText("金额",substring=false).performClick()
+        menu();compose.onNodeWithText("自动续费",substring=false).performClick()
+        compose.onNodeWithContentDescription("清除续费筛选").assertExists().performScrollTo().performClick()
+        compose.onNodeWithContentDescription("清除续费筛选").assertDoesNotExist()
+        compose.onNodeWithText("导航测试 手动",substring=false).performScrollTo().assertIsDisplayed()
+        compose.onNode(hasText("搜索订阅") and hasSetTextAction()).assertTextContains("导航测试")
+        compose.onNodeWithText("金额",substring=false).assertExists()
+    }
+
 }

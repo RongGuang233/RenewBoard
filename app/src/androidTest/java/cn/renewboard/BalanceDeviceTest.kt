@@ -57,7 +57,8 @@ class BalanceDeviceTest {
         compose.onNodeWithText("¥100.00").assertExists()
         click("记录充值")
         fill("充值金额","50")
-        compose.onNodeWithText("确认充值").performClick()
+        // Fixed footer moves during IME animation; trigger its action after input.
+        compose.onNodeWithText("确认充值").performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.OnClick) { it() }
         val recharged=await { it.payments.size==1 }
         assertEquals("50",recharged.payments.single().amount)
         assertEquals(java.math.BigDecimal.ZERO,Book.paidCny(recharged))
@@ -65,13 +66,13 @@ class BalanceDeviceTest {
         compose.onNodeWithText("¥150.00").assertExists()
         click("校准余额")
         fill("实际余额","125")
-        compose.onNodeWithText("确认校准").performClick()
+        compose.onNodeWithText("确认校准").performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.OnClick) { it() }
         val corrected=await { it.plans.single().balanceAccount?.balance=="125" }
         assertEquals(recharged.payments,corrected.payments)
         click("修改月费")
         fill("新月费","40")
         compose.onNodeWithText("立即",substring=false).performClick()
-        compose.onNodeWithText("保存月费",substring=false).performClick()
+        compose.onNodeWithText("保存月费",substring=false).performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.OnClick) { it() }
         val calibrated=await { it.plans.single().amount=="40" }
         assertEquals(recharged.payments,calibrated.payments)
         assertEquals(calibrated,Book.decode(Book.encode(calibrated)).data)
@@ -125,17 +126,17 @@ class BalanceDeviceTest {
         click("记录充值")
         fill("充值金额","50")
         fill("充值日期",today.minusDays(5).toString())
-        compose.onNodeWithText("确认充值").performClick()
+        compose.onNodeWithText("确认充值").performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.OnClick) { it() }
         compose.onNodeWithText("请选择这笔充值是否已包含在当前余额中").assertExists()
         assertTrue(ledger().payments.isEmpty())
         click("已包含，仅补记充值记录")
-        compose.onNodeWithText("确认充值").performClick()
+        compose.onNodeWithText("确认充值").performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.OnClick) { it() }
         val history=await {it.payments.size==1}
         assertEquals("100",history.plans.single().balanceAccount!!.balance)
         click("校准余额")
         fill("实际余额","85")
         click("差额 ¥15.00 记为额外支出")
-        compose.onNodeWithText("确认校准").performClick()
+        compose.onNodeWithText("确认校准").performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.OnClick) { it() }
         val calibrated=await {it.payments.size==2}
         assertEquals(java.math.BigDecimal("15"),Book.paidCny(calibrated))
         assertEquals("85",calibrated.plans.single().balanceAccount!!.balance)
@@ -153,7 +154,7 @@ class BalanceDeviceTest {
         click("修改月费")
         fill("新月费","40")
         compose.onNodeWithText("下月",substring=false).assertIsSelected()
-        compose.onNodeWithText("保存月费",substring=false).performClick()
+        compose.onNodeWithText("保存月费",substring=false).performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.OnClick) { it() }
         val scheduled=await {it.plans.single().balanceAccount?.pendingFee!=null}
         assertEquals("30",scheduled.plans.single().amount)
         assertTrue(scheduled.payments.isEmpty())
@@ -184,7 +185,7 @@ class BalanceDeviceTest {
         compose.onNodeWithContentDescription("生效月份 ${nextYear}年2月").performClick()
         compose.onNode(hasText("确定") and hasAnyAncestor(picker)).performClick()
         fill("新月费","29")
-        compose.onNodeWithText("保存月费",substring=false).performClick()
+        compose.onNodeWithText("保存月费",substring=false).performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.OnClick) { it() }
         val saved=await {it.plans.single().balanceAccount?.pendingFee!=null}
         assertEquals(MonthlyFeeChange("29","$nextYear-02-01"),saved.plans.single().balanceAccount!!.pendingFee)
         assertEquals("39",saved.plans.single().amount)

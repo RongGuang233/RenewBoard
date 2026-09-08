@@ -49,6 +49,7 @@ private data class ReceiptRange(val title:String,val from:LocalDate?,val until:L
     val overviewScroll=rememberScrollState()
     var selectedFrom by rememberSaveable { mutableStateOf<String?>(null) }
     var range by rememberSaveable { mutableStateOf(TrendRange.SIX) }
+    var rangeMenuOpen by remember { mutableStateOf(false) }
     var year by rememberSaveable { mutableIntStateOf(today.year) }
     var expandedRank by rememberSaveable { mutableStateOf(false) }
     var expandedCash by rememberSaveable { mutableStateOf(false) }
@@ -96,8 +97,21 @@ private data class ReceiptRange(val title:String,val from:LocalDate?,val until:L
         TextButton({detail=selectedDetail ?: ReceiptRange("全部付款",null,null)}) { Text(if(selectedDetail!=null) "所选时段明细" else "全部明细");Icon(Icons.Outlined.ChevronRight,null) }
     }
     Heading("支出趋势", "截至 ${today.monthValue}月${today.dayOfMonth}日")
-    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),horizontalArrangement=Arrangement.spacedBy(6.dp)) {
-        TrendRange.entries.forEach { item -> FilterChip(selected=range==item,onClick={range=item;selectedFrom=null;expandedRank=false},label={Text(item.label)},modifier=Modifier.semantics { contentDescription="趋势范围 ${item.label}" }) }
+    Box {
+        OutlinedButton(onClick={rangeMenuOpen=true},modifier=Modifier.semantics {contentDescription="选择趋势范围"}) {
+            Text(range.label)
+            Icon(Icons.Outlined.ExpandMore,null,modifier=Modifier.padding(start=6.dp).size(20.dp))
+        }
+        DropdownMenu(expanded=rangeMenuOpen,onDismissRequest={rangeMenuOpen=false}) {
+            TrendRange.entries.forEach { item ->
+                DropdownMenuItem(
+                    text={Text(item.label)},
+                    onClick={range=item;selectedFrom=null;expandedRank=false;rangeMenuOpen=false},
+                    trailingIcon={if(range==item) Icon(Icons.Outlined.Check,null)},
+                    modifier=Modifier.semantics {contentDescription="趋势范围 ${item.label}";selected=range==item}
+                )
+            }
+        }
     }
     if(range==TrendRange.YEAR) Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.Center) {
         IconButton({year--;selectedFrom=null},enabled=year>minOf(firstMonth.year,today.year)) {Icon(Icons.Outlined.ChevronLeft,"上一年")}

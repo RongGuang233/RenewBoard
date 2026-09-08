@@ -23,12 +23,42 @@ class LedgerDeviceTest {
     @After fun cleanup() {runBlocking {app.repository.update {Ledger()}};compose.waitForIdle()}
     private fun seed(l:Ledger) {runBlocking {app.repository.update {l}};compose.waitForIdle()}
     private fun click(text:String) {compose.onNodeWithText(text).performScrollTo().performClick()}
+    private fun selectRange(range:TrendRange) {
+        compose.onNodeWithContentDescription("选择趋势范围").performScrollTo().performClick()
+        compose.onNodeWithContentDescription("趋势范围 ${range.label}").performClick()
+    }
     private fun read()=runBlocking {app.repository.read()}
     private fun waitFor(check:(Ledger)->Boolean) {compose.waitUntil(10000) {check(read())};compose.waitForIdle()}
     private fun shot(name:String) {
         compose.waitForIdle();android.os.SystemClock.sleep(300)
         val bitmap=androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()
         java.io.File(app.filesDir,"$name.png").outputStream().use {bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG,100,it)};bitmap.recycle()
+    }
+    @Test fun rangeMenuShowsAllSevenChoicesAndYearControlsOnlyWhenNeeded() {
+        compose.onNodeWithText("账本",substring=false).performClick()
+        compose.onNodeWithContentDescription("选择趋势范围").assertIsDisplayed().assertTextContains("近6个月")
+        compose.onAllNodes(hasContentDescription("趋势范围 ",substring=true)).assertCountEquals(0)
+        compose.onNodeWithContentDescription("上一年").assertDoesNotExist()
+        compose.onNodeWithContentDescription("下一年").assertDoesNotExist()
+        for(range in TrendRange.entries) {
+            compose.onNodeWithContentDescription("选择趋势范围").performScrollTo().performClick()
+            compose.onAllNodes(hasContentDescription("趋势范围 ",substring=true)).assertCountEquals(7)
+            TrendRange.entries.forEach { option ->
+                compose.onNodeWithContentDescription("趋势范围 ${option.label}").assertIsDisplayed().assertHasClickAction()
+            }
+            compose.onNodeWithContentDescription("趋势范围 ${range.label}").performClick()
+            compose.onAllNodes(isPopup()).assertCountEquals(0)
+            compose.onAllNodes(hasContentDescription("趋势范围 ",substring=true)).assertCountEquals(0)
+            compose.onNodeWithContentDescription("选择趋势范围").assertTextContains(range.label)
+            if(range==TrendRange.YEAR) {
+                compose.onNodeWithContentDescription("上一年").assertIsDisplayed()
+                compose.onNodeWithContentDescription("下一年").assertIsDisplayed()
+                compose.onNodeWithText("${LocalDate.now().year} 年",substring=false).assertIsDisplayed()
+            } else {
+                compose.onNodeWithContentDescription("上一年").assertDoesNotExist()
+                compose.onNodeWithContentDescription("下一年").assertDoesNotExist()
+            }
+        }
     }
     @Test fun overviewRangesSelectRankingAndOpenFullPagesWithFrozenCash() {
         val today=LocalDate.now()
@@ -41,12 +71,12 @@ class LedgerDeviceTest {
         compose.onNodeWithText("支出概览").assertExists()
         shot("ledger-overview")
         for(range in TrendRange.entries) {
-            compose.onNodeWithContentDescription("趋势范围 ${range.label}").performScrollTo().performClick()
+            selectRange(range)
         }
-        compose.onNodeWithContentDescription("趋势范围 按年").performScrollTo().performClick()
+        selectRange(TrendRange.YEAR)
         compose.onNodeWithContentDescription("上一年").performScrollTo().performClick()
         compose.onNodeWithText("${today.year-1} 年",substring=false).assertExists()
-        compose.onNodeWithContentDescription("趋势范围 近3个月").performScrollTo().performClick()
+        selectRange(TrendRange.THREE)
         compose.onNode(hasContentDescription("${today.year}/${today.monthValue}，支出",substring=true)).performScrollTo().performClick()
         compose.onAllNodes(isDialog()).assertCountEquals(0)
         compose.onNodeWithText("${today.year}年${today.monthValue}月 · 按应用").assertExists()
@@ -100,22 +130,22 @@ class LedgerDeviceTest {
             Payment(planId="one",planName="ChatGPT",amount="40",currency="CNY",date=today.withDayOfYear(1).minusDays(1).toString())
         )
         seed(Ledger(payments=rows));compose.onNodeWithText("账本",substring=false).performClick()
-        compose.onNodeWithContentDescription("趋势范围 近30天").performScrollTo().performClick()
+        selectRange(TrendRange.MONTH)
         compose.onNode(hasContentDescription("${today.monthValue}/${today.dayOfMonth}，支出",substring=true)).performScrollTo().performClick().assertIsSelected()
         compose.onNode(hasContentDescription("ChatGPT，支出¥10.00",substring=true)).assertExists()
         compose.onAllNodes(isDialog()).assertCountEquals(0)
         for(range in listOf(TrendRange.THREE,TrendRange.SIX,TrendRange.TWELVE,TrendRange.YEAR)) {
-            compose.onNodeWithContentDescription("趋势范围 ${range.label}").performScrollTo().performClick()
+            selectRange(range)
             compose.onNode(hasContentDescription("${today.year}/${today.monthValue}，支出",substring=true)).performScrollTo().performClick().assertIsSelected()
             val amount=if(today.dayOfMonth==1) "10.00" else "30.00"
             compose.onNode(hasContentDescription("ChatGPT，支出¥$amount",substring=true)).assertExists()
             compose.onAllNodes(isDialog()).assertCountEquals(0)
         }
-        compose.onNodeWithContentDescription("趋势范围 近5年").performScrollTo().performClick()
+        selectRange(TrendRange.FIVE)
         compose.onNode(hasContentDescription("${today.year-1}，支出",substring=true)).performScrollTo().performClick().assertIsSelected()
         val previousYearAmount=if(today.dayOfYear==1) "60.00" else "40.00"
         compose.onNode(hasContentDescription("ChatGPT，支出¥$previousYearAmount",substring=true)).assertExists()
-        compose.onNodeWithContentDescription("趋势范围 全部").performScrollTo().performClick()
+        selectRange(TrendRange.ALL)
         compose.onNodeWithText("全部 · 按应用").assertExists()
         compose.onNode(hasContentDescription("ChatGPT，支出¥70.00",substring=true)).assertExists()
     }
@@ -194,7 +224,7 @@ class LedgerDeviceTest {
             Payment(planId="two",planName="另一应用",amount="30",currency="CNY",date=today.toString())
         )
         seed(Ledger(payments=rows));compose.onNodeWithText("账本",substring=false).performClick()
-        compose.onNodeWithContentDescription("趋势范围 近30天").performScrollTo().performClick()
+        selectRange(TrendRange.MONTH)
         compose.onNode(hasContentDescription("${today.monthValue}/${today.dayOfMonth}，支出",substring=true)).performScrollTo().performClick()
         click("所选时段明细")
         compose.onNodeWithText("2 笔 · 净支出 ¥40.00",substring=false).assertExists()
@@ -234,7 +264,7 @@ class LedgerDeviceTest {
         assertEquals(payment.id,read().payments.last().refundOf)
         compose.onNodeWithContentDescription("返回明细").performClick()
         compose.onNodeWithContentDescription("返回概览").performClick()
-        compose.onNodeWithContentDescription("趋势范围 近30天").performScrollTo().performClick()
+        selectRange(TrendRange.MONTH)
         compose.onNode(hasContentDescription("${today.monthValue}/${today.dayOfMonth}，支出¥-40.00",substring=true)).performScrollTo().performClick()
         compose.onNode(hasContentDescription("净退款，零线下方",substring=true)).assertExists()
         shot("ledger-net-refund-trend")
@@ -254,7 +284,7 @@ class LedgerDeviceTest {
         compose.onNodeWithText("退款详情",substring=false).assertExists()
         compose.onNodeWithContentDescription("返回明细").performClick()
         compose.onNodeWithContentDescription("返回概览").performClick()
-        compose.onNodeWithContentDescription("趋势范围 近3个月").performScrollTo().performClick()
+        selectRange(TrendRange.THREE)
         click("全部明细")
         compose.onNode(hasText("¥100.00") and hasClickAction()).performClick()
         compose.onNodeWithContentDescription("付款更多操作").performClick()

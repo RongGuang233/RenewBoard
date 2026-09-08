@@ -126,6 +126,7 @@ private fun money(totals: Map<String,BigDecimal>) = if(totals.isEmpty()) "暂无
     var accountHistoryId by rememberSaveable { mutableStateOf<String?>(null) }
     var paymentPlanId by rememberSaveable {mutableStateOf<String?>(null)}
     var paymentOnlyRecord by rememberSaveable {mutableStateOf(false)}
+    var balanceAction by rememberSaveable {mutableStateOf<BalanceAction?>(null)}
     val pageStates=rememberSaveableStateHolder()
     val snack = remember { SnackbarHostState() }; val scope = rememberCoroutineScope()
     fun message(s: String) { scope.launch { snack.showSnackbar(s) } }
@@ -137,7 +138,7 @@ private fun money(totals: Map<String,BigDecimal>) = if(totals.isEmpty()) "暂无
         if(id!=null) {
             if(ledger.plans.any {it.id==id}) {
                 creating=false;editId=null;receiptId=null;forecastOpen=false;accountHistoryId=null;detailId=id;tab=1
-                paymentOnlyRecord=false
+                paymentOnlyRecord=false;balanceAction=null
                 paymentPlanId=if(intent.getStringExtra("subscriptionAction")=="pay" && ledger.plans.single{it.id==id}.balanceAccount==null) id else null
                 when(intent.getStringExtra("subscriptionAction")) {
                     "snooze" -> {Jobs.snooze(c,id,ledger);message("已安排明天提醒")}
@@ -157,9 +158,9 @@ private fun money(totals: Map<String,BigDecimal>) = if(totals.isEmpty()) "暂无
             else -> detailId=null
         }
     }
-    BackHandler(enabled=hasPreviousPage && !creating && editId==null && paymentPlanId==null) { goBack() }
+    BackHandler(enabled=hasPreviousPage && !creating && editId==null && paymentPlanId==null && balanceAction==null) { goBack() }
     Scaffold(snackbarHost={SnackbarHost(snack)}, topBar={
-        if(hasPreviousPage && !creating && editId==null && paymentPlanId==null && receiptId==null && accountHistoryId==null) Surface(color=Paper) {
+        if(hasPreviousPage && !creating && editId==null && paymentPlanId==null && balanceAction==null && receiptId==null && accountHistoryId==null) Surface(color=Paper) {
             Row(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal=20.dp,vertical=8.dp)) {
                 PageBack(back=::goBack)
             }
@@ -176,6 +177,15 @@ private fun money(totals: Map<String,BigDecimal>) = if(totals.isEmpty()) "暂无
                     repo.update {old->old.copy(plans=old.plans.filterNot{it.id==p.id}+p,benefits=old.benefits.filterNot{it.planId==p.id}+bs,payments=old.payments+listOfNotNull(initial))}
                     detailId=null;message("已保存")
                 }}
+            }
+        } else if(balanceAction!=null) {
+            val plan=ledger.plans.find {it.id==detailId && it.balanceAccount!=null}
+            if(plan==null) {LaunchedEffect(detailId) {balanceAction=null}} else {
+                Box(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding).systemBarsPadding()) {
+                    key(plan.id,balanceAction) {BalanceEditor(ledger,plan,balanceAction!!,close={balanceAction=null}) {transform ->
+                        repo.update(transform);message("已保存")
+                    }}
+                }
             }
         } else if(paymentPlanId!=null) {
             val plan=ledger.plans.find{it.id==paymentPlanId}
@@ -203,7 +213,7 @@ private fun money(totals: Map<String,BigDecimal>) = if(totals.isEmpty()) "暂无
             if(p==null) {LaunchedEffect(detailId) {detailId=null}} else key(p.id) {
                 val deleted={DraftStore(c).remove("subscription:${p.id}");DraftStore(c).remove("payment:${p.id}");detailId=null}
                 if(p.balanceAccount!=null) Column(Modifier.fillMaxSize().padding(padding).padding(horizontal=20.dp).imePadding().verticalScroll(rememberScrollState()).padding(bottom=24.dp)) {
-                    BalanceDetail(ledger,p,{editId=p.id},::change,deleted,{receiptId=it},{accountHistoryId=p.id})
+                    BalanceDetail(ledger,p,{editId=p.id},::change,deleted,{receiptId=it},{accountHistoryId=p.id},openAction={balanceAction=it})
                 } else Box(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding)) {
                     SubscriptionDetailScreen(ledger,p,onEdit={editId=p.id},change=::change,onDeleted=deleted,
                         openPayment={receiptId=it},openHistory={accountHistoryId=p.id},recordPayment={only->paymentOnlyRecord=only;paymentPlanId=p.id})
@@ -300,7 +310,16 @@ private fun money(totals: Map<String,BigDecimal>) = if(totals.isEmpty()) "暂无
             }
         }
     }
-    Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) { FilterChip(!archived,{archived=false},label={Text("使用中")}); FilterChip(archived,{archived=true},label={Text("已归档")}) }
+    Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+        FilterChip(!archived,{archived=false},label={Text("使用中")})
+        FilterChip(archived,{archived=true},label={Text("已归档")})
+        Spacer(Modifier.weight(1f))
+        TextButton(onClick={filters=true},contentPadding=PaddingValues(horizontal=4.dp)) {
+            Text(sort,fontSize=13.sp);Icon(Icons.Outlined.ExpandMore,null,Modifier.size(18.dp))
+        }
+    }
+    if(renewalFilter!="全部") InputChip(selected=true,onClick={renewalFilter="全部"},label={Text(renewalFilter)},
+        trailingIcon={Icon(Icons.Outlined.Close,null,Modifier.size(16.dp))},modifier=Modifier.semantics {contentDescription="清除续费筛选"})
     val filtered=l.plans.filter { it.archived==archived && it.name.contains(query.trim(),ignoreCase=true) && (renewalFilter=="全部" || it.autoRenew==(renewalFilter=="自动续费")) }
     val plans=when(sort) {
         "名称" -> filtered.sortedBy{it.name}

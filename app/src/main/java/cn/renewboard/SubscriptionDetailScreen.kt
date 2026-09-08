@@ -1,6 +1,7 @@
 package cn.renewboard
 
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -96,10 +97,15 @@ import java.time.LocalDate
             }
             if(history.isEmpty()) Hint("还没有付款记录")
             history.take(3).forEach {receipt->
-                TextButton(onClick={openPayment(receipt.id)},modifier=Modifier.fillMaxWidth().heightIn(min=48.dp)) {
+                Row(modifier=Modifier.fillMaxWidth().clickable {openPayment(receipt.id)}.heightIn(min=56.dp).padding(vertical=8.dp),verticalAlignment=Alignment.CenterVertically) {
                     Text((if(receipt.refundOf!=null) "退款 · " else "")+receipt.date,modifier=Modifier.weight(1f))
-                    Text(displayMoney(receipt.currency,receipt.signedAmount().toPlainString()))
-                    Icon(Icons.Outlined.ChevronRight,null)
+                    Column(horizontalAlignment=Alignment.End) {
+                        val cny=receipt.signedCny()
+                        Text(if(cny!=null) displayMoney("CNY",cny.toPlainString()) else displayMoney(receipt.currency,receipt.signedAmount().toPlainString()),fontWeight=FontWeight.SemiBold)
+                        if(receipt.currency!="CNY") Text(if(cny==null) "待补录人民币" else displayMoney(receipt.currency,receipt.signedAmount().toPlainString()),
+                            style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Icon(Icons.Outlined.ChevronRight,null,tint=MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
             Spacer(Modifier.height(12.dp))

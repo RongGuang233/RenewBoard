@@ -127,7 +127,7 @@ fun ServiceIcon(name: String, modifier: Modifier = Modifier, size: Dp = 48.dp) {
         if (iconRes != null) {
             Image(
                 painter = painterResource(iconRes), contentDescription = null,
-                modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Fit,
+                modifier = Modifier.fillMaxSize(.9f), contentScale = ContentScale.Fit,
             )
         } else {
             Icon(generic, contentDescription = null, tint = Color(0xFF2563EB), modifier = Modifier.size(size * .61f))

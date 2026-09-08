@@ -118,4 +118,22 @@ class SubscriptionDetailDeviceTest {
         assertEquals(0,BigDecimal("100").compareTo(Prepaid.balance(ledger().plans.single(),today)))
         assertTrue(ledger().payments.isEmpty())
     }
+    @Test fun recentForeignReceiptsUseFrozenYuanAndMarkMissingSettlement() {
+        val p=Plan(id="foreign",name="外币会员",amount="20",currency="USD",billingAnchor=today.toString())
+        val original=Payment(id="original",planId=p.id,planName=p.name,amount="20",currency="USD",date=today.minusDays(2).toString(),cnyAmount="142.80")
+        val legacy=Payment(id="legacy",planId=p.id,planName=p.name,amount="19",currency="USD",date=today.minusDays(1).toString())
+        val refund=Payment(id="refund",planId=p.id,planName=p.name,amount="10",currency="USD",date=today.toString(),cnyAmount="70.20",refundOf=original.id)
+        seed(Ledger(plans=listOf(p),benefits=listOf(Benefit(planId=p.id,name=p.name,anchor=today.toString())),payments=listOf(original,legacy,refund)))
+        openPlan(p.name)
+        compose.onNodeWithText("¥142.80",substring=false).performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("¥-70.20",substring=false).assertExists()
+        compose.onNodeWithText("USD 20.00",substring=false).assertExists()
+        compose.onNodeWithText("待补录人民币",substring=false).assertExists()
+        runBlocking {app.repository.update {it.copy(settings=it.settings.copy(rates=mapOf("USD" to "99")))}}
+        compose.waitForIdle()
+        compose.onNodeWithText("¥142.80",substring=false).assertExists()
+        compose.onNodeWithText("¥-70.20",substring=false).assertExists()
+        assertEquals(listOf(original,legacy,refund),ledger().payments)
+    }
+
 }

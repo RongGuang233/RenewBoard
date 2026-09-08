@@ -59,6 +59,7 @@ private fun deviceMoney(value: String) = "¥" + BigDecimal(value).setScale(2, Ro
 @Composable fun DevicesScreen(l: Ledger, change: ((Ledger)->Ledger)->Unit, onSubpageChange: (Boolean)->Unit = {}) {
     var selectedId by rememberSaveable { mutableStateOf<String?>(null) }
     var editing by rememberSaveable { mutableStateOf(false) }
+    var purchasing by rememberSaveable { mutableStateOf(false) }
     var filter by rememberSaveable { mutableStateOf(DeviceStatus.ACTIVE.name) }
     var search by rememberSaveable { mutableStateOf("") }
     var sort by rememberSaveable { mutableStateOf(DeviceSort.DATE.name) }
@@ -66,11 +67,17 @@ private fun deviceMoney(value: String) = "¥" + BigDecimal(value).setScale(2, Ro
     var moreMenu by remember { mutableStateOf(false) }
     var deleting by remember { mutableStateOf(false) }
     val device = l.devices.find { it.id == selectedId }
-    val subpage = editing || selectedId != null
+    val subpage = editing || purchasing || selectedId != null
     LaunchedEffect(subpage) { onSubpageChange(subpage) }
     DisposableEffect(Unit) { onDispose { onSubpageChange(false) } }
     fun back() { if(editing) editing=false else selectedId=null }
-    BackHandler(enabled=subpage && !editing) { back() }
+    BackHandler(enabled=subpage && !editing && !purchasing) { back() }
+    if(purchasing && device!=null) {
+        key(device.id) { DevicePurchaseEditor(device,onClose={purchasing=false},onSaved={saved->
+            selectedId=saved.id;purchasing=false
+        }) }
+        return
+    }
     if(editing) {
         key(selectedId) { DeviceEditor(device,onClose={editing=false},onSaved={saved->
             selectedId=saved.id;editing=false
@@ -83,6 +90,7 @@ private fun deviceMoney(value: String) = "¥" + BigDecimal(value).setScale(2, Ro
             actions={ if(!editing && device!=null) Box {
                 IconButton(onClick={moreMenu=true}) {Icon(Icons.Outlined.MoreVert,"设备更多操作")}
                 DropdownMenu(expanded=moreMenu,onDismissRequest={moreMenu=false}) {
+                    if(device.status==DeviceStatus.WISHLIST) DropdownMenuItem(text={Text("编辑设备")},onClick={moreMenu=false;editing=true})
                     DropdownMenuItem(text={Text("变更设备状态")},onClick={moreMenu=false;editing=true})
                     DropdownMenuItem(text={Text("删除设备")},onClick={moreMenu=false;deleting=true})
                 }
@@ -118,7 +126,9 @@ private fun deviceMoney(value: String) = "¥" + BigDecimal(value).setScale(2, Ro
                 device.saleAmount?.let { DeviceInfo("卖出金额",deviceMoney(it)) }
                 if(device.note.isNotBlank()) Text(device.note)
                 Row(horizontalArrangement=Arrangement.spacedBy(12.dp)) {
-                    Button(onClick={editing=true},modifier=Modifier.weight(1f)) { Text("编辑设备") }
+                    Button(onClick={if(device.status==DeviceStatus.WISHLIST) purchasing=true else editing=true},modifier=Modifier.weight(1f)) {
+                        Text(if(device.status==DeviceStatus.WISHLIST) "记为已购买" else "编辑设备")
+                    }
 
                 }
             }
@@ -167,6 +177,76 @@ private fun deviceMoney(value: String) = "¥" + BigDecimal(value).setScale(2, Ro
     if(deleting && device!=null) AlertDialog(onDismissRequest={deleting=false},title={Text("删除设备？")},text={Text(device.name)},
         confirmButton={TextButton(onClick={change {old->old.copy(devices=old.devices.filterNot {it.id==device.id})};deleting=false;selectedId=null}) {Text("删除")}},
         dismissButton={TextButton(onClick={deleting=false}) {Text("取消")}})
+}
+
+@Serializable private data class DevicePurchaseDraft(val price:String,val start:String)
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable private fun DevicePurchaseEditor(original:Device,onClose:()->Unit,onSaved:(Device)->Unit) {
+    val context=LocalContext.current
+    val store=remember(context) {DraftStore(context)}
+    val scope=rememberCoroutineScope()
+    val focus=LocalFocusManager.current
+    val keyboard=LocalSoftwareKeyboardController.current
+    val draftKey="device:purchase:${original.id}"
+    val baselineJson=rememberSaveable(draftKey) {Book.json.encodeToString(DevicePurchaseDraft(original.purchaseAmount,LocalDate.now().toString()))}
+    val stored=remember(draftKey) {store.read(draftKey)?.takeIf {runCatching {Book.json.decodeFromString<DevicePurchaseDraft>(it)}.isSuccess}}
+    var draftJson by rememberSaveable(draftKey) {mutableStateOf(stored ?: baselineJson)}
+    val draft=remember(draftJson) {Book.json.decodeFromString<DevicePurchaseDraft>(draftJson)}
+    val dirty=draftJson!=baselineJson
+    var restored by rememberSaveable(draftKey) {mutableStateOf(stored!=null)}
+    var leaving by remember {mutableStateOf(false)}
+    var saving by remember {mutableStateOf(false)}
+    var completed by remember {mutableStateOf(false)}
+    var error by remember {mutableStateOf<String?>(null)}
+    fun update(value:DevicePurchaseDraft) {if(!saving) {draftJson=Book.json.encodeToString(value);error=null}}
+    fun back() {if(!saving) {focus.clearFocus();keyboard?.hide();if(dirty) leaving=true else {store.remove(draftKey);onClose()}}}
+    fun discard() {store.remove(draftKey);draftJson=baselineJson;restored=false;error=null}
+    LaunchedEffect(draftJson,saving) {
+        if(!saving && !completed) {if(dirty) store.write(draftKey,draftJson) else store.remove(draftKey)}
+    }
+    BackHandler {back()}
+    Scaffold(modifier=Modifier.fillMaxSize().imePadding(),topBar={
+        TopAppBar(title={Text("记为已购买")},navigationIcon={PageBack(description="返回",back=::back)},windowInsets=WindowInsets(0,0,0,0))
+    },bottomBar={Surface(shadowElevation=4.dp) {
+        Button(onClick={
+            try {
+                val saved=original.copy(status=DeviceStatus.ACTIVE,purchaseAmount=draft.price.trim(),
+                    startDate=draft.start.trim().ifEmpty {null},endDate=null,saleAmount=null,saleDate=null)
+                Devices.validate(saved)
+                focus.clearFocus();keyboard?.hide();saving=true
+                scope.launch {
+                    try {
+                        context.repository().update {old->old.copy(devices=old.devices.map {if(it.id==saved.id) saved else it})}
+                        completed=true;store.remove(draftKey);onSaved(saved)
+                    } catch(e:CancellationException) {throw e}
+                    catch(e:Exception) {error=e.message ?: "保存失败，请重试"}
+                    finally {saving=false}
+                }
+            } catch(e:Exception) {error=if(e is java.time.format.DateTimeParseException) "请使用 YYYY-MM-DD 日期格式" else e.message ?: "请检查输入"}
+        },enabled=!saving,modifier=Modifier.fillMaxWidth().padding(horizontal=20.dp,vertical=12.dp).heightIn(min=48.dp)) {
+            Text(if(saving) "正在保存…" else "确认已购买")
+        }
+    }},contentWindowInsets=WindowInsets(0,0,0,0)) {padding->
+        Column(Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(horizontal=20.dp,vertical=8.dp),
+            verticalArrangement=Arrangement.spacedBy(12.dp)) {
+            Text(original.name,fontSize=23.sp,fontWeight=FontWeight.Bold)
+            if(restored) Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically) {
+                Text("已恢复上次草稿",modifier=Modifier.weight(1f),color=MaterialTheme.colorScheme.onSurfaceVariant)
+                TextButton(onClick={discard()},enabled=!saving) {Text("放弃草稿")}
+            }
+            MoneyField("实际购入金额（元）",draft.price,{update(draft.copy(price=it))})
+            Text("已填入购买预算，可按实际金额修改。",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+            Field("开始服役日期",draft.start,{update(draft.copy(start=it))},dateField=true)
+            error?.let {Text(it,color=MaterialTheme.colorScheme.error)}
+        }
+    }
+    if(leaving) AlertDialog(onDismissRequest={leaving=false},title={Text("保留购买草稿？")},text={Text("还有未保存的修改。")},
+        confirmButton={TextButton(onClick={store.write(draftKey,draftJson);leaving=false;onClose()}) {Text("保留草稿")}},
+        dismissButton={Row {
+            TextButton(onClick={discard();leaving=false;onClose()}) {Text("放弃修改")}
+            TextButton(onClick={leaving=false}) {Text("继续编辑")}
+        }})
 }
 
 @Serializable private data class DeviceDraft(

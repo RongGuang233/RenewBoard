@@ -30,8 +30,9 @@
   - 原图：https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/31/6c/c3/316cc33a-5e7d-8902-58eb-f4e16c5d9440/music-0-0-1x_U007epad-0-1-0-sRGB-85-220.png/512x512bb.jpg
 - spotify: [Spotify: Music and Podcasts](https://apps.apple.com/us/app/spotify-music-and-podcasts/id324684580?uo=4) · Spotify
   - 原图：https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/74/e1/e7/74e1e75a-49d0-ff5c-6ec2-64a2540ac7c7/AppIcon-0-0-1x_U007epad-0-1-0-0-sRGB-85-220.png/512x512bb.jpg
-- tencent: [腾讯视频-《灵境行者》独播](https://apps.apple.com/cn/app/%E8%85%BE%E8%AE%AF%E8%A7%86%E9%A2%91-%E7%81%B5%E5%A2%83%E8%A1%8C%E8%80%85-%E7%8B%AC%E6%92%AD/id458318329?uo=4) · Tencent Technology (Shenzhen) Company Limited
-  - 原图：https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/78/47/e3/7847e3eb-304b-3306-acae-8322a2aa8098/AppIcon-0-0-1x_U007epad-0-1-0-0-sRGB-85-220.png/512x512bb.jpg
+- tencent: [腾讯视频官方移动站](https://m.v.qq.com/) · 腾讯视频
+  - 原图：[官方站 apple-touch-icon-precomposed](https://media-img.puui.qpic.cn/media_img/0/lena/PIC6lalgv_170_170/0)
+  - 2026-09-08 核对：170 × 170 PNG，常规品牌标识，无活动宣传文字；原图保留比例，替换旧宣传版图标。
 - iqiyi: [爱奇艺-《生逢其时》双喜临门下饭剧](https://apps.apple.com/cn/app/%E7%88%B1%E5%A5%87%E8%89%BA-%E7%94%9F%E9%80%A2%E5%85%B6%E6%97%B6-%E5%8F%8C%E5%96%9C%E4%B8%B4%E9%97%A8%E4%B8%8B%E9%A5%AD%E5%89%A7/id393765873?uo=4) · Beijing Qiyi Century Science & Technology Co.,LTD.
   - 原图：https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/70/52/93/705293a9-e8ad-33e2-3425-ca731c2706ad/AppIcon-0-1x_U007epad-0-0-0-1-0-0-sRGB-85-220-0.png/512x512bb.jpg
 - chatgpt: [ChatGPT](https://apps.apple.com/us/app/chatgpt/id6448311069?uo=4) · OpenAI OpCo, LLC
