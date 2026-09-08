@@ -164,7 +164,7 @@ class DevicesDeviceTest {
         awaitDevice {it.devices.size==3}
         compose.onNodeWithText("待购手表").assertDoesNotExist()
         compose.onNodeWithContentDescription("设备排序").performScrollTo().performClick()
-        compose.onNodeWithText("价格 · 最高").performClick()
+        compose.onNodeWithText("购入金额 · 最高").performClick()
         val newer=compose.onNodeWithText("新手机").fetchSemanticsNode().boundsInRoot.top
         val older=compose.onNodeWithText("旧手机").fetchSemanticsNode().boundsInRoot.top
         assertTrue(newer<older)
@@ -179,6 +179,36 @@ class DevicesDeviceTest {
         back()
         compose.onNode(hasText("搜索设备") and hasSetTextAction()).assertTextContains("新手机")
         shot("devices-search-sort")
+    }
+
+    @Test fun soldSortingMatchesNetAmountsAndWishlistOnlyOffersApplicableSorts() {
+        runBlocking { app.repository.update { it.copy(devices=listOf(
+            Device(id="computer",name="卖出电脑",status=DeviceStatus.SOLD,purchaseAmount="10000",saleAmount="9900",startDate="2026-01-01",endDate="2026-06-01",saleDate="2026-09-01"),
+            Device(id="phone",name="卖出手机",status=DeviceStatus.SOLD,purchaseAmount="3999",saleAmount="800",startDate="2026-02-01",endDate="2026-08-01"),
+            Device(id="wish",name="待购手表",status=DeviceStatus.WISHLIST,purchaseAmount="2000")
+        )) } }
+        awaitDevice {it.devices.size==3}
+        select("筛选设备状态","已卖出")
+        compose.onNodeWithContentDescription("设备排序").performScrollTo().performClick()
+        compose.onNodeWithText("净花费 · 最高").performClick()
+        compose.onNodeWithText("¥100.00").assertExists()
+        compose.onNodeWithText("¥3199.00").assertExists()
+        assertTrue(compose.onNodeWithText("卖出手机").fetchSemanticsNode().positionInRoot.y < compose.onNodeWithText("卖出电脑").fetchSemanticsNode().positionInRoot.y)
+        compose.onNodeWithContentDescription("设备排序").performScrollTo().performClick()
+        compose.onNodeWithText("卖出日期 · 最近").performClick()
+        assertTrue(compose.onNodeWithText("卖出电脑").fetchSemanticsNode().positionInRoot.y < compose.onNodeWithText("卖出手机").fetchSemanticsNode().positionInRoot.y)
+        compose.onNodeWithContentDescription("设备排序").performScrollTo().performClick()
+        compose.onNodeWithText("服役时长 · 最长").performClick()
+        select("筛选设备状态","待购买")
+        compose.onNodeWithContentDescription("设备排序").performScrollTo().performClick()
+        compose.onNodeWithText("服役时长 · 最长").assertDoesNotExist()
+        compose.onNodeWithText("预算 · 最高").assertExists()
+        compose.onNodeWithText("计划日期 · 最近").performClick()
+        compose.onNodeWithText("待购手表").assertExists()
+        select("筛选设备状态","已退役")
+        compose.onNodeWithContentDescription("设备排序").performScrollTo().performClick()
+        compose.onNodeWithText("退役日期 · 最近").assertExists()
+        compose.onNodeWithText("购入金额 · 最高").performClick()
     }
 
 }

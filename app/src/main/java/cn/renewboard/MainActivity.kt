@@ -20,6 +20,7 @@ import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.Color
@@ -125,6 +126,7 @@ private fun money(totals: Map<String,BigDecimal>) = if(totals.isEmpty()) "暂无
     var accountHistoryId by rememberSaveable { mutableStateOf<String?>(null) }
     var paymentPlanId by rememberSaveable {mutableStateOf<String?>(null)}
     var paymentOnlyRecord by rememberSaveable {mutableStateOf(false)}
+    val pageStates=rememberSaveableStateHolder()
     val snack = remember { SnackbarHostState() }; val scope = rememberCoroutineScope()
     fun message(s: String) { scope.launch { snack.showSnackbar(s) } }
     fun change(f: (Ledger)->Ledger) { scope.launch { try { repo.update(f) } catch(e: Exception) { message(e.message ?: "未能保存，请检查输入") } } }
@@ -183,24 +185,36 @@ private fun money(totals: Map<String,BigDecimal>) = if(totals.isEmpty()) "暂无
         } else if(receiptId!=null && receipt!=null) {
             Box(Modifier.fillMaxSize().padding(padding).imePadding()) {PaymentDetailScreen(ledger,receipt,{receiptId=null},::change)}
         } else if(accountHistoryId!=null) {
-            Box(Modifier.fillMaxSize().padding(padding)) {AccountHistoryScreen(ledger,accountHistoryId!!,{accountHistoryId=null},::change)}
+            Box(Modifier.fillMaxSize().padding(padding)) {PlanHistoryScreen(ledger,accountHistoryId!!,{accountHistoryId=null},::change)}
         } else if(forecastOpen && !hasPreviousPage) {
-            Box(Modifier.fillMaxSize().padding(padding)) {ForecastScreen(ledger,{forecastOpen=false},{detailId=it})}
+            pageStates.SaveableStateProvider("forecast") {
+                Box(Modifier.fillMaxSize().padding(padding)) {ForecastScreen(ledger,{forecastOpen=false},{detailId=it})}
+            }
         } else if(!hasPreviousPage && tab>=2) {
             Box(Modifier.fillMaxSize().padding(padding).imePadding()) {
                 when(tab) {
                     2 -> LedgerScreen(ledger,::change) { subpage=it }
                     3 -> DevicesScreen(ledger,::change) { subpage=it }
-                    4 -> SettingsScreen(ledger,::change,::message) { subpage=it }
+                    4 -> SettingsScreen(ledger,::message) { subpage=it }
                 }
             }
-        } else Column(Modifier.fillMaxSize().padding(padding).padding(horizontal=20.dp).imePadding().verticalScroll(rememberScrollState()).padding(bottom=24.dp)) {
-            if(detailId!=null) {
-                val p = ledger.plans.find { it.id==detailId }
-                if(p==null) { detailId=null } else key(p.id) {Detail(ledger,p,onEdit={editId=p.id},change=::change,onDeleted={DraftStore(c).remove("subscription:${p.id}");DraftStore(c).remove("payment:${p.id}");detailId=null},openPayment={receiptId=it},openHistory={accountHistoryId=p.id},recordPayment={only->paymentOnlyRecord=only;paymentPlanId=p.id})}
-            } else when(tab) {
-                0 -> Overview(ledger,onAdd={creating=true},openForecast={forecastOpen=true}) { detailId=it }
-                1 -> Subscriptions(ledger,onAdd={creating=true}) { detailId=it }
+        } else if(detailId!=null) {
+            val p=ledger.plans.find {it.id==detailId}
+            if(p==null) {LaunchedEffect(detailId) {detailId=null}} else key(p.id) {
+                val deleted={DraftStore(c).remove("subscription:${p.id}");DraftStore(c).remove("payment:${p.id}");detailId=null}
+                if(p.balanceAccount!=null) Column(Modifier.fillMaxSize().padding(padding).padding(horizontal=20.dp).imePadding().verticalScroll(rememberScrollState()).padding(bottom=24.dp)) {
+                    BalanceDetail(ledger,p,{editId=p.id},::change,deleted,{receiptId=it},{accountHistoryId=p.id})
+                } else Box(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding)) {
+                    SubscriptionDetailScreen(ledger,p,onEdit={editId=p.id},change=::change,onDeleted=deleted,
+                        openPayment={receiptId=it},openHistory={accountHistoryId=p.id},recordPayment={only->paymentOnlyRecord=only;paymentPlanId=p.id})
+                }
+            }
+        } else pageStates.SaveableStateProvider(if(tab==0) "home" else "subscriptions") {
+            Column(Modifier.fillMaxSize().padding(padding).padding(horizontal=20.dp).imePadding().verticalScroll(rememberScrollState()).padding(bottom=24.dp)) {
+                when(tab) {
+                    0 -> Overview(ledger,onAdd={creating=true},openForecast={forecastOpen=true}) {detailId=it}
+                    1 -> Subscriptions(ledger,onAdd={creating=true}) {detailId=it}
+                }
             }
         }
     }
@@ -305,47 +319,4 @@ private fun money(totals: Map<String,BigDecimal>) = if(totals.isEmpty()) "暂无
             }
         }
     }
-}
-@Composable private fun Detail(l: Ledger,p: Plan,onEdit:()->Unit,change:((Ledger)->Ledger)->Unit,onDeleted:()->Unit,openPayment:(String)->Unit={},openHistory:()->Unit={},recordPayment:(Boolean)->Unit={}) {
-    if(p.balanceAccount!=null) { BalanceDetail(l,p,onEdit,change,onDeleted,openPayment,openHistory); return }
-    var deleting by remember { mutableStateOf(false) }
-    var more by remember {mutableStateOf(false)}
-    var giftId by remember { mutableStateOf<String?>(null) }; var gift by remember { mutableStateOf("7") }
-    val context=LocalContext.current
-    var snoozed by remember {mutableStateOf(false)}
-    Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(12.dp)) {
-        ServiceIcon(p.name,size=40.dp)
-        Column(Modifier.weight(1f)) {Text(p.name,fontSize=24.sp,fontWeight=FontWeight.Bold);Text("${displayMoney(p.currency,p.amount)} / ${p.interval} ${p.cycle.label}",color=MaterialTheme.colorScheme.onSurfaceVariant)}
-        Box {
-            IconButton(onClick={more=true}) {Icon(Icons.Outlined.MoreVert,"订阅更多操作")}
-            DropdownMenu(more,{more=false}) {
-                DropdownMenuItem(text={Text("编辑订阅与到期日")},onClick={more=false;onEdit()})
-                DropdownMenuItem(text={Text("仅补记付款")},onClick={more=false;recordPayment(true)})
-                DropdownMenuItem(text={Text("明天提醒")},onClick={more=false;Jobs.snooze(context,p.id,l);snoozed=true})
-                DropdownMenuItem(text={Text(if(p.archived) "恢复使用" else "归档订阅")},onClick={more=false;change {it.copy(plans=it.plans.map {x->if(x.id==p.id)x.copy(archived=!x.archived) else x})}})
-                DropdownMenuItem(text={Text("删除订阅",color=MaterialTheme.colorScheme.error)},onClick={more=false;deleting=true})
-            }
-        }
-    }
-    if(p.autoRenew) Hint("下次预计扣款 ${Book.nextCharge(p,LocalDate.now())}") else Hint("已标记关闭自动续费 · 有效期提醒仍保留")
-    if(snoozed) Hint("已安排明天提醒")
-    l.benefits.filter {it.planId==p.id}.forEach {b -> Card(Modifier.fillMaxWidth().padding(vertical=6.dp)) {Column(Modifier.padding(16.dp)) {
-        Text(b.name,fontSize=18.sp,fontWeight=FontWeight.SemiBold);Text("${Book.expiry(b,p)} 到期",modifier=Modifier.padding(top=6.dp))
-        if(b.giftDays>0) Hint("含赠送 ${b.giftDays} 天")
-        TextButton(onClick={giftId=b.id}) {Text("增加赠送时长")}
-    }}}
-    val missing=l.payments.filter {it.planId==p.id && it.currency!="CNY" && it.cnyAmount==null}
-    if(missing.isNotEmpty()) OutlinedButton(onClick={openPayment(missing.first().id)},modifier=Modifier.fillMaxWidth()) {Text("补录人民币（${missing.size} 笔）")}
-    else if(p.currency!="CNY" && l.payments.none {it.planId==p.id && it.cnyAmount!=null}) OutlinedButton(onClick={recordPayment(true)},modifier=Modifier.fillMaxWidth()) {Text("补记付款与人民币金额")}
-    Button(onClick={recordPayment(false)},modifier=Modifier.fillMaxWidth()) {Text("记录付款 / 提前续费")}
-    TextButton(onClick={change {it.copy(plans=it.plans.map {x->if(x.id==p.id)x.copy(autoRenew=!x.autoRenew) else x})}},modifier=Modifier.fillMaxWidth()) {Text(if(p.autoRenew) "标记已关闭自动续费" else "标记已开启自动续费")}
-    if(p.note.isNotBlank()) Hint(p.note)
-    Section("此套餐已付记录")
-    l.payments.filter {it.planId==p.id}.sortedByDescending {it.date}.forEach {receipt->
-        TextButton(onClick={openPayment(receipt.id)},modifier=Modifier.fillMaxWidth()) {
-            Text((if(receipt.refundOf!=null) "退款 · " else "")+receipt.date,modifier=Modifier.weight(1f));Text(displayMoney(receipt.currency,receipt.signedAmount().toPlainString()));Icon(Icons.Outlined.ChevronRight,null)
-        }
-    }
-    if(deleting) DeletePlanDialog(l,p,{deleting=false}) {include->change {Book.delete(it,p.id,include)};deleting=false;onDeleted()}
-    if(giftId!=null) AlertDialog(onDismissRequest={giftId=null},title={Text("赠送时长")},text={Field("增加天数",gift,{gift=it},keyboardType=KeyboardType.Number)},confirmButton={TextButton(onClick={val n=gift.toIntOrNull();if(n!=null && n in 1..36500) {val id=giftId;change {it.copy(benefits=it.benefits.map {b->if(b.id==id)b.copy(giftDays=b.giftDays+n) else b})};giftId=null}}) {Text("增加")}},dismissButton={TextButton(onClick={giftId=null}) {Text("取消")}})
 }

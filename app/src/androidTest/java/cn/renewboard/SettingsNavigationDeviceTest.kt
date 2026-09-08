@@ -76,14 +76,19 @@ class SettingsNavigationDeviceTest {
             compose.onNodeWithText("到期提醒",substring=false).performClick()
             compose.onNodeWithText("当天",substring=false).assertIsSelected()
             compose.onNodeWithText("提前 1 天").performClick()
+            compose.waitUntil(10000) {kotlinx.coroutines.runBlocking {repository.read()}.settings.reminderDays==listOf(0,1,3)}
+            back()
+            compose.onNodeWithText("到期提醒",substring=false).performClick()
+            compose.onNodeWithText("提前 1 天").assertIsSelected()
             compose.onNode(hasText("自定义提前天数") and hasSetTextAction()).performScrollTo().performTextReplacement("14")
             compose.onNodeWithText("添加",substring=false).performScrollTo().performClick()
-            compose.onNodeWithText("提前 14 天").assertIsSelected()
-            compose.onNodeWithText("保存提醒").performScrollTo().performClick()
+            compose.onNodeWithText("保存提醒").assertDoesNotExist()
             compose.waitUntil(10000) {kotlinx.coroutines.runBlocking {repository.read()}.settings.reminderDays==listOf(0,1,3,14)}
+            compose.onNodeWithText("提前 14 天").assertIsSelected()
+            compose.activityRule.scenario.recreate()
+            compose.waitForIdle()
             compose.onNodeWithText("提前 14 天").performScrollTo().performClick()
             compose.onNodeWithText("提前 14 天").assertDoesNotExist()
-            compose.onNodeWithText("保存提醒").performScrollTo().performClick()
             compose.waitUntil(10000) {kotlinx.coroutines.runBlocking {repository.read()}.settings.reminderDays==listOf(0,1,3)}
             compose.activityRule.scenario.moveToState(androidx.lifecycle.Lifecycle.State.CREATED)
             compose.activityRule.scenario.moveToState(androidx.lifecycle.Lifecycle.State.RESUMED)
@@ -95,6 +100,8 @@ class SettingsNavigationDeviceTest {
         val bitmap=InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()
             java.io.File(compose.activity.filesDir,"settings-reminders.png").outputStream().use {bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG,100,it)}
             bitmap.recycle()
+            back()
+            compose.onNodeWithText(if(allowed) "3 个提醒时间" else "系统通知未开启").assertExists()
         } finally {kotlinx.coroutines.runBlocking {repository.update {it.copy(settings=original.settings)}}}
     }
 
@@ -116,6 +123,41 @@ class SettingsNavigationDeviceTest {
             compose.onNodeWithText("返回",substring=false).performClick()
             compose.onNodeWithText("最近成功",substring=true).assertExists()
         } finally {prefs.edit().putString("status",oldStatus).putString("success",oldSuccess).apply()}
+    }
+
+    @Test fun configuredWebdavShowsActionsBeforeSeparateConnectionPage() {
+        check(compose.activity.packageName.endsWith(".debug"))
+        val prefs=compose.activity.getSharedPreferences("webdav",android.content.Context.MODE_PRIVATE)
+        check(!CredentialsStore(compose.activity).configured) { "Only an unconfigured debug installation may run this fixture" }
+        val keys=listOf("url","user","secret","status","success")
+        val previous=keys.associateWith { prefs.getString(it,null) }
+        try {
+            // A non-decryptable marker is sufficient for layout; no client or backup is invoked.
+            prefs.edit().putString("url","https://example.invalid/dav/").putString("user","layout-fixture")
+                .putString("secret","layout-only").putString("status","备份成功")
+                .putString("success","2026-09-08T00:00:00Z").commit()
+            compose.onNodeWithText("设置",substring=false).performClick()
+            compose.onNodeWithText("坚果云 · WebDAV",substring=false).performClick()
+            compose.onNodeWithText("立即备份",substring=false).assertIsDisplayed()
+            compose.onNodeWithText("云端备份",substring=false).assertIsDisplayed()
+            compose.onNodeWithText("WebDAV 地址").assertDoesNotExist()
+            compose.onNodeWithText("断开 WebDAV").assertDoesNotExist()
+            compose.onNodeWithText("连接设置",substring=false).performScrollTo().performClick()
+            compose.onNode(hasText("WebDAV 地址") and hasSetTextAction()).assertTextContains("https://example.invalid/dav/")
+            compose.onNodeWithText("断开 WebDAV").assertExists()
+            compose.activityRule.scenario.recreate()
+            compose.waitForIdle()
+            compose.onNodeWithText("连接设置",substring=false).assertExists()
+            back()
+            compose.onNodeWithText("立即备份",substring=false).assertIsDisplayed()
+            compose.onNodeWithText("WebDAV 地址").assertDoesNotExist()
+            back()
+            compose.onNodeWithText("本地备份",substring=false).assertExists()
+        } finally {
+            prefs.edit().also { edit -> previous.forEach { (key,value) ->
+                if(value==null) edit.remove(key) else edit.putString(key,value)
+            } }.commit()
+        }
     }
 
 }

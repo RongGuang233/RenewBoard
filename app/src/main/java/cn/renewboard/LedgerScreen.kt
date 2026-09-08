@@ -254,6 +254,7 @@ private data class ReceiptRange(val title:String,val from:LocalDate?,val until:L
     var payment by remember { mutableStateOf<Payment?>(null) }
     val visible=l.payments.filter { p -> within(p,target.from,target.until) && (target.planName==null || p.planName==target.planName) && (target.planId==null || p.planId==target.planId) && (target.refundOf==null || p.refundOf==target.refundOf) && p.planName.contains(query.trim(),ignoreCase=true) && when(kind) {
         "订阅付款" -> !Prepaid.isTopUp(p)
+        "付款" -> p.refundOf==null && !Prepaid.isTopUp(p)
         "退款" -> p.refundOf!=null
         "话费扣费" -> p.note in setOf("话费扣费","话费额外扣费")
         "话费充值" -> Prepaid.isTopUp(p)
@@ -284,7 +285,10 @@ private data class ReceiptRange(val title:String,val from:LocalDate?,val until:L
                 if(target.refundOf==null) {
                     if(target.planId==null) OutlinedTextField(query,{query=it;selected=emptySet()},label={Text("搜索应用")},leadingIcon={Icon(Icons.Outlined.Search,null)},singleLine=true,modifier=Modifier.fillMaxWidth())
                     Row(Modifier.horizontalScroll(rememberScrollState()),horizontalArrangement=Arrangement.spacedBy(6.dp)) {
-                        val options=if(target.planId!=null) listOf("全部","话费扣费","话费充值","退款") else listOf("全部","订阅付款","退款","话费扣费","话费充值","已删订阅")
+                        val options=if(target.planId!=null) {
+                            if(l.plans.find {it.id==target.planId}?.balanceAccount!=null) listOf("全部","话费扣费","话费充值","退款")
+                            else listOf("全部","付款","退款")
+                        } else listOf("全部","订阅付款","退款","话费扣费","话费充值","已删订阅")
                         options.forEach { option -> FilterChip(kind==option,{kind=option;selected=emptySet()},label={Text(option)}) }
                     }
                 }
@@ -304,9 +308,10 @@ private data class ReceiptRange(val title:String,val from:LocalDate?,val until:L
         deleting?.let { ids -> DeletePaymentsDialog(l,ids,{deleting=null}) { change { Book.deletePayments(it,ids) };deleting=null;selected=emptySet() } }
     }
 }
-@Composable internal fun AccountHistoryScreen(l:Ledger,planId:String,close:()->Unit,change:((Ledger)->Ledger)->Unit) {
-    val name=l.plans.find {it.id==planId}?.name ?: l.payments.find {it.planId==planId}?.planName ?: "话费"
-    ReceiptList(l,ReceiptRange("$name · 全部记录",null,null,planId=planId),close,change,"返回话费详情")
+@Composable internal fun PlanHistoryScreen(l:Ledger,planId:String,close:()->Unit,change:((Ledger)->Ledger)->Unit) {
+    val plan=l.plans.find {it.id==planId}
+    val name=plan?.name ?: l.payments.find {it.planId==planId}?.planName ?: "订阅"
+    ReceiptList(l,ReceiptRange("$name · 全部记录",null,null,planId=planId),close,change,if(plan?.balanceAccount!=null) "返回话费详情" else "返回订阅详情")
 }
 
 @Composable private fun DeletePaymentsDialog(l:Ledger,ids:Set<String>,close:()->Unit,confirm:()->Unit) {

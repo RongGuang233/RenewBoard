@@ -35,12 +35,11 @@ import java.time.LocalDate
 
 private enum class SettingsPage(val title: String) {
     HOME("设置"), REMINDERS("到期提醒"), BACKUP("本地备份"), WEBDAV("坚果云 · WebDAV"),
-    REMOTE("云端备份"), ABOUT("更新与关于"), LICENSES("开源许可证")
+    CONNECTION("连接设置"), REMOTE("云端备份"), ABOUT("更新与关于"), LICENSES("开源许可证")
 }
 
 @Composable internal fun SettingsScreen(
     l: Ledger,
-    change: ((Ledger) -> Ledger) -> Unit,
     message: (String) -> Unit,
     onSubpageChange: (Boolean) -> Unit = {}
 ) {
@@ -49,9 +48,12 @@ private enum class SettingsPage(val title: String) {
     val config = remember { CredentialsStore(c) }
     var pageName by rememberSaveable { mutableStateOf(SettingsPage.HOME.name) }
     val page = SettingsPage.valueOf(pageName)
+    var savingReminder by remember { mutableStateOf(false) }
     fun navigate(next: SettingsPage) { pageName = next.name }
-    fun back() { navigate(when (page) {
-        SettingsPage.REMOTE -> SettingsPage.WEBDAV
+    fun back() {
+        if (savingReminder) return
+        navigate(when (page) {
+        SettingsPage.REMOTE, SettingsPage.CONNECTION -> SettingsPage.WEBDAV
         SettingsPage.LICENSES -> SettingsPage.ABOUT
         else -> SettingsPage.HOME
     }) }
@@ -63,7 +65,10 @@ private enum class SettingsPage(val title: String) {
     var url by remember { mutableStateOf(config.url) }
     var user by remember { mutableStateOf(config.user) }
     var password by remember { mutableStateOf("") }
-    var reminderDays by remember(l.settings.reminderDays) { mutableStateOf(l.settings.reminderDays.toSet()) }
+    var reminderDays by remember { mutableStateOf(l.settings.reminderDays.toSet()) }
+    LaunchedEffect(l.settings.reminderDays, savingReminder) {
+        if (!savingReminder) reminderDays = l.settings.reminderDays.toSet()
+    }
     var customDay by rememberSaveable { mutableStateOf("") }
     var reminderError by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
@@ -96,6 +101,22 @@ private enum class SettingsPage(val title: String) {
             } finally {
                 busy = false; status = config.status; success = config.lastSuccess; configured = config.configured
             }
+        }
+    }
+    fun saveReminderDays(days: Set<Int>, clearCustom: Boolean = false) {
+        if (savingReminder) return
+        savingReminder = true
+        reminderError = null
+        scope.launch {
+            try {
+                c.repository().update { it.copy(settings = it.settings.copy(reminderDays = days.sorted())) }
+                reminderDays = days
+                if (clearCustom) customDay = ""
+                message(if (days.isEmpty()) "已关闭到期提醒" else "提醒已保存")
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                reminderError = "提醒保存失败，请重试"
+            } finally { savingReminder = false }
         }
     }
     val export = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
@@ -139,7 +160,7 @@ private enum class SettingsPage(val title: String) {
                 when (page) {
                     SettingsPage.HOME -> {
                         SettingsGroup("偏好") {
-                            SettingsLink("到期提醒", if (l.settings.reminderDays.isEmpty()) "已关闭" else "${l.settings.reminderDays.size} 个提醒时间", Icons.Outlined.Notifications) { navigate(SettingsPage.REMINDERS) }
+                            SettingsLink("到期提醒", when { !notificationsEnabled -> "系统通知未开启"; l.settings.reminderDays.isEmpty() -> "已关闭"; else -> "${l.settings.reminderDays.size} 个提醒时间" }, Icons.Outlined.Notifications) { navigate(SettingsPage.REMINDERS) }
                         }
                         SettingsGroup("数据") {
                             SettingsLink("本地备份", "导出与恢复", Icons.Outlined.SaveAlt) { navigate(SettingsPage.BACKUP) }
@@ -155,7 +176,7 @@ private enum class SettingsPage(val title: String) {
                             listOf(listOf(0,1),listOf(3,7)).forEach { row ->
                                 Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)) {
                                     row.forEach { day -> FilterChip(selected=day in reminderDays,
-                                        onClick={reminderDays=if(day in reminderDays) reminderDays-day else reminderDays+day},
+                                        onClick={saveReminderDays(if(day in reminderDays) reminderDays-day else reminderDays+day)}, enabled=!savingReminder,
                                         label={Text(if(day==0) "当天" else "提前 $day 天")},modifier=Modifier.weight(1f)) }
                                 }
                             }
@@ -164,20 +185,16 @@ private enum class SettingsPage(val title: String) {
                                 OutlinedButton({
                                     val day=customDay.toIntOrNull()
                                     if(day==null || day !in 0..365) reminderError="请输入 0 至 365 天"
-                                    else {reminderDays=reminderDays+day;customDay="";reminderError=null}
-                                }) { Text("添加") }
+                                    else saveReminderDays(reminderDays+day, clearCustom=true)
+                                }, enabled=!savingReminder) { Text("添加") }
                             }
                             reminderDays.filter { it !in setOf(0,1,3,7) }.sorted().forEach { day ->
-                                InputChip(selected=true,onClick={reminderDays=reminderDays-day},label={Text("提前 $day 天")},
+                                InputChip(selected=true,onClick={saveReminderDays(reminderDays-day)},enabled=!savingReminder,label={Text("提前 $day 天")},
                                     trailingIcon={Icon(Icons.Outlined.Close,contentDescription="移除提前 $day 天")})
                             }
                             reminderError?.let { Text(it,color=MaterialTheme.colorScheme.error) }
-                            SettingsNote(if(reminderDays.isEmpty()) "未选择提醒时间，保存后关闭提醒。" else "系统省电可能延迟通知。")
-                            Button(onClick = {
-                                val days=reminderDays.sorted()
-                                change { it.copy(settings=it.settings.copy(reminderDays=days)) }
-                                message("提醒已保存")
-                            }, modifier = Modifier.fillMaxWidth()) { Text("保存提醒") }
+                            if (savingReminder) LinearProgressIndicator(Modifier.fillMaxWidth())
+                            SettingsNote(if(reminderDays.isEmpty()) "到期提醒已关闭。" else "系统省电可能延迟通知。")
                             Text(if(notificationsEnabled) "系统通知：已开启" else "系统通知：未开启",fontWeight=FontWeight.Medium)
                             OutlinedButton(onClick = {
                                 c.startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE,c.packageName))
@@ -197,25 +214,30 @@ private enum class SettingsPage(val title: String) {
                             OutlinedButton({ import.launch(arrayOf("application/json", "text/plain", "application/octet-stream")) }, enabled = !busy, modifier = Modifier.fillMaxWidth()) { Text("从文件恢复") }
                         }
                     }
-                    SettingsPage.WEBDAV -> {
-                        SettingsPanel {
-                            Field("WebDAV 地址", url, { url = it })
-                            Field("坚果云账号", user, { user = it })
-                            Field(if (configured) "应用密码（留空保留）" else "专用应用密码", password, { password = it }, secret = true)
-                            SettingsNote("使用专用应用密码，自动保留最近 10 份备份。")
-                            Button({
-                                try {
-                                    config.save(url.trim(), user.trim(), password); password = ""; configured = config.configured
-                                    Jobs.backup(c); message("已保存，将在联网后自动备份")
-                                } catch (e: Exception) { message(e.message ?: "配置无效") }
-                            }, enabled = !busy, modifier = Modifier.fillMaxWidth()) { Text("保存并启用自动备份") }
-                        }
-                        if (configured) {
+                    SettingsPage.WEBDAV, SettingsPage.CONNECTION -> {
+                        if (page == SettingsPage.CONNECTION || !configured) {
+                            SettingsPanel {
+                                Field("WebDAV 地址", url, { url = it })
+                                Field("坚果云账号", user, { user = it })
+                                Field(if (configured) "应用密码（留空保留）" else "专用应用密码", password, { password = it }, secret = true)
+                                SettingsNote("使用专用应用密码，自动保留最近 10 份备份。")
+                                Button({
+                                    try {
+                                        config.save(url.trim(), user.trim(), password); password = ""; configured = config.configured
+                                        Jobs.backup(c); message("已保存，将在联网后自动备份")
+                                        navigate(SettingsPage.WEBDAV)
+                                    } catch (e: Exception) { message(e.message ?: "配置无效") }
+                                }, enabled = !busy, modifier = Modifier.fillMaxWidth()) { Text("保存并启用自动备份") }
+                            }
+                            if (configured) TextButton({ disconnect = true }, enabled = !busy) {
+                                Text("断开 WebDAV", color = MaterialTheme.colorScheme.error)
+                            }
+                        } else {
                             SettingsPanel {
                                 Text("备份状态", style = MaterialTheme.typography.titleMedium)
                                 SettingsNote("最后成功：${settingsDisplayTime(success)}")
                                 if (status.isNotBlank()) SettingsNote(status)
-                                OutlinedButton({ operation {
+                                Button({ operation {
                                     withContext(Dispatchers.IO) {
                                         try { config.client().upload(c.repository().read(), false); config.result() }
                                         catch (e: Exception) { config.result("手动备份失败，请检查网络与应用密码"); throw e }
@@ -226,9 +248,14 @@ private enum class SettingsPage(val title: String) {
                                 OutlinedButton({
                                     navigate(SettingsPage.REMOTE)
                                     operation { remote = withContext(Dispatchers.IO) { config.client().list() } }
-                                }, enabled = !busy, modifier = Modifier.fillMaxWidth()) { Text("选择云端备份") }
+                                }, enabled = !busy, modifier = Modifier.fillMaxWidth()) { Text("云端备份") }
                             }
-                            TextButton({ disconnect = true }, enabled = !busy) { Text("断开 WebDAV", color = MaterialTheme.colorScheme.error) }
+                            SettingsGroup("连接") {
+                                SettingsLink("连接设置", "账号与应用密码", Icons.Outlined.Settings) {
+                                    url = config.url; user = config.user; password = ""
+                                    navigate(SettingsPage.CONNECTION)
+                                }
+                            }
                         }
                     }
                     SettingsPage.REMOTE -> {
@@ -276,6 +303,7 @@ private enum class SettingsPage(val title: String) {
     }, confirmButton = { TextButton({
         config.disconnect(); password = ""; user = ""; remote = null; disconnect = false
         status = config.status; success = config.lastSuccess; configured = config.configured
+        url = config.url; navigate(SettingsPage.WEBDAV)
         message("已断开")
     }) { Text("断开") } }, dismissButton = { TextButton({ disconnect = false }) { Text("取消") } })
 }

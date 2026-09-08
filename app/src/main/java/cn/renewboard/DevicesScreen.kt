@@ -132,11 +132,12 @@ private fun deviceMoney(value: String) = "¥" + BigDecimal(value).setScale(2, Ro
             Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically) {
                 Box(Modifier.weight(1f)) { DeviceDropdown("",DeviceStatus.valueOf(filter).label,DeviceStatus.entries.map { it.label },"筛选设备状态") { label ->
                     filter=DeviceStatus.entries.single {it.label==label}.name
+                    if(DeviceSort.valueOf(sort) !in DeviceSort.options(DeviceStatus.valueOf(filter))) sort=DeviceSort.DATE.name
                 } }
                 Box {
                     IconButton(onClick={sortMenu=true}) {Icon(Icons.Outlined.Sort,"设备排序")}
                     DropdownMenu(expanded=sortMenu,onDismissRequest={sortMenu=false}) {
-                        DeviceSort.entries.forEach {item -> DropdownMenuItem(text={Text(item.label)},onClick={sort=item.name;sortMenu=false},
+                        DeviceSort.options(DeviceStatus.valueOf(filter)).forEach {item -> DropdownMenuItem(text={Text(item.label(DeviceStatus.valueOf(filter)))},onClick={sort=item.name;sortMenu=false},
                             trailingIcon=if(sort==item.name) {{Icon(Icons.Outlined.Check,null)}} else null) }
                     }
                 }

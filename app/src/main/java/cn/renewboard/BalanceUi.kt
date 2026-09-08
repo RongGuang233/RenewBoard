@@ -37,7 +37,7 @@ private fun balanceHint(p: Plan, today: LocalDate): String {
             ServiceIcon(p.name,size=if(compact) 32.dp else 48.dp)
             Column(Modifier.weight(1f)) {
                 Text(p.name,fontWeight=FontWeight.SemiBold,fontSize=17.sp)
-                Text(balanceHint(p,today),fontSize=13.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(if(p.archived) "已归档" else balanceHint(p,today),fontSize=13.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
             }
             Column(horizontalAlignment=Alignment.End) {
                 Text(yuan(Prepaid.balance(p,today)),fontSize=if(compact) 18.sp else 20.sp,fontWeight=FontWeight.Bold,color=MaterialTheme.colorScheme.primary)
@@ -70,28 +70,29 @@ private fun balanceHint(p: Plan, today: LocalDate): String {
             IconButton({more=true}) { Icon(Icons.Outlined.MoreVert,"更多操作") }
             DropdownMenu(more,{more=false}) {
                 DropdownMenuItem(text={Text("编辑账户")},onClick={more=false;onEdit()})
-                DropdownMenuItem(text={Text(if(p.archived) "恢复使用" else "归档订阅")},onClick={more=false;change { Prepaid.archive(it,p.id,!p.archived,today) }})
+                if(!p.archived) DropdownMenuItem(text={Text("归档订阅")},onClick={more=false;change { Prepaid.archive(it,p.id,true,today) }})
                 DropdownMenuItem(text={Text("删除订阅",color=MaterialTheme.colorScheme.error)},onClick={more=false;deleting=true})
             }
         }
     }
     Card(colors=CardDefaults.cardColors(containerColor=MaterialTheme.colorScheme.primaryContainer),modifier=Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp)) {
-            Text("估算余额")
+            Text(if(p.archived) "已归档 · 归档时余额" else "估算余额")
             Text(yuan(Prepaid.balance(p,today)),fontSize=32.sp,fontWeight=FontWeight.Bold,modifier=Modifier.padding(vertical=6.dp))
-            Text(balanceHint(p,today),fontWeight=FontWeight.SemiBold)
+            if(!p.archived) Text(balanceHint(p,today),fontWeight=FontWeight.SemiBold)
             Row(Modifier.fillMaxWidth().padding(top=12.dp),horizontalArrangement=Arrangement.SpaceBetween) {
                 Column {Text("每月 ${LocalDate.parse(p.billingAnchor).dayOfMonth} 日",style=MaterialTheme.typography.bodySmall);Text(yuan(Prepaid.feeAt(p,today)),fontWeight=FontWeight.SemiBold)}
-                Column(horizontalAlignment=Alignment.End) {Text("下次扣费",style=MaterialTheme.typography.bodySmall);Text(Prepaid.nextDeduction(p,today).toString(),fontWeight=FontWeight.SemiBold)}
+                if(!p.archived) Column(horizontalAlignment=Alignment.End) {Text("下次扣费",style=MaterialTheme.typography.bodySmall);Text(Prepaid.nextDeduction(p,today).toString(),fontWeight=FontWeight.SemiBold)}
             }
-            p.balanceAccount?.pendingFee?.let { pending ->
+            p.balanceAccount?.pendingFee?.takeUnless {p.archived}?.let { pending ->
                 Text("${pending.effectiveDate} 起 ${yuan(BigDecimal(pending.amount))}/月",fontSize=13.sp,modifier=Modifier.padding(top=8.dp))
             }
         }
     }
     Spacer(Modifier.height(8.dp))
-    Button({recharging=true;error=null;date=today.toString();historyAffectsBalance=null},Modifier.fillMaxWidth()) { Text("记录充值") }
-    Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(12.dp)) {
+    if(p.archived) Button({change {Prepaid.archive(it,p.id,false,today)}},Modifier.fillMaxWidth()) {Text("恢复使用")}
+    else Button({recharging=true;error=null;date=today.toString();historyAffectsBalance=null},Modifier.fillMaxWidth()) { Text("记录充值") }
+    if(!p.archived) Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(12.dp)) {
         OutlinedButton({calibrating=true;confirmedBalance="";recordExpense=false;error=null},Modifier.weight(1f)) { Text("校准余额") }
         OutlinedButton({
             feeAmount=p.balanceAccount?.pendingFee?.amount ?: p.amount

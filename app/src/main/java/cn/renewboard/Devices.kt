@@ -19,7 +19,28 @@ import java.time.temporal.ChronoUnit
     val saleDate: String? = null
 )
 
-enum class DeviceSort(val label: String) { DATE("服役日期 · 最近"), PRICE("价格 · 最高"), SERVICE("服役时长 · 最长") }
+enum class DeviceSort {
+    DATE, PRICE, SERVICE;
+
+    fun label(status: DeviceStatus): String = when(this) {
+        DATE -> when(status) {
+            DeviceStatus.ACTIVE -> "服役日期 · 最近"
+            DeviceStatus.RETIRED -> "退役日期 · 最近"
+            DeviceStatus.SOLD -> "卖出日期 · 最近"
+            DeviceStatus.WISHLIST -> "计划日期 · 最近"
+        }
+        PRICE -> when(status) {
+            DeviceStatus.SOLD -> "净花费 · 最高"
+            DeviceStatus.WISHLIST -> "预算 · 最高"
+            else -> "购入金额 · 最高"
+        }
+        SERVICE -> "服役时长 · 最长"
+    }
+
+    companion object {
+        fun options(status: DeviceStatus): List<DeviceSort> = entries.filter { status!=DeviceStatus.WISHLIST || it!=SERVICE }
+    }
+}
 
 object Devices {
     // Older sold records used endDate for both events; keep their stored data unchanged.
@@ -29,8 +50,14 @@ object Devices {
     fun list(items: List<Device>, status: DeviceStatus, query: String, sort: DeviceSort, today: LocalDate = LocalDate.now()): List<Device> {
         val filtered=items.filter {it.status==status && (it.name.contains(query.trim(),true) || it.category.label.contains(query.trim(),true))}
         return when(sort) {
-            DeviceSort.DATE -> filtered.sortedByDescending {it.startDate ?: ""}
-            DeviceSort.PRICE -> filtered.sortedByDescending {BigDecimal(it.purchaseAmount)}
+            DeviceSort.DATE -> filtered.sortedByDescending {
+                when(status) {
+                    DeviceStatus.SOLD -> saleDate(it)
+                    DeviceStatus.RETIRED -> it.endDate
+                    else -> it.startDate
+                } ?: ""
+            }
+            DeviceSort.PRICE -> filtered.sortedByDescending {netCost(it)}
             DeviceSort.SERVICE -> filtered.sortedByDescending {serviceDays(it,today) ?: -1L}
         }
     }

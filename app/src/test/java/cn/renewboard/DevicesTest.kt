@@ -90,6 +90,34 @@ class DevicesTest {
         assertEquals("游戏主机",DeviceCategory.GAMING.label)
     }
 
+    @Test fun soldPriceSortUsesDisplayedNetCostIncludingProfit() {
+        val costly=device().copy(id="costly",status=DeviceStatus.SOLD,purchaseAmount="10000",saleAmount="9900",endDate="2026-09-03")
+        val phone=costly.copy(id="phone",purchaseAmount="3999",saleAmount="800")
+        val profit=costly.copy(id="profit",purchaseAmount="900",saleAmount="1000")
+        assertEquals(listOf("phone","costly","profit"),
+            Devices.list(listOf(costly,profit,phone),DeviceStatus.SOLD,"",DeviceSort.PRICE,today).map {it.id})
+    }
+
+    @Test fun dateSortUsesEachStatesEventAndLegacySoldFallback() {
+        val older=device().copy(id="older",startDate="2026-01-01",endDate="2026-08-01")
+        val newer=older.copy(id="newer",startDate="2026-02-01",endDate="2026-06-01")
+        val retired=listOf(older,newer).map {it.copy(status=DeviceStatus.RETIRED)}
+        assertEquals(listOf("older","newer"),Devices.list(retired,DeviceStatus.RETIRED,"",DeviceSort.DATE,today).map {it.id})
+        val sold=listOf(older.copy(status=DeviceStatus.SOLD,saleAmount="1000"),
+            newer.copy(status=DeviceStatus.SOLD,saleAmount="1000",saleDate="2026-09-01"))
+        assertEquals(listOf("newer","older"),Devices.list(sold,DeviceStatus.SOLD,"",DeviceSort.DATE,today).map {it.id})
+        val restored=Book.decode(Book.encode(Ledger(devices=sold))).data.devices
+        assertNull(restored.first().saleDate)
+        assertEquals(listOf("newer","older"),Devices.list(restored,DeviceStatus.SOLD,"",DeviceSort.DATE,today).map {it.id})
+        val wishlist=listOf(device().copy(id="unscheduled",status=DeviceStatus.WISHLIST,startDate=null),
+            device().copy(id="soon",status=DeviceStatus.WISHLIST,startDate="2026-10-01",purchaseAmount="900"),
+            device().copy(id="later",status=DeviceStatus.WISHLIST,startDate="2026-11-01",purchaseAmount="10000"))
+        assertEquals(listOf("later","soon","unscheduled"),Devices.list(wishlist,DeviceStatus.WISHLIST,"",DeviceSort.DATE,today).map {it.id})
+        assertEquals(listOf("later","unscheduled","soon"),Devices.list(wishlist,DeviceStatus.WISHLIST,"",DeviceSort.PRICE,today).map {it.id})
+        assertFalse(DeviceSort.options(DeviceStatus.WISHLIST).contains(DeviceSort.SERVICE))
+        assertTrue(DeviceSort.options(DeviceStatus.RETIRED).contains(DeviceSort.SERVICE))
+    }
+
     @Test fun juneRetirementAndSeptemberSaleKeepServiceDaysAndBothDatesThroughBackup() {
         val retired=device().copy(status=DeviceStatus.RETIRED,startDate="2026-01-01",endDate="2026-06-30")
         val sold=retired.copy(status=DeviceStatus.SOLD,saleAmount="2000",saleDate="2026-09-07")

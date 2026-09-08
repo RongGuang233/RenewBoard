@@ -56,16 +56,21 @@ class MainActivityDeviceTest {
     }
 
     private fun click(text: String) {
+        if(text=="增加赠送时长") {
+            compose.onAllNodes(hasContentDescription("权益更多操作",substring=true)).onFirst().performScrollTo().performClick()
+            compose.onNodeWithText(text,substring=false).performClick()
+            return
+        }
         if(text=="选择常见会员" && compose.onAllNodes(hasText("搜索会员") and hasSetTextAction()).fetchSemanticsNodes().isNotEmpty()) return
 
-        if(text in setOf("编辑订阅与到期日","仅补记付款","归档订阅","恢复使用","删除订阅","明天提醒")) {
+        if(text in setOf("编辑订阅与到期日","仅补记付款","归档订阅","删除订阅","明天提醒")) {
             compose.onNodeWithContentDescription("订阅更多操作").performScrollTo().performClick()
             compose.onNodeWithText(text,substring=false).performClick()
             compose.waitForIdle()
             if(text=="编辑订阅与到期日") awaitNode(hasText("订阅 / 套餐名称") and hasSetTextAction(),"editor-opening")
             return
         }
-        if(text=="保存订阅") {
+        if(text in setOf("保存订阅","记录付款 / 提前续费","恢复使用")) {
             // IME-driven scrolling can move this button during injected pointer events.
             compose.onNodeWithText(text).performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.OnClick) { it() }
             return
@@ -163,7 +168,7 @@ class MainActivityDeviceTest {
         assertEquals("2024-04-07", Book.expiry(gifted.benefits.single(), gifted.plans.single()).toString())
         assertEquals(renewed.payments, gifted.payments)
         assertEquals(renewed.plans, gifted.plans)
-        compose.onNodeWithText("2024-04-07 到期").assertExists()
+        compose.onNodeWithText("2024-04-07 到期 · 含赠送 7 天").assertExists()
     }
 
     @Test fun systemBackAndVisibleBackReturnOneLevel() {
@@ -317,7 +322,7 @@ class MainActivityDeviceTest {
         // The pinned back button is available even when the detail restores a lower scroll position.
         awaitNode(hasText("返回",substring=false) and hasClickAction(),diagnosticName)
         awaitNode(hasText("记录付款 / 提前续费",substring=false),diagnosticName)
-        compose.onNode(hasScrollAction() and hasAnyDescendant(hasText("记录付款 / 提前续费",substring=false)))
+        compose.onNode(hasScrollAction() and hasAnyDescendant(hasContentDescription("订阅更多操作")))
             .performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.ScrollBy) {it(0f,-100000f)}
         compose.waitForIdle()
     }

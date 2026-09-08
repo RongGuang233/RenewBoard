@@ -38,7 +38,10 @@ class PaymentEditorDeviceTest {
             DraftStore(app).remove("payment:${first.id}");DraftStore(app).remove("payment:${second.id}")
         }
     }
-    private fun click(text: String) {compose.onNodeWithText(text,substring=false).performScrollTo().performClick()}
+    private fun click(text: String) {
+        if(text=="记录付款 / 提前续费") compose.onNodeWithText(text,substring=false).performClick()
+        else compose.onNodeWithText(text,substring=false).performScrollTo().performClick()
+    }
     private fun fill(label: String,text: String) {compose.onNode(hasText(label) and hasSetTextAction()).performScrollTo().performTextReplacement(text)}
     private fun open(name: String) {
         compose.onNodeWithText("订阅",substring=false).performClick()
