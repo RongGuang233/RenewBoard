@@ -76,7 +76,7 @@ private enum class SettingsPage(val title: String) {
     var status by remember { mutableStateOf(config.status) }
     var success by remember { mutableStateOf(config.lastSuccess) }
     var preview by remember { mutableStateOf<Backup?>(null) }
-    var remote by remember { mutableStateOf<List<String>?>(null) }
+    var remote by remember { mutableStateOf<List<CloudBackup>?>(null) }
     var disconnect by remember { mutableStateOf(false) }
     var licenseText by remember { mutableStateOf<String?>(null) }
     var notificationsEnabled by remember { mutableStateOf(NotificationManagerCompat.from(c).areNotificationsEnabled()) }
@@ -259,16 +259,21 @@ private enum class SettingsPage(val title: String) {
                         }
                     }
                     SettingsPage.REMOTE -> {
-                        SettingsNote("选择一份备份，预览后确认恢复。")
+                        SettingsNote("按时间由新到旧排列。时间优先使用云端修改时间，缺失时使用自动备份的文件日期。选择备份后可预览并确认恢复。")
                         if (remote.isNullOrEmpty() && !busy) {
                             SettingsPanel {
                                 Text(if (remote == null) "尚未读取云端备份" else "专用目录中没有备份")
                                 OutlinedButton({ operation { remote = withContext(Dispatchers.IO) { config.client().list() } } }, enabled = !busy) { Text("重新读取") }
                             }
                         }
-                        remote?.forEach { name ->
+                        remote?.forEach { backup ->
                             Surface(shape = RoundedCornerShape(16.dp), color = Color.White) {
-                                TextButton({ operation { preview = withContext(Dispatchers.IO) { config.client().download(name) } } }, enabled = !busy, modifier = Modifier.fillMaxWidth().padding(8.dp)) { Text(name) }
+                                TextButton({ operation { preview = withContext(Dispatchers.IO) { config.client().download(backup.name) } } }, enabled = !busy, modifier = Modifier.fillMaxWidth().padding(8.dp)) {
+                                    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                        Text(backup.time?.let { settingsDisplayTime(it.toString()) } ?: "时间未知", style = MaterialTheme.typography.titleMedium)
+                                        Text(if (backup.automatic) "自动备份" else "手动备份", style = MaterialTheme.typography.bodyMedium)
+                                    }
+                                }
                             }
                         }
                     }

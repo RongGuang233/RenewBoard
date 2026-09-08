@@ -23,7 +23,7 @@ private fun balanceHint(p: Plan, today: LocalDate): String {
     val date=Prepaid.rechargeDate(p) ?: return "暂无需充值日期"
     return if(date<=today) "余额不足，请充值" else "预计 $date 需充值"
 }
-@Composable internal fun BalanceCard(p: Plan, compact:Boolean=false, open:()->Unit) {
+@Composable internal fun BalanceCard(p: Plan, compact:Boolean=false, comparison:Pair<String,String>?=null, open:()->Unit) {
     val today=LocalDate.now()
     Card(onClick=open,modifier=Modifier.fillMaxWidth().padding(vertical=6.dp),shape=RoundedCornerShape(20.dp),colors=CardDefaults.cardColors(containerColor=Color.White)) {
         Row(Modifier.padding(if(compact) 12.dp else 16.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(12.dp)) {
@@ -33,8 +33,8 @@ private fun balanceHint(p: Plan, today: LocalDate): String {
                 Text(if(p.archived) "已归档" else balanceHint(p,today),fontSize=13.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
             }
             Column(horizontalAlignment=Alignment.End) {
-                Text(yuan(Prepaid.balance(p,today)),fontSize=if(compact) 18.sp else 20.sp,fontWeight=FontWeight.Bold,color=MaterialTheme.colorScheme.primary)
-                if(!compact) Text("估算余额",fontSize=13.sp)
+                Text(comparison?.first ?: yuan(Prepaid.balance(p,today)),fontSize=if(compact) 18.sp else 20.sp,fontWeight=FontWeight.Bold,color=MaterialTheme.colorScheme.primary)
+                if(!compact) Text(comparison?.second ?: "估算余额",fontSize=13.sp)
             }
         }
     }

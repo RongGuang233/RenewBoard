@@ -6,40 +6,53 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import java.io.IOException
 import java.time.Instant
+import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
+import java.time.format.ResolverStyle
 import java.time.ZoneOffset
 import java.util.concurrent.TimeUnit
 import javax.xml.parsers.DocumentBuilderFactory
+import org.w3c.dom.Element
 
 class DavException(message: String): IOException(message)
+data class CloudBackup(val name: String, val automatic: Boolean, val time: Instant?)
 class WebDav(base: String, user: String, password: String, private val client: OkHttpClient = OkHttpClient.Builder().connectTimeout(20,TimeUnit.SECONDS).readTimeout(30,TimeUnit.SECONDS).callTimeout(60,TimeUnit.SECONDS).followRedirects(false).build()) {
     private val root = base.trimEnd('/').toHttpUrl().newBuilder().addPathSegment("RenewBoard").addPathSegment("").build()
     private val auth = Credentials.basic(user, password)
-    private val automatic = Regex("auto-[0-9]{8}T[0-9]{9}Z-[a-f0-9-]{36}\\.json")
+    private val automatic = Regex("auto-([0-9]{8}T[0-9]{9}Z)-[a-f0-9-]{36}\\.json")
     private val manual = Regex("manual-[a-f0-9-]{36}\\.json")
     private val pending = Regex("pending-([0-9]{8}T[0-9]{9}Z)-[a-f0-9-]{36}\\.json")
-    private val timestamp = DateTimeFormatter.ofPattern("yyyyMMdd'T'HHmmssSSS'Z'").withZone(ZoneOffset.UTC)
+    private val timestamp = DateTimeFormatter.ofPattern("uuuuMMdd'T'HHmmssSSS'Z'").withResolverStyle(ResolverStyle.STRICT).withZone(ZoneOffset.UTC)
     private fun request(method: String, name: String? = null, body: String? = null, destination: String? = null): Response {
         val url = if(name == null) root else root.newBuilder().addPathSegment(name).build()
         val builder = Request.Builder().url(url).header("Authorization", auth)
         if(method == "PROPFIND") builder.header("Depth", "1")
         if(destination != null) builder.header("Destination", root.newBuilder().addPathSegment(destination).build().toString()).header("Overwrite", "F")
-        return client.newCall(builder.method(method, body?.toRequestBody("application/json; charset=utf-8".toMediaType())).build()).execute()
+        val requestBody = if (method == "PROPFIND") {
+            """<d:propfind xmlns:d="DAV:"><d:prop><d:getlastmodified/></d:prop></d:propfind>""".toRequestBody("application/xml; charset=utf-8".toMediaType())
+        } else body?.toRequestBody("application/json; charset=utf-8".toMediaType())
+        return client.newCall(builder.method(method, requestBody).build()).execute()
     }
     private fun check(r: Response, allowed: Set<Int> = setOf(200,201,204)) { if(r.code !in allowed) throw DavException("WebDAV 返回 HTTP ${r.code}，请检查地址、应用密码与网络") }
-    fun list(): List<String> {
-        val names = listFiles()
+    fun list(): List<CloudBackup> {
+        val files = listFiles()
         val cutoff = Instant.now().minusSeconds(86400)
-        names.filter { name ->
+        files.map { it.name }.filter { name ->
             val match = pending.matchEntire(name)
             match != null && runCatching { Instant.from(timestamp.parse(match.groupValues[1])) < cutoff }.getOrDefault(false)
         }.sorted().take(20).forEach { name ->
             // An interrupted upload is disposable; failed cleanup is retried by the next normal listing.
             try { remove(name) } catch (_: IOException) { }
         }
-        return names.filter { automatic.matches(it) || manual.matches(it) }
+        return files.filter { automatic.matches(it.name) || manual.matches(it.name) }
+            .map { file ->
+                val auto = automatic.matchEntire(file.name)
+                val time = file.modifiedAt ?: auto?.let { runCatching { Instant.from(timestamp.parse(it.groupValues[1])) }.getOrNull() }
+                CloudBackup(file.name, auto != null, time)
+            }.sortedWith(compareByDescending<CloudBackup> { it.time }.thenBy { it.name })
     }
-    private fun listFiles(): List<String> {
+    private data class RemoteFile(val name: String, val modifiedAt: Instant?)
+    private fun listFiles(): List<RemoteFile> {
         request("PROPFIND").use { r ->
             if(r.code == 404) return emptyList()
             check(r,setOf(207))
@@ -47,13 +60,24 @@ class WebDav(base: String, user: String, password: String, private val client: O
             // No DTD is valid in a WebDAV multistatus response.
             val xml = r.body?.string() ?: throw DavException("服务器返回空列表")
             if(xml.contains("<!DOCTYPE",ignoreCase=true) || xml.contains("<!ENTITY",ignoreCase=true)) throw DavException("备份列表格式错误")
-            val nodes = factory.newDocumentBuilder().parse(xml.byteInputStream()).getElementsByTagNameNS("*", "href")
+            val nodes = factory.newDocumentBuilder().parse(xml.byteInputStream()).getElementsByTagNameNS("DAV:", "response")
             return (0 until nodes.length).mapNotNull { i ->
-                val href = nodes.item(i).textContent
+                val response = nodes.item(i) as Element
+                val href = response.getElementsByTagNameNS("DAV:", "href").item(0)?.textContent?.trim() ?: return@mapNotNull null
                 val url = root.resolve(href) ?: return@mapNotNull null
-                if(url.host != root.host || url.encodedPath.substringBeforeLast('/') != root.encodedPath.trimEnd('/')) null
-                else url.pathSegments.last().takeIf { automatic.matches(it) || manual.matches(it) || pending.matches(it) }
-            }.distinct().sortedDescending()
+                if(url.host != root.host || url.encodedPath.substringBeforeLast('/') != root.encodedPath.trimEnd('/')) return@mapNotNull null
+                val name = url.pathSegments.last().takeIf { automatic.matches(it) || manual.matches(it) || pending.matches(it) } ?: return@mapNotNull null
+                val properties = response.getElementsByTagNameNS("DAV:", "propstat")
+                val modifiedAt = (0 until properties.length).firstNotNullOfOrNull { index ->
+                    val property = properties.item(index) as Element
+                    val status = property.getElementsByTagNameNS("DAV:", "status").item(0)?.textContent?.trim()
+                    if (status?.split(Regex("\\s+"))?.getOrNull(1) != "200") null
+                    else property.getElementsByTagNameNS("DAV:", "getlastmodified").item(0)?.textContent?.trim()?.let {
+                        runCatching { ZonedDateTime.parse(it, DateTimeFormatter.RFC_1123_DATE_TIME).toInstant() }.getOrNull()
+                    }
+                }
+                RemoteFile(name, modifiedAt)
+            }.distinctBy { it.name }
         }
     }
     private fun remove(name: String) { request("DELETE",name).use { check(it,setOf(200,204,404)) } }
@@ -84,7 +108,8 @@ class WebDav(base: String, user: String, password: String, private val client: O
             throw failure
         }
         val successful = list()
-        if(auto) successful.filter { automatic.matches(it) }.drop(10).forEach(::remove)
+        // Retention follows the automatic backup's creation stamp, independently of display/server modification order.
+        if(auto) successful.filter { it.automatic }.map { it.name }.sortedDescending().drop(10).forEach(::remove)
         return name
     }
 }

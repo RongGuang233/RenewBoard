@@ -6,6 +6,7 @@ import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.work.WorkManager
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.*
@@ -52,6 +53,12 @@ class DevicePurchaseDeviceTest {
     private fun saved()=runBlocking {app.repository.read()}.devices.single {it.id==original.id}
     private fun purchase() {click("记为已购买");field("实际购入金额（元）").assertExists()}
     private fun confirm() {compose.onNodeWithText("确认已购买").performSemanticsAction(SemanticsActions.OnClick) {it()}}
+    private fun edit() {compose.onNodeWithContentDescription("设备更多操作").performClick();click("编辑设备")}
+    private fun selectStatus(label:String) {
+        compose.onNodeWithContentDescription("选择设备状态").performScrollTo().performClick()
+        compose.onNode(hasText(label) and hasAnyAncestor(isPopup())).performClick()
+    }
+    private fun saveEdit() {compose.onNodeWithText("保存设备").performSemanticsAction(SemanticsActions.OnClick) {it()}}
 
     @Test fun cancelThenConfirmUsesActualValuesAndPreservesDeviceAndLedger() {
         compose.onNodeWithText("编辑设备").assertDoesNotExist()
@@ -86,9 +93,14 @@ class DevicePurchaseDeviceTest {
         compose.onNodeWithText("已服役 3 天").assertExists()
     }
 
-    @Test fun purchaseDraftSurvivesRecreationAndStaysSeparateFromEditingAndOtherDevices() {
-        compose.onNodeWithContentDescription("设备更多操作").performClick();click("编辑设备")
+    @Test fun purchasePreservesUnfinishedEditsWithoutRestoringOldBudgetOrStatus() {
+        edit()
         fill("设备名称","普通编辑草稿")
+        fill("购买预算（元）","2000")
+        compose.onNodeWithContentDescription("选择设备分类").performScrollTo().performClick()
+        compose.onNode(hasText("平板",substring=false) and hasAnyAncestor(isDialog())).performClick()
+        compose.onNode(hasText("设备备注") and hasClickAction() and !hasSetTextAction()).performScrollTo().performClick()
+        fill("设备备注","尚未保存的配件备注")
         back();click("保留草稿")
         val editDraft=DraftStore(app).read("device:${original.id}")
         assertNotNull(editDraft)
@@ -96,11 +108,11 @@ class DevicePurchaseDeviceTest {
         compose.onNodeWithText(original.name).assertExists()
         field("实际购入金额（元）").assertTextContains("8000")
         val started=LocalDate.now().minusDays(4).toString()
-        fill("实际购入金额（元）","6999.90")
+        fill("实际购入金额（元）","1500")
         fill("开始服役日期",started)
         compose.activityRule.scenario.recreate()
         compose.waitUntil(10000) {compose.onAllNodes(hasText("实际购入金额（元）") and hasSetTextAction()).fetchSemanticsNodes().isNotEmpty()}
-        field("实际购入金额（元）").assertTextContains("6999.90")
+        field("实际购入金额（元）").assertTextContains("1500")
         field("开始服役日期").assertTextContains(started)
         compose.activityRule.scenario.onActivity {it.onBackPressedDispatcher.onBackPressed()}
         click("保留草稿")
@@ -112,14 +124,88 @@ class DevicePurchaseDeviceTest {
         back();compose.onNodeWithText("保留购买草稿？").assertDoesNotExist()
         back();click(original.name);purchase()
         compose.onNodeWithText("已恢复上次草稿").assertExists()
-        field("实际购入金额（元）").assertTextContains("6999.90")
+        field("实际购入金额（元）").assertTextContains("1500")
         field("开始服役日期").assertTextContains(started)
         confirm()
         compose.waitUntil(10000) {saved().status==DeviceStatus.ACTIVE}
         compose.waitForIdle()
-        assertEquals(original.copy(status=DeviceStatus.ACTIVE,purchaseAmount="6999.90",startDate=started),saved())
+        val purchased=original.copy(status=DeviceStatus.ACTIVE,purchaseAmount="1500",startDate=started)
+        assertEquals(purchased,saved())
         assertNull(DraftStore(app).read(purchaseKey))
-        assertEquals(editDraft,DraftStore(app).read("device:${original.id}"))
+        assertNotNull(DraftStore(app).read("device:${original.id}"))
+        click("编辑设备")
+        compose.onNodeWithText("已恢复上次草稿").assertExists()
+        field("设备名称").assertTextContains("普通编辑草稿")
+        compose.onNodeWithContentDescription("选择设备状态").assertTextContains("服役中")
+        compose.onNodeWithContentDescription("选择设备分类").assertTextContains("平板")
+        field("购入金额（元）").performScrollTo().assertTextContains("1500")
+        field("服役日期").performScrollTo().assertTextContains(started)
+        saveEdit()
+        compose.waitUntil(10000) {saved().name=="普通编辑草稿"}
+        compose.waitForIdle()
+        assertEquals(purchased.copy(name="普通编辑草稿",category=DeviceCategory.TABLET,note="尚未保存的配件备注"),saved())
+        assertEquals(other,runBlocking {app.repository.read()}.devices.single {it.id==other.id})
+        assertNull(DraftStore(app).read("device:${original.id}"))
+    }
+
+    @Test fun failedPurchaseLeavesSavedDeviceAndEditingDraftUntouched() {
+        edit();fill("设备名称","失败后保留的编辑");fill("购买预算（元）","2000")
+        back();click("保留草稿")
+        val editDraft=DraftStore(app).read("device:${original.id}")
+        assertNotNull(editDraft)
+        purchase();fill("实际购入金额（元）","1500")
+        fill("开始服役日期",LocalDate.now().minusDays(1).toString())
+        compose.waitForIdle()
+        val purchaseDraft=DraftStore(app).read(purchaseKey)
+        assertNotNull(purchaseDraft)
+        runBlocking(Dispatchers.IO) {
+            app.repository.db.openHelper.writableDatabase.execSQL("CREATE TRIGGER reject_device_purchase BEFORE INSERT ON BookRow BEGIN SELECT RAISE(ABORT, 'test purchase write failure'); END")
+        }
+        try {
+            confirm()
+            compose.waitUntil(10000) {compose.onAllNodesWithText("test purchase write failure",substring=true).fetchSemanticsNodes().isNotEmpty()}
+            compose.waitForIdle()
+            assertEquals(listOf(original,other),runBlocking {app.repository.read()}.devices)
+            assertEquals(editDraft,DraftStore(app).read("device:${original.id}"))
+            assertEquals(purchaseDraft,DraftStore(app).read(purchaseKey))
+            compose.onNodeWithText("确认已购买").assertIsEnabled()
+        } finally {
+            runBlocking(Dispatchers.IO) {app.repository.db.openHelper.writableDatabase.execSQL("DROP TRIGGER IF EXISTS reject_device_purchase")}
+        }
+    }
+
+    @Test fun changingWishlistStateClearsPurchaseDraftBeforeAnotherPurchase() {
+        purchase();fill("实际购入金额（元）","1500")
+        back();click("保留草稿")
+        assertNotNull(DraftStore(app).read(purchaseKey))
+        edit();selectStatus("服役中");fill("购入金额（元）","3000")
+        fill("服役日期",LocalDate.now().minusDays(2).toString())
+        saveEdit()
+        compose.waitUntil(10000) {saved().status==DeviceStatus.ACTIVE}
+        compose.waitForIdle()
+        assertNull(DraftStore(app).read(purchaseKey))
+        click("编辑设备");selectStatus("待购买");saveEdit()
+        compose.waitUntil(10000) {saved().status==DeviceStatus.WISHLIST}
+        compose.waitForIdle()
+        purchase()
+        field("实际购入金额（元）").assertTextContains("3000")
+        compose.onNodeWithText("已恢复上次草稿").assertDoesNotExist()
+    }
+
+    @Test fun openPurchaseCannotOverwriteDeviceThatIsAlreadyActive() {
+        purchase();fill("实际购入金额（元）","1500")
+        val active=original.copy(status=DeviceStatus.ACTIVE,purchaseAmount="3000",
+            startDate=LocalDate.now().minusDays(2).toString())
+        // A saved-state change while the purchase form is open must win over its old input.
+        runBlocking {app.repository.update {it.copy(devices=listOf(active,other))}}
+        compose.waitForIdle()
+        confirm()
+        compose.waitUntil(10000) {compose.onAllNodesWithText("设备已不在待购买状态，请返回查看").fetchSemanticsNodes().isNotEmpty()}
+        assertEquals(active,saved())
+        field("实际购入金额（元）").assertTextContains("1500")
+        back();click("保留草稿")
+        compose.onNodeWithText("记为已购买").assertDoesNotExist()
+        compose.onNodeWithText("编辑设备").assertExists()
     }
 
     @Test fun unchangedDefaultsExitWithoutDraftPromptIncludingAfterRecreation() {

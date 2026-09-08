@@ -19,6 +19,8 @@ class WebDavTest {
     private lateinit var server: MockWebServer
     private lateinit var dav: WebDav
     private val files = Collections.synchronizedMap(linkedMapOf<String, String>())
+    private val lastModified = Collections.synchronizedMap(mutableMapOf<String, String>())
+    private val propertyStatus = Collections.synchronizedMap(mutableMapOf<String, String>())
     private val calls = Collections.synchronizedList(mutableListOf<Pair<String, String>>())
     private var downloadedOverride: String? = null
     private var putStatus = 201
@@ -53,6 +55,7 @@ class WebDavTest {
                         ?: MockResponse().setResponseCode(404)
                     "PROPFIND" -> {
                         if (request.getHeader("Depth") != "1") return MockResponse().setResponseCode(400)
+                        if (request.getHeader("Content-Type")?.startsWith("application/xml") != true || !request.body.readUtf8().contains("getlastmodified")) return MockResponse().setResponseCode(400)
                         val names = synchronized(files) { files.keys.toList() }
                         MockResponse().setResponseCode(207).setHeader("Content-Type", "application/xml").setBody(multistatus(names))
                     }
@@ -78,7 +81,10 @@ class WebDavTest {
     private fun automatic(i: Int) = "auto-202001${i.toString().padStart(2, '0')}T000000000Z-00000000-0000-0000-0000-000000000000.json"
     private fun manual(i: Int) = "manual-00000000-0000-0000-0000-${i.toString().padStart(12, '0')}.json"
     private fun pending(at: Instant, i: Int) = "pending-${DateTimeFormatter.ofPattern("yyyyMMdd'T'HHmmssSSS'Z'").withZone(ZoneOffset.UTC).format(at)}-00000000-0000-0000-0000-${i.toString().padStart(12, '0')}.json"
-    private fun multistatus(names: List<String>) = """<?xml version="1.0"?><d:multistatus xmlns:d="DAV:"><d:response><d:href>/dav/RenewBoard/</d:href></d:response>${names.joinToString("") { "<d:response><d:href>/dav/RenewBoard/$it</d:href></d:response>" }}</d:multistatus>"""
+    private fun multistatus(names: List<String>) = """<?xml version="1.0"?><d:multistatus xmlns:d="DAV:"><d:response><d:href>/dav/RenewBoard/</d:href></d:response>${names.joinToString("") { name ->
+        val modified = lastModified[name]?.let { "<d:propstat><d:prop><d:getlastmodified>$it</d:getlastmodified></d:prop><d:status>${propertyStatus[name] ?: "HTTP/1.1 200 OK"}</d:status></d:propstat>" }.orEmpty()
+        "<d:response><d:href>/dav/RenewBoard/$name</d:href>$modified</d:response>"
+    }}</d:multistatus>"""
 
     @Test fun manualUploadUsesRealPutAndVerifyingGetWithoutPruning() {
         (1..12).forEach { files[automatic(it)] = Book.encode(ledger) }
@@ -94,6 +100,8 @@ class WebDavTest {
 
     @Test fun automaticUploadRetainsNewestTenAndNeverDeletesManualBackups() {
         (1..12).forEach { files[automatic(it)] = Book.encode(ledger) }
+        // Server modification time can change when an old backup is copied or restored remotely.
+        lastModified[automatic(1)] = "Thu, 1 Jan 2099 00:00:00 GMT"
         (1..3).forEach { files[manual(it)] = Book.encode(ledger) }
         val name = dav.upload(ledger, auto = true)
         assertTrue(files.containsKey(name))
@@ -109,9 +117,52 @@ class WebDavTest {
         val name = manual(1)
         files[name] = Book.encode(ledger)
         files["unrelated.json"] = "{}"
-        assertEquals(listOf(name), dav.list())
+        assertEquals(listOf(name), dav.list().map { it.name })
         assertEquals(ledger, dav.download(name).data)
         assertEquals(listOf("PROPFIND", "GET"), calls.map { it.first })
+    }
+
+    @Test fun listingOrdersManualAndAutomaticBackupsByServerTimeWithoutDownloads() {
+        listOf(manual(9), automatic(12), manual(1)).forEach { files[it] = "not downloaded" }
+        lastModified[manual(9)] = "Mon, 7 Sep 2026 12:00:00 GMT"
+        lastModified[manual(1)] = "Tue, 8 Sep 2026 08:30:00 GMT"
+        lastModified[automatic(12)] = "Tue, 8 Sep 2026 08:00:00 GMT"
+
+        val backups = dav.list()
+
+        assertEquals(listOf(manual(1), automatic(12), manual(9)), backups.map { it.name })
+        assertEquals(listOf(false, true, false), backups.map { it.automatic })
+        assertEquals(Instant.parse("2026-09-08T08:30:00Z"), backups.first().time)
+        assertEquals(Instant.parse("2026-09-08T08:00:00Z"), backups[1].time)
+        assertEquals(listOf("PROPFIND"), calls.map { it.first })
+    }
+
+    @Test fun listingPlacesMissingInvalidAndUnsuccessfulDatesLastInStableNameOrder() {
+        listOf(manual(3), manual(2), manual(1), manual(4)).forEach { files[it] = "not downloaded" }
+        lastModified[manual(2)] = "not a date"
+        lastModified[manual(3)] = "Tue, 8 Sep 2026 08:00:00 GMT"
+        propertyStatus[manual(3)] = "HTTP/1.1 404 Not Found"
+        lastModified[manual(4)] = "Tue, 8 Sep 2026 08:00:00 GMT"
+
+        val backups = dav.list()
+
+        assertEquals(listOf(manual(4), manual(1), manual(2), manual(3)), backups.map { it.name })
+        assertTrue(backups.drop(1).all { it.time == null })
+        assertEquals(listOf("PROPFIND"), calls.map { it.first })
+    }
+
+    @Test fun legacyAutomaticNamesSupplyDatesWhenServerMetadataIsMissingOrInvalid() {
+        listOf(automatic(1), manual(1), automatic(12), automatic(32)).forEach { files[it] = "not downloaded" }
+        lastModified[automatic(12)] = "invalid"
+
+        val backups = dav.list()
+
+        assertEquals(listOf(automatic(12), automatic(1), automatic(32), manual(1)), backups.map { it.name })
+        assertEquals(Instant.parse("2020-01-12T00:00:00Z"), backups[0].time)
+        assertEquals(Instant.parse("2020-01-01T00:00:00Z"), backups[1].time)
+        assertNull(backups[2].time)
+        assertNull(backups[3].time)
+        assertEquals(listOf("PROPFIND"), calls.map { it.first })
     }
 
     @Test fun corruptDownloadFailsInsteadOfReturningEmptyLedger() {
@@ -164,7 +215,7 @@ class WebDavTest {
         downloadedOverride = null
         deleteStatus = 204
         dav.upload(ledger, auto = true)
-        assertEquals(10, dav.list().count { it.startsWith("auto-") })
+        assertEquals(10, dav.list().count { it.automatic })
         assertFalse(files.containsKey(automatic(1)))
         (2..10).forEach { assertTrue(files.containsKey(automatic(it))) }
     }
@@ -176,10 +227,10 @@ class WebDavTest {
         files[recent] = "active upload"
         files[manual(1)] = Book.encode(ledger)
         files["pending-user-document.json"] = "unrelated"
-        assertEquals(listOf(manual(1)), dav.list())
+        assertEquals(listOf(manual(1)), dav.list().map { it.name })
         assertEquals(20, calls.count { it.first == "DELETE" })
         assertEquals(4, files.keys.count { it.startsWith("pending-") && it != "pending-user-document.json" })
-        assertEquals(listOf(manual(1)), dav.list())
+        assertEquals(listOf(manual(1)), dav.list().map { it.name })
         assertEquals(23, calls.count { it.first == "DELETE" })
         assertTrue(files.containsKey(recent))
         assertTrue(files.containsKey("pending-user-document.json"))

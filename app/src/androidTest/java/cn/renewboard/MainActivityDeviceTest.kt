@@ -555,6 +555,8 @@ class MainActivityDeviceTest {
         val healthy=Plan(id="healthy",name="余额充足话费",amount="30",billingAnchor=today.toString(),paidCycles=0,balanceAccount=BalanceAccount("200",today.toString()))
         val urgent=healthy.copy(id="urgent",name="需要充值话费",balanceAccount=BalanceAccount("-10",today.toString()))
         runBlocking {app.repository.update {Ledger(plans=plans+listOf(healthy,urgent),benefits=benefits)}}
+        // Room committing does not mean the lifecycle collector has rendered the new ledger.
+        compose.waitUntil(10000) {compose.onAllNodesWithText("到期事项0",substring=false).fetchSemanticsNodes().isNotEmpty()}
         compose.waitForIdle()
         compose.onNodeWithText("到期事项0",substring=false).assertIsDisplayed()
         compose.onNodeWithText("到期事项1",substring=false).assertIsDisplayed()

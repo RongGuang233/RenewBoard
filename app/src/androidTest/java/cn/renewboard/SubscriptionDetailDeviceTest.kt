@@ -53,7 +53,7 @@ class SubscriptionDetailDeviceTest {
         val buttonBefore=compose.onNodeWithText("记录付款 / 提前续费").fetchSemanticsNode().boundsInRoot
         click("全部记录")
         compose.onNodeWithText("话费充值").assertDoesNotExist()
-        compose.onNodeWithText("付款",substring=false).assertExists()
+        compose.onNodeWithText("类型：全部",substring=false).assertExists()
         compose.onNodeWithText("4 笔 · 净支出 ¥10.00").assertExists()
         compose.onNodeWithText(today.minusDays(4).toString()).performScrollTo().assertIsDisplayed()
         compose.onNodeWithContentDescription("返回订阅详情").performClick()

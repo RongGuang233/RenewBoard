@@ -33,6 +33,12 @@ fun newId() = UUID.randomUUID().toString()
 data class RefundBalance(val amount: BigDecimal)
 fun Payment.signedAmount(): BigDecimal = BigDecimal(amount).let { if(refundOf == null) it else it.negate() }
 fun Payment.signedCny(): BigDecimal? = (if(currency == "CNY") amount else cnyAmount)?.let { BigDecimal(it) }?.let { if(refundOf == null) it else it.negate() }
+internal fun latestCnySettlement(l:Ledger,plan:Plan,on:LocalDate):Payment? = if(plan.currency=="CNY") null else
+    l.payments.withIndex().filter { (_,p) ->
+        p.refundOf==null && p.planId==plan.id && p.currency==plan.currency && p.cnyAmount!=null &&
+            BigDecimal(p.amount).signum()>0 && LocalDate.parse(p.date)<=on
+    }.maxWithOrNull(compareBy<IndexedValue<Payment>> {LocalDate.parse(it.value.date)}.thenBy {it.index})?.value
+
 data class ForecastSummary(val known: BigDecimal, val missingPlanIds: List<String>)
 data class ForecastCharge(val planId: String, val planName: String, val date: LocalDate,
     val amount: BigDecimal, val currency: String, val cnyAmount: BigDecimal?)
@@ -61,10 +67,7 @@ object Book {
         if(until<=from) return emptyList()
         val charges=mutableListOf<ForecastCharge>()
         l.plans.filter { it.autoRenew && !it.archived }.forEach { plan ->
-            val settlement=if(plan.currency=="CNY") null else l.payments.withIndex().filter { (_, p) ->
-                p.refundOf==null && p.planId==plan.id && p.currency==plan.currency && p.cnyAmount!=null &&
-                    BigDecimal(p.amount).signum()>0 && LocalDate.parse(p.date)<=from
-            }.maxWithOrNull(compareBy<IndexedValue<Payment>> { LocalDate.parse(it.value.date) }.thenBy { it.index })?.value
+            val settlement=latestCnySettlement(l,plan,from)
             var originalTotal=BigDecimal.ZERO
             var settledTotal=BigDecimal.ZERO
             fun add(date:LocalDate,amount:BigDecimal) {

@@ -25,6 +25,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -298,6 +299,9 @@ private fun money(totals: Map<String,BigDecimal>) = if(totals.isEmpty()) "暂无
     var renewalFilter by rememberSaveable {mutableStateOf("全部")}
     var sort by rememberSaveable {mutableStateOf("最近到期")}
     var filters by remember {mutableStateOf(false)}
+    var costHelp by remember {mutableStateOf(false)}
+    val today=LocalDate.now()
+    val comparing=sort in listOf("单次金额","折合月费")
     Title("我的订阅",action=onAdd)
     Row(verticalAlignment=Alignment.CenterVertically) {
         Field("搜索订阅",query,{query=it},Modifier.weight(1f))
@@ -306,7 +310,7 @@ private fun money(totals: Map<String,BigDecimal>) = if(totals.isEmpty()) "暂无
             DropdownMenu(filters,{filters=false}) {
                 listOf("全部","自动续费","手动续费").forEach {value->DropdownMenuItem(text={Text((if(renewalFilter==value) "✓ " else "")+value)},onClick={renewalFilter=value;filters=false})}
                 HorizontalDivider()
-                listOf("最近到期","名称","金额").forEach {value->DropdownMenuItem(text={Text((if(sort==value) "✓ " else "")+value)},onClick={sort=value;filters=false})}
+                listOf("最近到期","名称","单次金额","折合月费").forEach {value->DropdownMenuItem(text={Text((if(sort==value) "✓ " else "")+value)},onClick={sort=value;filters=false})}
             }
         }
     }
@@ -320,22 +324,48 @@ private fun money(totals: Map<String,BigDecimal>) = if(totals.isEmpty()) "暂无
     }
     if(renewalFilter!="全部") InputChip(selected=true,onClick={renewalFilter="全部"},label={Text(renewalFilter)},
         trailingIcon={Icon(Icons.Outlined.Close,null,Modifier.size(16.dp))},modifier=Modifier.semantics {contentDescription="清除续费筛选"})
-    val filtered=l.plans.filter { it.archived==archived && it.name.contains(query.trim(),ignoreCase=true) && (renewalFilter=="全部" || it.autoRenew==(renewalFilter=="自动续费")) }
+    if(comparing) Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically) {
+        Text("预计金额，仅用于比较",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.weight(1f))
+        TextButton(onClick={costHelp=true}) {Text("折算说明")}
+    }
+    val filtered=l.plans.filter { it.archived==archived && SubscriptionList.matches(l,it,query) && (renewalFilter=="全部" || it.autoRenew==(renewalFilter=="自动续费")) }
     val plans=when(sort) {
         "名称" -> filtered.sortedBy{it.name}
-        "金额" -> filtered.sortedWith(compareBy<Plan>{it.currency}.thenByDescending{BigDecimal(it.amount)})
+        "单次金额","折合月费" -> SubscriptionList.sortByCost(l,filtered,sort=="折合月费",today)
         else -> filtered.sortedBy {p->if(p.balanceAccount!=null) Prepaid.rechargeDate(p) ?: LocalDate.MAX else l.benefits.filter{it.planId==p.id}.minOfOrNull{Book.expiry(it,p)} ?: LocalDate.MAX}
     }
     if(plans.isEmpty()) Hint(if(query.isNotBlank() || renewalFilter!="全部") "没有匹配的订阅" else if(archived) "没有归档的订阅" else "添加你的第一项会员。")
     plans.forEach { plan ->
-        if(plan.balanceAccount!=null) { BalanceCard(plan) { open(plan.id) }; return@forEach }
+        val original=displayMoney(plan.currency,SubscriptionList.originalAmount(plan,today).toPlainString())
+        val period=SubscriptionList.period(plan)
+        val compared=if(comparing) SubscriptionList.comparisonCny(l,plan,sort=="折合月费",today) else null
+        val amountText=if(!comparing) original else compared?.let {
+            (if(sort=="折合月费" || plan.currency!="CNY") "≈" else "")+displayMoney("CNY",it.toPlainString())
+        } ?: "待补人民币"
+        val caption=when {
+            comparing && (plan.currency!="CNY" || (sort=="折合月费" && (plan.cycle!=Cycle.MONTH || plan.interval!=1) && plan.balanceAccount==null)) -> "$original / $period"
+            plan.balanceAccount!=null -> "每月月费"
+            else -> "每$period"+if(plan.autoRenew) "" else " · 手动"
+        }
+        if(plan.balanceAccount!=null) { BalanceCard(plan,comparison=if(comparing) amountText to caption else null) {open(plan.id)};return@forEach }
+        val matching=if(query.isNotBlank() && !plan.name.contains(query.trim(),ignoreCase=true)) SubscriptionList.matchingBenefits(l,plan,query) else emptyList()
         val expiry=l.benefits.filter { it.planId==plan.id }.minOfOrNull { Book.expiry(it,plan) }
         Card(onClick={open(plan.id)},modifier=Modifier.fillMaxWidth().padding(vertical=6.dp),shape=RoundedCornerShape(20.dp),colors=CardDefaults.cardColors(containerColor=Color.White)) {
             Row(Modifier.padding(16.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(12.dp)) {
                 ServiceIcon(plan.name)
-                Column(Modifier.weight(1f)) { Text(plan.name,fontSize=17.sp,fontWeight=FontWeight.SemiBold); Text(expiry?.let { "${it.monthValue} 月 ${it.dayOfMonth} 日到期" } ?: "",fontSize=14.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.padding(top=4.dp)) }
-                Column(horizontalAlignment=Alignment.End) { Text(displayMoney(plan.currency,plan.amount),fontSize=17.sp,fontWeight=FontWeight.Bold); Text(if(plan.autoRenew) "每 ${plan.interval} ${plan.cycle.label}" else "手动续费",fontSize=14.sp,color=MaterialTheme.colorScheme.onSurfaceVariant) }
+                Column(Modifier.weight(1f)) {
+                    Text(plan.name,fontSize=17.sp,fontWeight=FontWeight.SemiBold)
+                    if(matching.isNotEmpty()) Text("包含：${matching.first()}"+if(matching.size>1) "等${matching.size}项" else "",fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,maxLines=1,overflow=TextOverflow.Ellipsis)
+                    Text(expiry?.let { "${it.monthValue} 月 ${it.dayOfMonth} 日到期" } ?: "",fontSize=14.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.padding(top=4.dp))
+                }
+                Column(horizontalAlignment=Alignment.End) {
+                    Text(amountText,fontSize=17.sp,fontWeight=FontWeight.Bold)
+                    Text(caption,fontSize=13.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                }
             }
         }
     }
+    if(costHelp) AlertDialog(onDismissRequest={costHelp=false},title={Text("金额比较口径")},
+        text={Text("单次金额比较每个扣费周期的设定价格，话费使用当前月费。\n\n折合月费按周期平均：年付除以12，周付按一年52周折算；多周、多月或多年再按周期倍数计算。\n\n外币按该订阅最近一次已记录付款的人民币实付比例估算，无依据时标为待补录并排在末尾。比较值不写入账本，也不改变历史付款。")},
+        confirmButton={TextButton(onClick={costHelp=false}) {Text("知道了")}})
 }

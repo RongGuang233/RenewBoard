@@ -41,7 +41,7 @@ private fun smallAmount(value: BigDecimal): String = when {
 }
 private fun within(p: Payment, from: LocalDate?, until: LocalDate?) =
     (from==null || LocalDate.parse(p.date)>=from) && (until==null || LocalDate.parse(p.date)<until)
-private data class ReceiptRange(val title:String,val from:LocalDate?,val until:LocalDate?,val planName:String?=null,val planId:String?=null,val refundOf:String?=null)
+private data class ReceiptRange(val title:String,val from:LocalDate?,val until:LocalDate?,val planName:String?=null,val planId:String?=null,val refundOf:String?=null,val missingOnly:Boolean=false)
 
 @Composable internal fun LedgerScreen(l:Ledger,change:((Ledger)->Ledger)->Unit,onSubpageChange:(Boolean)->Unit={}) {
     val today=LocalDate.now()
@@ -134,7 +134,13 @@ private data class ReceiptRange(val title:String,val from:LocalDate?,val until:L
                     CashPart("退款",breakdown.refunds,Modifier.weight(1f))
                 }
             }
-            if(rangeSum.missing>0) Text("${rangeSum.missing} 笔金额待补录",color=MaterialTheme.colorScheme.tertiary,fontSize=13.sp)
+            if(rankSum.missing>0) TextButton(onClick={
+                detail=ReceiptRange("$rankPeriod · 待补录人民币",selectedBucket?.from ?: buckets.firstOrNull()?.from,
+                    selectedBucket?.until ?: buckets.lastOrNull()?.until,missingOnly=true)
+            },contentPadding=PaddingValues(vertical=8.dp)) {
+                Text("$rankPeriod · ${rankSum.missing} 笔金额待补录",color=MaterialTheme.colorScheme.tertiary,fontSize=13.sp)
+                Icon(Icons.Outlined.ChevronRight,null,modifier=Modifier.size(18.dp))
+            }
             if(buckets.isEmpty()) Text("记录第一笔付款后，这里会显示趋势。",modifier=Modifier.padding(vertical=30.dp),color=MaterialTheme.colorScheme.onSurfaceVariant)
             else TrendBars(buckets,selectedBucket?.from) { bucket ->
                 selectedFrom=if(selectedFrom==bucket.from.toString()) null else bucket.from.toString()
@@ -262,15 +268,18 @@ private data class ReceiptRange(val title:String,val from:LocalDate?,val until:L
     val listState=rememberLazyListState()
     var query by rememberSaveable { mutableStateOf("") }
     var kind by rememberSaveable { mutableStateOf("全部") }
+    var kindMenuOpen by remember { mutableStateOf(false) }
     var managing by rememberSaveable { mutableStateOf(false) }
     var selected by remember { mutableStateOf(emptySet<String>()) }
     var deleting by remember { mutableStateOf<Set<String>?>(null) }
     var payment by remember { mutableStateOf<Payment?>(null) }
-    val visible=l.payments.filter { p -> within(p,target.from,target.until) && (target.planName==null || p.planName==target.planName) && (target.planId==null || p.planId==target.planId) && (target.refundOf==null || p.refundOf==target.refundOf) && p.planName.contains(query.trim(),ignoreCase=true) && when(kind) {
-        "订阅付款" -> !Prepaid.isTopUp(p)
+    val scoped=l.payments.filter { p -> within(p,target.from,target.until) && (target.planName==null || p.planName==target.planName) && (target.planId==null || p.planId==target.planId) && (target.refundOf==null || p.refundOf==target.refundOf) &&
+        (!target.missingOnly || (!Prepaid.isTopUp(p) && p.currency!="CNY" && p.cnyAmount==null)) }
+    val visible=scoped.filter { p -> p.planName.contains(query.trim(),ignoreCase=true) && when(kind) {
+        "订阅付款" -> p.refundOf==null && !Prepaid.isTopUp(p) && p.note !in setOf("话费扣费","话费额外扣费")
         "付款" -> p.refundOf==null && !Prepaid.isTopUp(p)
         "退款" -> p.refundOf!=null
-        "话费扣费" -> p.note in setOf("话费扣费","话费额外扣费")
+        "话费扣费" -> p.refundOf==null && p.note in setOf("话费扣费","话费额外扣费")
         "话费充值" -> Prepaid.isTopUp(p)
         "已删订阅" -> l.plans.none { it.id==p.planId }
         else -> true
@@ -298,12 +307,22 @@ private data class ReceiptRange(val title:String,val from:LocalDate?,val until:L
             Column(Modifier.fillMaxSize().padding(padding).padding(horizontal=20.dp)) {
                 if(target.refundOf==null) {
                     if(target.planId==null) OutlinedTextField(query,{query=it;selected=emptySet()},label={Text("搜索应用")},leadingIcon={Icon(Icons.Outlined.Search,null)},singleLine=true,modifier=Modifier.fillMaxWidth())
-                    Row(Modifier.horizontalScroll(rememberScrollState()),horizontalArrangement=Arrangement.spacedBy(6.dp)) {
+                    Box {
                         val options=if(target.planId!=null) {
                             if(l.plans.find {it.id==target.planId}?.balanceAccount!=null) listOf("全部","话费扣费","话费充值","退款")
                             else listOf("全部","付款","退款")
                         } else listOf("全部","订阅付款","退款","话费扣费","话费充值","已删订阅")
-                        options.forEach { option -> FilterChip(kind==option,{kind=option;selected=emptySet()},label={Text(option)}) }
+                        OutlinedButton(onClick={kindMenuOpen=true},modifier=Modifier.semantics {contentDescription="选择付款类型"}) {
+                            Text("类型：$kind")
+                            Icon(Icons.Outlined.ExpandMore,null,modifier=Modifier.padding(start=6.dp).size(20.dp))
+                        }
+                        DropdownMenu(expanded=kindMenuOpen,onDismissRequest={kindMenuOpen=false}) {
+                            options.forEach { option ->
+                                DropdownMenuItem(text={Text(option)},onClick={kind=option;selected=emptySet();kindMenuOpen=false},
+                                    trailingIcon={if(kind==option) Icon(Icons.Outlined.Check,null)},
+                                    modifier=Modifier.semantics {contentDescription="付款类型 $option";this.selected=kind==option})
+                            }
+                        }
                     }
                 }
                 Column(Modifier.padding(vertical=12.dp),verticalArrangement=Arrangement.spacedBy(4.dp)) {
@@ -311,7 +330,7 @@ private data class ReceiptRange(val title:String,val from:LocalDate?,val until:L
                     if(topups.count>0) Text("充值 ${cash(topups.known)} · 不计支出"+if(topups.missing>0) " · ${topups.missing} 笔待补录" else "",fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 LazyColumn(Modifier.fillMaxSize(),state=listState) {
-                    if(visible.isEmpty()) item {Text("没有符合条件的付款",modifier=Modifier.padding(vertical=32.dp),color=MaterialTheme.colorScheme.onSurfaceVariant)}
+                    if(visible.isEmpty()) item {Text(if(target.missingOnly && scoped.isEmpty()) "当前时段的人民币金额已全部补录" else "没有符合条件的付款",modifier=Modifier.padding(vertical=32.dp),color=MaterialTheme.colorScheme.onSurfaceVariant)}
                     visible.groupBy { it.date }.forEach { (date,payments) ->
                         item(key="date-$date") {ReceiptDate(date)}
                         items(payments,key={it.id}) { p -> PaymentRow(p,{if(openPayment!=null) openPayment(p) else payment=p},if(managing) p.id in effective else null) { selected=if(p.id in selected) selected-p.id else selected+p.id } }

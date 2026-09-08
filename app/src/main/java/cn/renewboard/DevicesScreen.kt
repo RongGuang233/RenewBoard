@@ -217,7 +217,20 @@ private fun deviceMoney(value: String) = "¥" + BigDecimal(value).setScale(2, Ro
                 focus.clearFocus();keyboard?.hide();saving=true
                 scope.launch {
                     try {
-                        context.repository().update {old->old.copy(devices=old.devices.map {if(it.id==saved.id) saved else it})}
+                        context.repository().update {old->
+                            check(old.devices.any {it.id==saved.id && it.status==DeviceStatus.WISHLIST}) {"设备已不在待购买状态，请返回查看"}
+                            old.copy(devices=old.devices.map {if(it.id==saved.id) saved else it})
+                        }
+                        // Keep unfinished descriptive edits, but never restore the pre-purchase lifecycle.
+                        val editKey="device:${saved.id}"
+                        store.read(editKey)?.let {json->
+                            runCatching {Book.json.decodeFromString<DeviceDraft>(json)}.getOrNull()?.let {edit->
+                                store.write(editKey,Book.json.encodeToString(edit.copy(
+                                    status=saved.status,price=saved.purchaseAmount,start=saved.startDate ?: "",
+                                    end=saved.endDate ?: "",sale=saved.saleAmount ?: "",saleDate=saved.saleDate,
+                                    independentEnd=false)))
+                            }
+                        }
                         completed=true;store.remove(draftKey);onSaved(saved)
                     } catch(e:CancellationException) {throw e}
                     catch(e:Exception) {error=e.message ?: "保存失败，请重试"}
@@ -322,6 +335,9 @@ private fun deviceMoney(value: String) = "¥" + BigDecimal(value).setScale(2, Ro
                 scope.launch {
                     try {
                         context.repository().update {old->old.copy(devices=old.devices.filterNot {it.id==saved.id}+saved)}
+                        if(original?.status==DeviceStatus.WISHLIST && saved.status!=DeviceStatus.WISHLIST) {
+                            store.remove("device:purchase:${saved.id}")
+                        }
                         completed=true;store.remove(draftKey);onSaved(saved)
                     } catch(e:CancellationException) {throw e}
                     catch(e:Exception) {error=e.message ?: "保存失败，请重试"}
