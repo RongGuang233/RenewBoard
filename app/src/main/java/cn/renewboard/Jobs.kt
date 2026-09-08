@@ -152,11 +152,17 @@ class BackupWorker(c: Context, p: WorkerParameters): CoroutineWorker(c,p) {
         catch(e: Exception) { if(e is kotlinx.coroutines.CancellationException) throw e; config.result(if(e is DavException) e.message else "备份失败，请检查网络与应用密码后重试"); Result.retry() }
     }
 }
-private fun notificationsAllowed(c: Context, manager: NotificationManagerCompat): Boolean {
+internal const val EXPIRY_CHANNEL_ID = "expiry"
+
+internal fun appNotificationsAllowed(c: Context, manager: NotificationManagerCompat = NotificationManagerCompat.from(c)): Boolean {
     if (Build.VERSION.SDK_INT >= 33 && ContextCompat.checkSelfPermission(c, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return false
-    if (!manager.areNotificationsEnabled()) return false
-    manager.createNotificationChannel(NotificationChannel("expiry", "到期提醒", NotificationManager.IMPORTANCE_DEFAULT))
-    return c.getSystemService(NotificationManager::class.java).getNotificationChannel("expiry")?.importance != NotificationManager.IMPORTANCE_NONE
+    return manager.areNotificationsEnabled()
+}
+
+internal fun notificationsAllowed(c: Context, manager: NotificationManagerCompat = NotificationManagerCompat.from(c)): Boolean {
+    if (!appNotificationsAllowed(c, manager)) return false
+    manager.createNotificationChannel(NotificationChannel(EXPIRY_CHANNEL_ID, "到期提醒", NotificationManager.IMPORTANCE_DEFAULT))
+    return c.getSystemService(NotificationManager::class.java).getNotificationChannel(EXPIRY_CHANNEL_ID)?.importance != NotificationManager.IMPORTANCE_NONE
 }
 
 private fun eventExtras(events: List<ReminderEvent>) = android.os.Bundle().apply {
@@ -179,7 +185,7 @@ class ReminderWorker(c: Context, p: WorkerParameters): CoroutineWorker(c,p) {
             val key = event.deliveryKey(today)
             if (dao.claim(ReminderRow(key, today.toString())) != -1L) {
                 try {
-                    val builder = NotificationCompat.Builder(c, "expiry").setSmallIcon(R.drawable.ic_launcher)
+                    val builder = NotificationCompat.Builder(c, EXPIRY_CHANNEL_ID).setSmallIcon(R.drawable.ic_launcher)
                         .setContentTitle(if (event.balance) "${event.name} 余额提醒" else "${event.name} 即将到期")
                         .setContentText(if (event.balance) "预计 ${event.date} 余额不足，请及时充值" else "${event.date} · ${event.planName}")
                         .setContentIntent(Jobs.detailIntent(c, event.planId)).setExtras(eventExtras(listOf(event)))
@@ -199,7 +205,7 @@ class ReminderWorker(c: Context, p: WorkerParameters): CoroutineWorker(c,p) {
                     .find { it.tag == "reminder-catchup" }?.notification?.extras?.getStringArray("eventKeys").orEmpty()
                 val combined = (ReminderPolicy.unresolved(l, activeKeys.toList(), today) + claimed).distinctBy { it.key }
                 val text = ReminderPolicy.summary(combined)
-                nm.notify("reminder-catchup", 0, NotificationCompat.Builder(c, "expiry").setSmallIcon(R.drawable.ic_launcher)
+                nm.notify("reminder-catchup", 0, NotificationCompat.Builder(c, EXPIRY_CHANNEL_ID).setSmallIcon(R.drawable.ic_launcher)
                     .setContentTitle("有 ${combined.size} 项近期提醒待处理").setContentText(text)
                     .setStyle(NotificationCompat.BigTextStyle().bigText(text)).setExtras(eventExtras(combined))
                     .setContentIntent(Jobs.detailIntent(c, combined.first().planId)).setAutoCancel(true).build())
@@ -222,7 +228,7 @@ class SnoozeReminderWorker(c:Context,p:WorkerParameters):CoroutineWorker(c,p) {
         if (!notificationsAllowed(c, nm)) return Result.success()
         val text = ReminderPolicy.summary(pending)
         try {
-            nm.notify("snooze-$id", 0, NotificationCompat.Builder(c, "expiry").setSmallIcon(R.drawable.ic_launcher)
+            nm.notify("snooze-$id", 0, NotificationCompat.Builder(c, EXPIRY_CHANNEL_ID).setSmallIcon(R.drawable.ic_launcher)
                 .setContentTitle("${plan.name} · 稍后提醒").setContentText(text)
                 .setStyle(NotificationCompat.BigTextStyle().bigText(text)).setExtras(eventExtras(pending))
                 .setContentIntent(Jobs.detailIntent(c, id)).setAutoCancel(true).build())

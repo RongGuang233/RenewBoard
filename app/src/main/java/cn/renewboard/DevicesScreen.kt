@@ -66,6 +66,7 @@ private fun deviceMoney(value: String) = "¥" + BigDecimal(value).setScale(2, Ro
     var sortMenu by remember { mutableStateOf(false) }
     var moreMenu by remember { mutableStateOf(false) }
     var deleting by remember { mutableStateOf(false) }
+    val listScroll = rememberScrollState()
     val device = l.devices.find { it.id == selectedId }
     val subpage = editing || purchasing || selectedId != null
     LaunchedEffect(subpage) { onSubpageChange(subpage) }
@@ -132,7 +133,7 @@ private fun deviceMoney(value: String) = "¥" + BigDecimal(value).setScale(2, Ro
 
                 }
             }
-        } else Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal=20.dp).padding(bottom=24.dp),verticalArrangement=Arrangement.spacedBy(10.dp)) {
+        } else Column(Modifier.fillMaxSize().verticalScroll(listScroll).padding(horizontal=20.dp).padding(bottom=24.dp),verticalArrangement=Arrangement.spacedBy(10.dp)) {
             Row(Modifier.fillMaxWidth().padding(top=12.dp),verticalAlignment=Alignment.CenterVertically) {
                 Text("我的设备",fontSize=26.sp,fontWeight=FontWeight.Bold,modifier=Modifier.weight(1f))
                 FilledTonalIconButton(onClick={selectedId=null;editing=true}) { Icon(Icons.Outlined.Add,"添加设备") }

@@ -204,8 +204,8 @@ private fun money(totals: Map<String,BigDecimal>) = if(totals.isEmpty()) "暂无
         } else if(!hasPreviousPage && tab>=2) {
             Box(Modifier.fillMaxSize().padding(padding).imePadding()) {
                 when(tab) {
-                    2 -> LedgerScreen(ledger,::change) { subpage=it }
-                    3 -> DevicesScreen(ledger,::change) { subpage=it }
+                    2 -> pageStates.SaveableStateProvider("ledger") {LedgerScreen(ledger,::change) { subpage=it }}
+                    3 -> pageStates.SaveableStateProvider("devices") {DevicesScreen(ledger,::change) { subpage=it }}
                     4 -> SettingsScreen(ledger,::message) { subpage=it }
                 }
             }

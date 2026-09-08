@@ -1,6 +1,8 @@
 package cn.renewboard
 
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.*
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -155,6 +157,76 @@ class LedgerDeviceTest {
         compose.onNodeWithText("全部 · 按应用").assertExists()
         compose.onNode(hasContentDescription("ChatGPT，支出¥70.00",substring=true)).assertExists()
     }
+    @Test fun dailyTrendStartsAtLatestSupportsWideTouchAndKeepsPositionAfterDetails() {
+        val today=LocalDate.now()
+        val oldest=today.minusDays(29)
+        val latest=Payment(planId="daily",planName="每日测试",amount="12",currency="CNY",date=today.toString())
+        seed(Ledger(payments=listOf(latest,latest.copy(id="old-day",amount="7",date=oldest.toString()))))
+        compose.onNodeWithText("账本",substring=false).performClick()
+        selectRange(TrendRange.MONTH)
+        val todayBar=compose.onNode(hasContentDescription("${today.monthValue}/${today.dayOfMonth}，支出",substring=true))
+        val oldestBar=compose.onNode(hasContentDescription("${oldest.monthValue}/${oldest.dayOfMonth}，支出",substring=true))
+        todayBar.assertIsDisplayed().assertWidthIsAtLeast(48.dp)
+        oldestBar.assertIsNotDisplayed()
+        // Exercise the edge of the actual daily cell, rather than a semantics click.
+        todayBar.performTouchInput {click(androidx.compose.ui.geometry.Offset(width-2f,height/2f))}
+        todayBar.assertIsSelected()
+        compose.onNodeWithTag("selected-trend-summary").assertTextEquals("${today.monthValue}/${today.dayOfMonth} · 净支出 ¥12.00 · 1 笔")
+        compose.onNodeWithText("近30天 · 合计",substring=false).assertExists()
+        compose.onNodeWithText("净支出 ¥19.00",substring=false).assertExists()
+        compose.onNode(hasContentDescription("每日测试，支出¥12.00",substring=true)).assertExists()
+        compose.onNodeWithContentDescription("返回概览").assertDoesNotExist()
+        compose.onAllNodes(isDialog()).assertCountEquals(0)
+        oldestBar.performScrollTo().performClick().assertIsSelected()
+        val horizontalBefore=compose.onNodeWithTag("ledger-trend-bars").fetchSemanticsNode().config[SemanticsProperties.HorizontalScrollAxisRange].value()
+        click("所选时段明细")
+        compose.onNodeWithText("1 笔 · 净支出 ¥7.00",substring=false).assertExists()
+        compose.onNodeWithContentDescription("返回概览").performClick()
+        oldestBar.assertIsSelected()
+        val horizontalAfter=compose.onNodeWithTag("ledger-trend-bars").fetchSemanticsNode().config[SemanticsProperties.HorizontalScrollAxisRange].value()
+        assertEquals(horizontalBefore,horizontalAfter,1f)
+        selectRange(TrendRange.THREE)
+        compose.onNodeWithTag("selected-trend-summary").assertDoesNotExist()
+        selectRange(TrendRange.MONTH)
+        todayBar.assertIsDisplayed().assertIsNotSelected()
+        oldestBar.assertIsNotDisplayed()
+    }
+
+    @Test fun missingCashListShowsOriginalAmountsWithoutRedundantTypes() {
+        val today=LocalDate.now().toString()
+        val payment=Payment(id="missing-original",planId="foreign",planName="外币付款",amount="20",currency="USD",date=today)
+        val second=payment.copy(id="missing-second",planId="euro",planName="欧元付款",currency="EUR",amount="5")
+        val known=payment.copy(id="known-cash",planName="人民币付款",amount="30",currency="CNY")
+        seed(Ledger(payments=listOf(payment,second,known)))
+        compose.onNodeWithText("账本",substring=false).performClick()
+        compose.onNodeWithText("已知净支出 ¥30.00",substring=false).assertExists()
+        click("全部明细")
+        compose.onNodeWithText("3 笔 · 已知净支出 ¥30.00 · 2 笔待补录",substring=false).assertExists()
+        compose.onNodeWithContentDescription("返回概览").performClick()
+        click("近6个月 · 2 笔金额待补录")
+        compose.onNodeWithText("2 笔待补录",substring=false).assertExists()
+        compose.onNodeWithText("净支出",substring=true).assertDoesNotExist()
+        compose.onNodeWithText("USD 20",substring=false).assertExists()
+        compose.onNodeWithText("EUR 5",substring=false).assertExists()
+        compose.onAllNodesWithText("补录人民币",substring=false).assertCountEquals(2)
+        compose.onNodeWithContentDescription("选择付款类型").assertDoesNotExist()
+        compose.onNodeWithText("外币付款",substring=false).performClick()
+        compose.onNodeWithText("人民币实付金额").performTextInput("140")
+        compose.onNodeWithText("保存金额").performScrollTo().performClick()
+        waitFor {it.payments.single {p->p.id==payment.id}.cnyAmount=="140"}
+        compose.onNodeWithText("1 笔待补录",substring=false).assertExists()
+        compose.onNodeWithText("USD 20",substring=false).assertDoesNotExist()
+        compose.onNodeWithText("EUR 5",substring=false).assertExists()
+        compose.onNodeWithText("补录人民币",substring=false).performClick()
+        compose.onNodeWithText("人民币实付金额").performTextInput("35")
+        compose.onNodeWithText("保存金额").performScrollTo().performClick()
+        waitFor {it.payments.single {p->p.id==second.id}.cnyAmount=="35"}
+        compose.onNodeWithText("0 笔待补录",substring=false).assertExists()
+        compose.onNodeWithText("当前时段的人民币金额已全部补录").assertExists()
+        assertEquals(payment.copy(cnyAmount="140"),read().payments.single {it.id==payment.id})
+        assertEquals(second.copy(cnyAmount="35"),read().payments.single {it.id==second.id})
+    }
+
     @Test fun missingForeignCashCanBeSupplementedOnFullPage() {
         val today=LocalDate.now()
         val p=Payment(planId="foreign",planName="ChatGPT",amount="20",currency="USD",date=today.toString())
@@ -249,14 +321,14 @@ class LedgerDeviceTest {
         selectRange(TrendRange.MONTH)
         click("近30天 · 3 笔金额待补录")
         compose.onNodeWithText("近30天 · 待补录人民币",substring=false).assertExists()
-        compose.onNodeWithText("3 笔 · 净支出 ¥0.00 · 3 笔待补录",substring=false).assertExists()
+        compose.onNodeWithText("3 笔待补录",substring=false).assertExists()
         listOf("范围外待补","已补录外币","人民币付款").forEach {compose.onNodeWithText(it,substring=false).assertDoesNotExist()}
         compose.onNodeWithText("昨日待补",substring=false).assertExists()
         compose.onNodeWithContentDescription("返回概览").performClick()
         compose.onNode(hasContentDescription("${today.monthValue}/${today.dayOfMonth}，支出",substring=true)).performScrollTo().performClick()
         val period="${today.year}年${today.monthValue}月${today.dayOfMonth}日"
         click("$period · 2 笔金额待补录")
-        compose.onNodeWithText("2 笔 · 净支出 ¥0.00 · 2 笔待补录",substring=false).assertExists()
+        compose.onNodeWithText("2 笔待补录",substring=false).assertExists()
         compose.onNodeWithText("昨日待补",substring=false).assertDoesNotExist()
         compose.onNodeWithText("今日待补一",substring=false).performClick()
         compose.onNodeWithText("补录实付金额",substring=false).assertExists()
@@ -264,7 +336,7 @@ class LedgerDeviceTest {
         compose.onNodeWithText("人民币实付金额").performTextInput("142.80")
         compose.onNodeWithText("保存金额").performScrollTo().performClick()
         waitFor {it.payments.single {p->p.id==first.id}.cnyAmount=="142.80"}
-        compose.onNodeWithText("1 笔 · 净支出 ¥0.00 · 1 笔待补录",substring=false).assertExists()
+        compose.onNodeWithText("1 笔待补录",substring=false).assertExists()
         compose.onNodeWithText("今日待补一",substring=false).assertDoesNotExist()
         compose.onNodeWithContentDescription("返回概览").performClick()
         click("$period · 1 笔金额待补录")
@@ -272,7 +344,7 @@ class LedgerDeviceTest {
         compose.onNodeWithText("人民币实付金额").performTextInput("143")
         compose.onNodeWithText("保存金额").performScrollTo().performClick()
         waitFor {it.payments.single {p->p.id==second.id}.cnyAmount=="143"}
-        compose.onNodeWithText("0 笔 · 净支出 ¥0.00",substring=false).assertExists()
+        compose.onNodeWithText("0 笔待补录",substring=false).assertExists()
         compose.onNodeWithText("当前时段的人民币金额已全部补录",substring=false).assertExists()
         compose.onNodeWithContentDescription("返回概览").performClick()
         compose.onNodeWithText("金额待补录",substring=true).assertDoesNotExist()

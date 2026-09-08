@@ -1,8 +1,9 @@
 package cn.renewboard
 
 import android.content.Intent
+import android.content.Context
+import android.content.SharedPreferences
 import android.provider.Settings
-import androidx.core.app.NotificationManagerCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -32,6 +33,16 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.time.LocalDate
+
+internal fun reminderNotificationSettingsIntent(context: Context): Intent =
+    if (appNotificationsAllowed(context)) {
+        Intent(Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS)
+            .putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+            .putExtra(Settings.EXTRA_CHANNEL_ID, EXPIRY_CHANNEL_ID)
+    } else {
+        Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+            .putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+    }
 
 private enum class SettingsPage(val title: String) {
     HOME("设置"), REMINDERS("到期提醒"), BACKUP("本地备份"), WEBDAV("坚果云 · WebDAV"),
@@ -79,10 +90,21 @@ private enum class SettingsPage(val title: String) {
     var remote by remember { mutableStateOf<List<CloudBackup>?>(null) }
     var disconnect by remember { mutableStateOf(false) }
     var licenseText by remember { mutableStateOf<String?>(null) }
-    var notificationsEnabled by remember { mutableStateOf(NotificationManagerCompat.from(c).areNotificationsEnabled()) }
+    var notificationsEnabled by remember { mutableStateOf(notificationsAllowed(c)) }
     fun refreshStatus() {
-        notificationsEnabled=NotificationManagerCompat.from(c).areNotificationsEnabled()
+        notificationsEnabled=notificationsAllowed(c)
         status=config.status;success=config.lastSuccess;configured=config.configured
+    }
+    DisposableEffect(c, config) {
+        val prefs = c.getSharedPreferences("webdav", Context.MODE_PRIVATE)
+        val listener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+            if (key == null || key in setOf("status", "success", "user", "secret")) {
+                status = config.status; success = config.lastSuccess; configured = config.configured
+            }
+        }
+        prefs.registerOnSharedPreferenceChangeListener(listener)
+        status = config.status; success = config.lastSuccess; configured = config.configured
+        onDispose { prefs.unregisterOnSharedPreferenceChangeListener(listener) }
     }
     val lifecycleOwner=LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
@@ -160,7 +182,7 @@ private enum class SettingsPage(val title: String) {
                 when (page) {
                     SettingsPage.HOME -> {
                         SettingsGroup("偏好") {
-                            SettingsLink("到期提醒", when { !notificationsEnabled -> "系统通知未开启"; l.settings.reminderDays.isEmpty() -> "已关闭"; else -> "${l.settings.reminderDays.size} 个提醒时间" }, Icons.Outlined.Notifications) { navigate(SettingsPage.REMINDERS) }
+                            SettingsLink("到期提醒", when { !notificationsEnabled -> "到期提醒未开启"; l.settings.reminderDays.isEmpty() -> "已关闭"; else -> "${l.settings.reminderDays.size} 个提醒时间" }, Icons.Outlined.Notifications) { navigate(SettingsPage.REMINDERS) }
                         }
                         SettingsGroup("数据") {
                             SettingsLink("本地备份", "导出与恢复", Icons.Outlined.SaveAlt) { navigate(SettingsPage.BACKUP) }
@@ -195,9 +217,9 @@ private enum class SettingsPage(val title: String) {
                             reminderError?.let { Text(it,color=MaterialTheme.colorScheme.error) }
                             if (savingReminder) LinearProgressIndicator(Modifier.fillMaxWidth())
                             SettingsNote(if(reminderDays.isEmpty()) "到期提醒已关闭。" else "系统省电可能延迟通知。")
-                            Text(if(notificationsEnabled) "系统通知：已开启" else "系统通知：未开启",fontWeight=FontWeight.Medium)
+                            Text(if(notificationsEnabled) "到期提醒通知：已开启" else "到期提醒未开启",fontWeight=FontWeight.Medium)
                             OutlinedButton(onClick = {
-                                c.startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE,c.packageName))
+                                c.startActivity(reminderNotificationSettingsIntent(c))
                             }, modifier = Modifier.fillMaxWidth()) { Text(if(notificationsEnabled) "管理通知设置" else "前往开启通知") }
 
                         }

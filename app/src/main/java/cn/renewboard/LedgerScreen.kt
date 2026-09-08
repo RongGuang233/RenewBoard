@@ -1,6 +1,7 @@
 package cn.renewboard
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -22,6 +23,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.selected
@@ -51,6 +53,7 @@ private data class ReceiptRange(val title:String,val from:LocalDate?,val until:L
     var range by rememberSaveable { mutableStateOf(TrendRange.SIX) }
     var rangeMenuOpen by remember { mutableStateOf(false) }
     var year by rememberSaveable { mutableIntStateOf(today.year) }
+    val trendScroll=rememberSaveable(range,year,saver=ScrollState.Saver) { ScrollState(Int.MAX_VALUE) }
     var expandedRank by rememberSaveable { mutableStateOf(false) }
     var expandedCash by rememberSaveable { mutableStateOf(false) }
     var detail by remember { mutableStateOf<ReceiptRange?>(null) }
@@ -63,21 +66,17 @@ private data class ReceiptRange(val title:String,val from:LocalDate?,val until:L
     val selectedBucket=buckets.find { it.from.toString()==selectedFrom }
     val rankedPayments=selectedBucket?.let { bucket -> rangePayments.filter { within(it,bucket.from,bucket.until) } } ?: rangePayments
     val rankSum=LedgerStats.summary(rankedPayments)
+    val rangePeriod=when(range) {
+        TrendRange.YEAR -> "$year 年"
+        else -> range.label
+    }
     val rankPeriod=selectedBucket?.let { bucket ->
         when {
             range==TrendRange.MONTH -> "${bucket.from.year}年${bucket.from.monthValue}月${bucket.from.dayOfMonth}日"
             '/' in bucket.label -> "${bucket.from.year}年${bucket.from.monthValue}月"
             else -> "${bucket.from.year}年"
         }
-    } ?: when(range) {
-        TrendRange.MONTH -> "近30天"
-        TrendRange.THREE -> "近3个月"
-        TrendRange.SIX -> "近6个月"
-        TrendRange.TWELVE -> "近12个月"
-        TrendRange.YEAR -> "$year 年"
-        TrendRange.FIVE -> "近5年"
-        TrendRange.ALL -> "全部"
-    }
+    } ?: rangePeriod
     val selectedDetail=selectedBucket?.let { ReceiptRange("$rankPeriod 明细",it.from,it.until) }
     val firstMonth=expenses.minOfOrNull { YearMonth.from(LocalDate.parse(it.date)) } ?: YearMonth.from(today)
     val subpageOpen=detail!=null || payment!=null
@@ -120,10 +119,11 @@ private data class ReceiptRange(val title:String,val from:LocalDate?,val until:L
     }
     Surface(color=Color.White,shape=RoundedCornerShape(22.dp),modifier=Modifier.fillMaxWidth().padding(top=8.dp)) {
         Column(Modifier.padding(16.dp)) {
+            Text("$rangePeriod · 合计",fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
             Row(Modifier.fillMaxWidth().heightIn(min=48.dp).clickable {expandedCash=!expandedCash}.semantics {
                 contentDescription=if(expandedCash) "收起支出构成" else "展开支出构成"
             },verticalAlignment=Alignment.CenterVertically) {
-                Text("净支出 ${cash(rangeSum.known)}",fontWeight=FontWeight.SemiBold,modifier=Modifier.weight(1f))
+                Text("${if(rangeSum.missing>0) "已知净支出" else "净支出"} ${cash(rangeSum.known)}",fontWeight=FontWeight.SemiBold,modifier=Modifier.weight(1f))
                 Text("${rangeSum.count} 笔",color=MaterialTheme.colorScheme.onSurfaceVariant,fontSize=13.sp)
                 Icon(if(expandedCash) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore,null,modifier=Modifier.size(20.dp))
             }
@@ -142,9 +142,13 @@ private data class ReceiptRange(val title:String,val from:LocalDate?,val until:L
                 Icon(Icons.Outlined.ChevronRight,null,modifier=Modifier.size(18.dp))
             }
             if(buckets.isEmpty()) Text("记录第一笔付款后，这里会显示趋势。",modifier=Modifier.padding(vertical=30.dp),color=MaterialTheme.colorScheme.onSurfaceVariant)
-            else TrendBars(buckets,selectedBucket?.from) { bucket ->
+            else TrendBars(buckets,selectedBucket?.from,trendScroll) { bucket ->
                 selectedFrom=if(selectedFrom==bucket.from.toString()) null else bucket.from.toString()
                 expandedRank=false
+            }
+            selectedBucket?.let { bucket ->
+                Text("${bucket.label} · ${if(bucket.summary.missing>0) "已知净支出" else "净支出"} ${cash(bucket.summary.known)} · ${bucket.summary.count} 笔",
+                    fontSize=13.sp,color=MaterialTheme.colorScheme.primary,maxLines=1,overflow=TextOverflow.Ellipsis,modifier=Modifier.padding(top=10.dp).testTag("selected-trend-summary"))
             }
             if(buckets.any { it.summary.known.signum()<0 }) Text("零线上方为净支出，下方为净退款",fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
         }
@@ -212,13 +216,13 @@ private data class ReceiptRange(val title:String,val from:LocalDate?,val until:L
         Text(subtitle,fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
-@Composable private fun TrendBars(buckets:List<CashBucket>,selectedFrom:LocalDate?,open:(CashBucket)->Unit) {
+@Composable private fun TrendBars(buckets:List<CashBucket>,selectedFrom:LocalDate?,scroll:ScrollState,open:(CashBucket)->Unit) {
     val maximum=buckets.maxOf { it.summary.known.abs() }.max(BigDecimal.ONE)
     val hasNegative=buckets.any { it.summary.known.signum()<0 }
     val monthLabels=buckets.all { it.from.dayOfMonth==1 } && buckets.any { '/' in it.label }
     BoxWithConstraints(Modifier.fillMaxWidth()) {
-        val cellWidth=(maxWidth/buckets.size.coerceAtMost(12)).coerceAtLeast(30.dp)
-        Row(Modifier.horizontalScroll(rememberScrollState()).padding(top=16.dp)) {
+        val cellWidth=(maxWidth/buckets.size.coerceAtMost(12)).coerceAtLeast(48.dp)
+        Row(Modifier.testTag("ledger-trend-bars").horizontalScroll(scroll).padding(top=16.dp)) {
             buckets.forEach { bucket ->
                 val fraction=bucket.summary.known.abs().divide(maximum,6,RoundingMode.HALF_UP).toFloat()
                 val negative=bucket.summary.known.signum()<0
@@ -254,7 +258,10 @@ private data class ReceiptRange(val title:String,val from:LocalDate?,val until:L
             if(Prepaid.isTopUp(p)) Text("充值 · 不计支出",fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.padding(top=4.dp))
         }
         val known=if(p.currency=="CNY") p.amount else p.cnyAmount
-        if(known==null) TextButton(open) {Text("补录人民币",fontSize=13.sp)}
+        if(known==null) Column(horizontalAlignment=Alignment.End) {
+            Text("${p.currency} ${p.amount}",fontSize=15.sp,fontWeight=FontWeight.SemiBold)
+            TextButton(open,contentPadding=PaddingValues(horizontal=0.dp)) {Text("补录人民币",fontSize=13.sp)}
+        }
         else Column(horizontalAlignment=Alignment.End) {
             Text(cash(p.signedCny()!!),fontSize=17.sp,fontWeight=FontWeight.SemiBold)
             if(p.currency!="CNY") Text("${p.currency} ${p.amount}",fontSize=11.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
@@ -307,7 +314,7 @@ private data class ReceiptRange(val title:String,val from:LocalDate?,val until:L
             Column(Modifier.fillMaxSize().padding(padding).padding(horizontal=20.dp)) {
                 if(target.refundOf==null) {
                     if(target.planId==null) OutlinedTextField(query,{query=it;selected=emptySet()},label={Text("搜索应用")},leadingIcon={Icon(Icons.Outlined.Search,null)},singleLine=true,modifier=Modifier.fillMaxWidth())
-                    Box {
+                    if(!target.missingOnly) Box {
                         val options=if(target.planId!=null) {
                             if(l.plans.find {it.id==target.planId}?.balanceAccount!=null) listOf("全部","话费扣费","话费充值","退款")
                             else listOf("全部","付款","退款")
@@ -326,7 +333,8 @@ private data class ReceiptRange(val title:String,val from:LocalDate?,val until:L
                     }
                 }
                 Column(Modifier.padding(vertical=12.dp),verticalArrangement=Arrangement.spacedBy(4.dp)) {
-                    Text("${visible.size} 笔 · ${if(target.refundOf!=null) "退款 ${cash(sum.known.abs())}" else "净支出 ${cash(sum.known)}"}"+if(sum.missing>0) " · ${sum.missing} 笔待补录" else "",color=MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(if(target.missingOnly) "${visible.size} 笔待补录" else
+                        "${visible.size} 笔 · ${if(target.refundOf!=null) "退款 ${cash(sum.known.abs())}" else "${if(sum.missing>0) "已知净支出" else "净支出"} ${cash(sum.known)}"}"+if(sum.missing>0) " · ${sum.missing} 笔待补录" else "",color=MaterialTheme.colorScheme.onSurfaceVariant)
                     if(topups.count>0) Text("充值 ${cash(topups.known)} · 不计支出"+if(topups.missing>0) " · ${topups.missing} 笔待补录" else "",fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 LazyColumn(Modifier.fillMaxSize(),state=listState) {

@@ -23,7 +23,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-@Composable fun UpdateSection() {
+@Composable fun UpdateSection(checkForUpdate: () -> AppUpdate = { Updates.check(BuildConfig.VERSION_NAME) }) {
     val context = LocalContext.current
     val downloads = remember { UpdateDownload(context.applicationContext) }
     val scope = rememberCoroutineScope()
@@ -61,17 +61,19 @@ import kotlinx.coroutines.withContext
             }
         }
     }
-    Text("当前版本 ${BuildConfig.VERSION_NAME}")
-    OutlinedButton(onClick = {
+    fun checkUpdate() {
+        if(checking) return
+        checking = true; error = null
         scope.launch {
-            checking = true; error = null
-            try { update = withContext(Dispatchers.IO) { Updates.check(BuildConfig.VERSION_NAME) } }
+            try { update = withContext(Dispatchers.IO) { checkForUpdate() } }
             catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
                 error = "无法检查更新，请检查网络后重试。"
             } finally { checking = false }
         }
-    }, enabled = !checking && state == null) {
+    }
+    Text("当前版本 ${BuildConfig.VERSION_NAME}")
+    OutlinedButton(onClick = ::checkUpdate, enabled = !checking && state == null) {
         if (checking) { CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp); Spacer(Modifier.width(8.dp)) }
         Text(if (checking) "正在检查…" else "检查更新")
     }
@@ -90,7 +92,10 @@ import kotlinx.coroutines.withContext
                 else LinearProgressIndicator(Modifier.fillMaxWidth())
             }
         }
-        TextButton(onClick = { downloads.cancel(); state = null; installWhenReady = false; error = null }) {
+        TextButton(onClick = {
+            downloads.cancel(); state = null; installWhenReady = false; error = null
+            if(download.failed) checkUpdate()
+        }) {
             Text(if (download.failed) "重新检查更新" else if (download.ready) "删除安装包" else "取消下载")
         }
     }
