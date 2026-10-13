@@ -17,13 +17,23 @@ import java.time.LocalDate
 class LedgerDeviceTest {
     @get:Rule val compose=createAndroidComposeRule<MainActivity>()
     private lateinit var app:RenewApp
+    private val seededPaymentIds=mutableSetOf<String>()
     @Before fun setup() {
         app=ApplicationProvider.getApplicationContext();check(app.packageName.endsWith(".debug"))
         WorkManager.getInstance(app).cancelAllWork().result.get()
         runBlocking {app.repository.update {Ledger()}};compose.waitForIdle()
     }
-    @After fun cleanup() {runBlocking {app.repository.update {Ledger()}};compose.waitForIdle()}
-    private fun seed(l:Ledger) {runBlocking {app.repository.update {l}};compose.waitForIdle()}
+    @After fun cleanup() {
+        seededPaymentIds.forEach(::clearReceiptDraft)
+        runBlocking {app.repository.update {Ledger()}};compose.waitForIdle()
+    }
+    private fun clearReceiptDraft(id:String) {
+        listOf("settlement","correction").forEach {DraftStore(app).remove("receipt:$it:$id")}
+    }
+    private fun seed(l:Ledger) {
+        l.payments.forEach {clearReceiptDraft(it.id);seededPaymentIds.add(it.id)}
+        runBlocking {app.repository.update {l}};compose.waitForIdle()
+    }
     private fun click(text:String) {compose.onNodeWithText(text).performScrollTo().performClick()}
     private fun selectRange(range:TrendRange) {
         compose.onNodeWithContentDescription("选择趋势范围").performScrollTo().performClick()
@@ -212,14 +222,14 @@ class LedgerDeviceTest {
         compose.onNodeWithContentDescription("选择付款类型").assertDoesNotExist()
         compose.onNodeWithText("外币付款",substring=false).performClick()
         compose.onNodeWithText("人民币实付金额").performTextInput("140")
-        compose.onNodeWithText("保存金额").performScrollTo().performClick()
+        compose.onNodeWithText("保存金额").assertIsDisplayed().performClick()
         waitFor {it.payments.single {p->p.id==payment.id}.cnyAmount=="140"}
         compose.onNodeWithText("1 笔待补录",substring=false).assertExists()
         compose.onNodeWithText("USD 20",substring=false).assertDoesNotExist()
         compose.onNodeWithText("EUR 5",substring=false).assertExists()
         compose.onNodeWithText("补录人民币",substring=false).performClick()
         compose.onNodeWithText("人民币实付金额").performTextInput("35")
-        compose.onNodeWithText("保存金额").performScrollTo().performClick()
+        compose.onNodeWithText("保存金额").assertIsDisplayed().performClick()
         waitFor {it.payments.single {p->p.id==second.id}.cnyAmount=="35"}
         compose.onNodeWithText("0 笔待补录",substring=false).assertExists()
         compose.onNodeWithText("当前时段的人民币金额已全部补录").assertExists()
@@ -234,7 +244,7 @@ class LedgerDeviceTest {
         compose.onNodeWithText("补录人民币").performClick()
         compose.onAllNodes(isDialog()).assertCountEquals(0)
         compose.onNodeWithText("人民币实付金额").performTextInput("142.80")
-        compose.onNodeWithText("保存金额").performScrollTo().performClick()
+        compose.onNodeWithText("保存金额").assertIsDisplayed().performClick()
         waitFor {it.payments.single().cnyAmount=="142.80"}
         compose.onNodeWithText("全部付款").assertExists()
         compose.onNodeWithText("¥142.80",substring=false).assertExists()
@@ -334,7 +344,7 @@ class LedgerDeviceTest {
         compose.onNodeWithText("补录实付金额",substring=false).assertExists()
         compose.onAllNodes(isDialog()).assertCountEquals(0)
         compose.onNodeWithText("人民币实付金额").performTextInput("142.80")
-        compose.onNodeWithText("保存金额").performScrollTo().performClick()
+        compose.onNodeWithText("保存金额").assertIsDisplayed().performClick()
         waitFor {it.payments.single {p->p.id==first.id}.cnyAmount=="142.80"}
         compose.onNodeWithText("1 笔待补录",substring=false).assertExists()
         compose.onNodeWithText("今日待补一",substring=false).assertDoesNotExist()
@@ -342,7 +352,7 @@ class LedgerDeviceTest {
         click("$period · 1 笔金额待补录")
         compose.onNodeWithText("补录人民币",substring=false).performClick()
         compose.onNodeWithText("人民币实付金额").performTextInput("143")
-        compose.onNodeWithText("保存金额").performScrollTo().performClick()
+        compose.onNodeWithText("保存金额").assertIsDisplayed().performClick()
         waitFor {it.payments.single {p->p.id==second.id}.cnyAmount=="143"}
         compose.onNodeWithText("0 笔待补录",substring=false).assertExists()
         compose.onNodeWithText("当前时段的人民币金额已全部补录",substring=false).assertExists()
@@ -367,8 +377,9 @@ class LedgerDeviceTest {
         compose.onNodeWithText("更正付款").performClick()
         compose.onAllNodes(isDialog()).assertCountEquals(0)
         compose.onNodeWithText("人民币实付金额").performTextReplacement("142.80")
+        compose.onNodeWithText("添加备注",substring=false).performScrollTo().performClick()
         compose.onNodeWithText("付款备注").performTextReplacement("更正手误")
-        compose.onNodeWithText("保存更正").performScrollTo().performClick()
+        compose.onNodeWithText("保存更正").assertIsDisplayed().performClick()
         waitFor {it.payments.single().cnyAmount=="142.80"}
         assertEquals(listOf(plan),read().plans);assertEquals(listOf(benefit),read().benefits)
         compose.onNodeWithText("付款详情").assertExists()

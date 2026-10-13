@@ -60,13 +60,14 @@ class MainActivity: ComponentActivity() {
     }
 }
 @Composable private fun Section(text: String) { Text(text,fontSize=19.sp,fontWeight=FontWeight.SemiBold,modifier=Modifier.padding(top=20.dp,bottom=8.dp)) }
-@Composable internal fun Field(label: String, value: String, change: (String)->Unit, modifier: Modifier = Modifier, secret: Boolean=false, dateField: Boolean=false, keyboardType: KeyboardType=KeyboardType.Text) {
+@Composable internal fun Field(label: String, value: String, change: (String)->Unit, modifier: Modifier = Modifier, secret: Boolean=false, dateField: Boolean=false, keyboardType: KeyboardType=KeyboardType.Text, supportingText:String?=null) {
     if(secret) OutlinedTextField(value,change,label={Text(label)},modifier=modifier.fillMaxWidth(),singleLine=true,visualTransformation=PasswordVisualTransformation())
     else {
         var choosingDate by remember { mutableStateOf(false) }
         val focus = androidx.compose.ui.platform.LocalFocusManager.current
         val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
         OutlinedTextField(value,change,label={Text(label)},modifier=modifier.fillMaxWidth(),singleLine=true,
+            supportingText=if(supportingText!=null) {{Text(supportingText)}} else null,
             keyboardOptions=KeyboardOptions(keyboardType=keyboardType),
             trailingIcon=if(dateField) {{ IconButton(onClick={
                 focus.clearFocus(); keyboard?.hide(); choosingDate=true
@@ -76,7 +77,7 @@ class MainActivity: ComponentActivity() {
         }
     }
 }
-@Composable internal fun MoneyField(label:String,value:String,change:(String)->Unit,modifier:Modifier=Modifier) = Field(label,value,change,modifier,keyboardType=KeyboardType.Decimal)
+@Composable internal fun MoneyField(label:String,value:String,change:(String)->Unit,modifier:Modifier=Modifier,supportingText:String?=null) = Field(label,value,change,modifier,keyboardType=KeyboardType.Decimal,supportingText=supportingText)
 @Composable internal fun PageBack(description:String="返回",back:()->Unit) {
     FilledTonalButton(onClick=back,contentPadding=PaddingValues(horizontal=12.dp),modifier=Modifier.heightIn(min=48.dp).semantics {contentDescription=description}) {
         Icon(Icons.Outlined.ArrowBack,null,Modifier.size(20.dp)); Spacer(Modifier.width(4.dp)); Text("返回")
@@ -217,7 +218,7 @@ private fun money(totals: Map<String,BigDecimal>) = if(totals.isEmpty()) "暂无
                     BalanceDetail(ledger,p,{editId=p.id},::change,deleted,{receiptId=it},{accountHistoryId=p.id},openAction={balanceAction=it})
                 } else Box(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding)) {
                     SubscriptionDetailScreen(ledger,p,onEdit={editId=p.id},change=::change,onDeleted=deleted,
-                        openPayment={receiptId=it},openHistory={accountHistoryId=p.id},recordPayment={only->paymentOnlyRecord=only;paymentPlanId=p.id})
+                        openPayment={receiptId=it},openHistory={accountHistoryId=p.id},recordPayment={only->paymentOnlyRecord=only;paymentPlanId=p.id},save={repo.update(it)})
                 }
             }
         } else pageStates.SaveableStateProvider(if(tab==0) "home" else "subscriptions") {

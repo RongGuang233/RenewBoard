@@ -395,23 +395,30 @@ private data class ReceiptRange(val title:String,val from:LocalDate?,val until:L
     var refunding by rememberSaveable(p.id) { mutableStateOf(false) }
     var more by remember { mutableStateOf(false) }
     var editing by rememberSaveable(p.id) { mutableStateOf(false) }
-    var cny by rememberSaveable(p.id) { mutableStateOf("") }
-    var error by remember { mutableStateOf<String?>(null) }
     val missing=p.currency!="CNY" && p.cnyAmount==null
+    var settling by rememberSaveable(p.id) {mutableStateOf(missing)}
+    var continueRefund by rememberSaveable(p.id) {mutableStateOf(false)}
     BackHandler {if(refunding) refunding=false else if(editing) editing=false else close()}
     if(refunding) {RefundEditor(l,p,{refunding=false},save={context.repository().update(it)});return}
-    if(editing) {PaymentEditor(l,p,{editing=false},change);return}
-    Scaffold(containerColor=MaterialTheme.colorScheme.background,topBar={
-        TopAppBar(windowInsets=WindowInsets(0,0,0,0),title={Text(if(missing) "补录实付金额" else if(p.refundOf!=null) "退款详情" else "付款详情",fontWeight=FontWeight.SemiBold)},navigationIcon={ReceiptBack(backDescription,close)},actions={
+    if(editing) {ReceiptEditor(l,p,{editing=false},{editing=false;settling=false},save={context.repository().update(it)});return}
+    val receiptActions:@Composable RowScope.()->Unit={
             Box {
                 IconButton({more=true}) {Icon(Icons.Outlined.MoreVert,"付款更多操作")}
                 DropdownMenu(more,{more=false}) {
-                    if(p.refundOf==null && !Prepaid.isTopUp(p)) DropdownMenuItem(text={Text("记录退款")},onClick={more=false;refunding=true})
+                    if(p.refundOf==null && !Prepaid.isTopUp(p)) DropdownMenuItem(text={Text("记录退款")},onClick={more=false;if(missing) {continueRefund=true;settling=true} else refunding=true})
                     DropdownMenuItem(text={Text(if(p.refundOf==null) "更正付款" else "更正退款")},onClick={more=false;editing=true})
                     DropdownMenuItem(text={Text(if(p.refundOf==null) "删除这笔付款" else "删除这笔退款")},onClick={more=false;deleting=true})
                 }
             }
-        })
+    }
+    if(settling) {
+        ReceiptEditor(l,p,close,saved={settling=false;if(continueRefund) refunding=true else close()},save={context.repository().update(it)},
+            settlementOnly=true,continueRefund=continueRefund,backDescription=backDescription,actions=receiptActions)
+        if(deleting) DeletePaymentsDialog(l,setOf(p.id),{deleting=false}) {change {Book.deletePayments(it,setOf(p.id))};deleting=false;close()}
+        return
+    }
+    Scaffold(containerColor=MaterialTheme.colorScheme.background,topBar={
+        TopAppBar(windowInsets=WindowInsets(0,0,0,0),title={Text(if(p.refundOf!=null) "退款详情" else "付款详情",fontWeight=FontWeight.SemiBold)},navigationIcon={ReceiptBack(backDescription,close)},actions=receiptActions)
     }) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(24.dp),verticalArrangement=Arrangement.spacedBy(20.dp)) {
             Surface(color=Color.White,shape=RoundedCornerShape(22.dp),modifier=Modifier.fillMaxWidth()) {
@@ -440,18 +447,7 @@ private data class ReceiptRange(val title:String,val from:LocalDate?,val until:L
                 }
             }
             if(l.plans.none { it.id==p.planId }) Text("关联订阅已删除",fontSize=13.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
-            if(missing) {
-                MoneyField("人民币实付金额",cny,{cny=it})
-                Text("按付款当天账单填写，保存后固定。",fontSize=13.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
-                error?.let { Text(it,color=MaterialTheme.colorScheme.error) }
-                Button({
-                    try {
-                        val settled=cny.trim()
-                        Book.editPayment(l,p.id,p.amount,LocalDate.parse(p.date),p.note,settled)
-                        change {Book.editPayment(it,p.id,p.amount,LocalDate.parse(p.date),p.note,settled)};close()
-                    } catch(e:Exception) {error="请输入有效的人民币金额"}
-                },modifier=Modifier.fillMaxWidth()) {Text("保存金额")}
-            }
+
         }
     }
     if(deleting) DeletePaymentsDialog(l,setOf(p.id),{deleting=false}) {change {Book.deletePayments(it,setOf(p.id))};deleting=false;close()}
@@ -466,41 +462,6 @@ private data class ReceiptRange(val title:String,val from:LocalDate?,val until:L
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable private fun PaymentEditor(l:Ledger,p:Payment,close:()->Unit,change:((Ledger)->Ledger)->Unit) {
-    var amount by rememberSaveable(p.id) {mutableStateOf(p.amount)}
-    var date by rememberSaveable(p.id) {mutableStateOf(p.date)}
-    var note by rememberSaveable(p.id) {mutableStateOf(p.note)}
-    var cny by rememberSaveable(p.id) {mutableStateOf(p.cnyAmount.orEmpty())}
-    var error by remember {mutableStateOf<String?>(null)}
-    val fixedType=Prepaid.isTopUp(p) || p.note in setOf("话费扣费","话费额外扣费")
-    BackHandler(onBack=close)
-    Scaffold(containerColor=MaterialTheme.colorScheme.background,topBar={
-        TopAppBar(windowInsets=WindowInsets(0,0,0,0),title={Text(if(p.refundOf==null) "更正付款" else "更正退款",fontWeight=FontWeight.SemiBold)},navigationIcon={ReceiptBack("返回付款详情",close)})
-    }) { padding ->
-        Column(Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(24.dp),verticalArrangement=Arrangement.spacedBy(16.dp)) {
-            Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(12.dp)) {
-                ServiceIcon(p.planName,size=40.dp);Text(p.planName,fontSize=20.sp,fontWeight=FontWeight.SemiBold)
-            }
-            Text("只更正账目，不改变权益到期日和话费余额。",fontSize=13.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
-            MoneyField("${if(p.refundOf==null) "付款" else "退款"}金额 ${p.currency}",amount,{amount=it})
-            Field(if(p.refundOf==null) "付款日期" else "退款日期",date,{date=it},dateField=true)
-            if(p.currency!="CNY") {
-                MoneyField(if(p.refundOf==null) "人民币实付金额" else "人民币实退金额",cny,{cny=it})
-                Text("填写当日实际结算金额，保存后固定。",fontSize=13.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            if(fixedType) Text("记录类型：${p.note}",color=MaterialTheme.colorScheme.onSurfaceVariant)
-            else Field("付款备注",note,{note=it})
-            error?.let {Text(it,color=MaterialTheme.colorScheme.error)}
-            Button({try {
-                val day=LocalDate.parse(date)
-                val settlement=cny.takeIf {p.currency!="CNY"}
-                Book.editPayment(l,p.id,amount,day,note,settlement)
-                change {Book.editPayment(it,p.id,amount,day,note,settlement)};close()
-            } catch(e:Exception) {error=e.message ?: "请检查金额和日期"}},modifier=Modifier.fillMaxWidth()) {Text("保存更正")}
-        }
-    }
-}
 @Composable internal fun DeletePlanDialog(l:Ledger,p:Plan,close:()->Unit,confirm:(Boolean)->Unit) {
     var includePayments by remember { mutableStateOf(false) }
     val receipts=l.payments.filter { it.planId==p.id }

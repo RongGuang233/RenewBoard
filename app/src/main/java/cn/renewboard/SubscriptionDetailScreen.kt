@@ -3,12 +3,14 @@ package cn.renewboard
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -17,17 +19,19 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import java.time.LocalDate
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.launch
 
 /** The parent supplies navigation; payment stays reachable while reading long bundles. */
 @Composable internal fun SubscriptionDetailScreen(
     l:Ledger,p:Plan,onEdit:()->Unit,change:((Ledger)->Ledger)->Unit,onDeleted:()->Unit,
-    openPayment:(String)->Unit,openHistory:()->Unit,recordPayment:(Boolean)->Unit
+    openPayment:(String)->Unit,openHistory:()->Unit,recordPayment:(Boolean)->Unit,
+    save:suspend ((Ledger)->Ledger)->Unit
 ) {
     var deleting by remember(p.id) { mutableStateOf(false) }
     var more by remember(p.id) { mutableStateOf(false) }
     var benefitMenu by remember(p.id) { mutableStateOf<String?>(null) }
     var giftId by remember(p.id) { mutableStateOf<String?>(null) }
-    var gift by remember(p.id) { mutableStateOf("7") }
     var snoozed by remember(p.id) { mutableStateOf(false) }
     val context=LocalContext.current
     val benefits=l.benefits.filter {it.planId==p.id}
@@ -79,7 +83,7 @@ import java.time.LocalDate
                             Box {
                                 IconButton(onClick={benefitMenu=b.id}) {Icon(Icons.Outlined.MoreVert,"${b.name}权益更多操作")}
                                 DropdownMenu(benefitMenu==b.id,{benefitMenu=null}) {
-                                    DropdownMenuItem(text={Text("增加赠送时长")},onClick={benefitMenu=null;giftId=b.id;gift="7"})
+                                    DropdownMenuItem(text={Text("增加赠送时长")},onClick={benefitMenu=null;giftId=b.id})
                                 }
                             }
                         }
@@ -112,8 +116,62 @@ import java.time.LocalDate
         }
     }
     if(deleting) DeletePlanDialog(l,p,{deleting=false}) {include->change {Book.delete(it,p.id,include)};deleting=false;onDeleted()}
-    if(giftId!=null) AlertDialog(onDismissRequest={giftId=null},title={Text("赠送时长")},text={Field("增加天数",gift,{gift=it},keyboardType=KeyboardType.Number)},confirmButton={TextButton(onClick={
-        val n=gift.toIntOrNull()
-        if(n!=null && n in 1..36500) {val id=giftId;change {ledger->ledger.copy(benefits=ledger.benefits.map {if(it.id==id) it.copy(giftDays=it.giftDays+n) else it})};giftId=null}
-    }) {Text("增加")}},dismissButton={TextButton(onClick={giftId=null}) {Text("取消")}})
+    benefits.find {it.id==giftId}?.let {benefit->
+        GiftDurationDialog(p,benefit,close={giftId=null},save=save)
+    }
+}
+
+@Composable internal fun GiftDurationDialog(
+    plan:Plan,benefit:Benefit,close:()->Unit,save:suspend ((Ledger)->Ledger)->Unit
+) {
+    var days by rememberSaveable(benefit.id) {mutableStateOf("7")}
+    var error by remember(benefit.id) {mutableStateOf<String?>(null)}
+    var saving by remember(benefit.id) {mutableStateOf(false)}
+    val scope=rememberCoroutineScope()
+    fun extended(current:Benefit,currentPlan:Plan,number:Int):Benefit {
+        require(number in 1..36500) {"请输入 1 至 36500 的整数天数"}
+        require(current.giftDays+number<=36500) {"累计赠送时长不能超过 36500 天"}
+        return current.copy(giftDays=current.giftDays+number).also {
+            require(Book.expiry(it,currentPlan).year<=2200) {"到期日期不能晚于 2200 年"}
+        }
+    }
+    val preview=runCatching {extended(benefit,plan,days.toIntOrNull() ?: 0)}.getOrNull()
+    fun commit() {
+        if(saving) return
+        val number=days.toIntOrNull()
+        try {
+            require(number!=null) {"请输入 1 至 36500 的整数天数"}
+            extended(benefit,plan,number)
+            saving=true;error=null
+            scope.launch {
+                try {
+                    save {ledger->
+                        val current=ledger.benefits.find {it.id==benefit.id && it.planId==plan.id}
+                            ?: throw IllegalArgumentException("该权益已不存在，请返回重新查看")
+                        val currentPlan=ledger.plans.find {it.id==plan.id}
+                            ?: throw IllegalArgumentException("该订阅已不存在，请返回重新查看")
+                        val next=extended(current,currentPlan,number)
+                        ledger.copy(benefits=ledger.benefits.map {if(it.id==next.id) next else it})
+                    }
+                    close()
+                } catch(e:CancellationException) {throw e}
+                catch(e:Exception) {
+                    error=if(e is IllegalArgumentException) e.message else "保存失败，请重试"
+                    saving=false
+                }
+            }
+        } catch(e:IllegalArgumentException) {error=e.message}
+    }
+    AlertDialog(onDismissRequest={if(!saving) close()},title={Text("赠送时长")},text={
+        Column(verticalArrangement=Arrangement.spacedBy(8.dp)) {
+            Text(benefit.name,fontWeight=FontWeight.SemiBold)
+            OutlinedTextField(days,{days=it;error=null},label={Text("增加天数")},singleLine=true,
+                enabled=!saving,isError=error!=null,modifier=Modifier.fillMaxWidth(),
+                keyboardOptions=KeyboardOptions(keyboardType=KeyboardType.Number),
+                supportingText=if(error!=null) {{Text(error.orEmpty())}} else null)
+            if(preview!=null) Text("到期日：${Book.expiry(benefit,plan)} → ${Book.expiry(preview,plan)}",
+                style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    },confirmButton={TextButton(onClick=::commit,enabled=!saving) {Text(if(saving) "正在保存…" else "增加")}},
+        dismissButton={TextButton(onClick=close,enabled=!saving) {Text("取消")}})
 }

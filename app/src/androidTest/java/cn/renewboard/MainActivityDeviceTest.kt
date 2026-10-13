@@ -133,7 +133,9 @@ class MainActivityDeviceTest {
         assertTrue(deleted.benefits.isEmpty())
         assertEquals(created.payments, deleted.payments)
         compose.onNodeWithText("账本", substring = false).performClick()
+        compose.onNodeWithText("全部明细",substring=false).performScrollTo().performClick()
         compose.onAllNodesWithText("设备录入套餐").onFirst().performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("2026-09-01",substring=false).assertExists()
     }
 
     @Test fun monthEndSubscriptionKeepsOriginalAnchorThroughEarlyRenewalAndGift() {
@@ -380,7 +382,7 @@ class MainActivityDeviceTest {
         compose.onNodeWithText("账本",substring=false).performClick()
         click("补录人民币")
         compose.onNode(hasText("人民币实付金额") and hasSetTextAction()).performTextReplacement("108.50")
-        compose.onNodeWithText("保存金额").performScrollTo().performClick()
+        compose.onNodeWithText("保存金额").assertIsDisplayed().performClick()
         val completed=awaitLedger { it.payments.singleOrNull()?.cnyAmount=="108.50" }
         val restored=Book.decode(Book.encode(completed))
         runBlocking { app.repository.restore(restored) }

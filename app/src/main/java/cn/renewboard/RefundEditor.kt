@@ -74,7 +74,7 @@ import java.time.LocalDate
         Surface(shadowElevation=4.dp) {
             Column(Modifier.fillMaxWidth().navigationBarsPadding().imePadding().padding(16.dp)) {
                 error?.let {Text(it,color=MaterialTheme.colorScheme.error,modifier=Modifier.padding(bottom=8.dp))}
-                Button(onClick=::commit,enabled=!saving && remaining.amount.signum()>0,modifier=Modifier.fillMaxWidth().heightIn(min=48.dp)) {
+                Button(onClick=::commit,enabled=!saving && remaining.amount.signum()>0 && (original.currency=="CNY" || original.cnyAmount!=null),modifier=Modifier.fillMaxWidth().heightIn(min=48.dp)) {
                     Text(if(saving) "正在保存…" else "保存退款")
                 }
             }
@@ -92,8 +92,7 @@ import java.time.LocalDate
             MoneyField("退款金额 ${if(original.currency=="CNY") "¥" else original.currency}",draft.amount,{update(draft.copy(amount=it))})
             Field("退款日期",draft.date,{update(draft.copy(date=it))},dateField=true)
             if(original.currency!="CNY") {
-                MoneyField("人民币实退金额",draft.cnyAmount,{update(draft.copy(cnyAmount=it))})
-                Text("按退款到账账单填写实际人民币金额。",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                MoneyField("人民币实退金额",draft.cnyAmount,{update(draft.copy(cnyAmount=it))},supportingText="按到账账单填写，保存后固定")
                 if(original.cnyAmount==null) Text("请先返回详情补录原付款的人民币实付金额。",color=MaterialTheme.colorScheme.error)
             }
             TextButton({showNote=!showNote},enabled=!saving) {Text(if(showNote) "收起备注" else "添加备注")}
