@@ -12,7 +12,7 @@ data class ReminderEvent(val key: String, val planId: String, val name: String, 
 object ReminderPolicy {
     const val CATCH_UP_DAYS = 7L
 
-    fun events(l: Ledger): List<ReminderEvent> = l.plans.filterNot { it.archived }.flatMap { p ->
+    fun events(l: Ledger): List<ReminderEvent> = l.plans.filterNot { it.archived || it.usageBalance!=null }.flatMap { p ->
         if (p.balanceAccount != null) listOfNotNull(Prepaid.rechargeDate(p)?.let {
             ReminderEvent("balance:${p.id}:$it", p.id, p.name, p.name, it, balance = true)
         }) else l.benefits.filter { it.planId == p.id }.map { b ->

@@ -1,6 +1,8 @@
 package cn.renewboard
 
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.EncodeDefault
+import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -15,11 +17,13 @@ import java.util.UUID
 
 fun newId() = UUID.randomUUID().toString()
 @Serializable enum class Cycle(val label: String) { WEEK("周"), MONTH("月"), YEAR("年") }
+@OptIn(ExperimentalSerializationApi::class)
 @Serializable data class Plan(
     val id: String = newId(), val name: String, val amount: String, val currency: String = "CNY",
     val cycle: Cycle = Cycle.MONTH, val interval: Int = 1, val autoRenew: Boolean = true,
     val billingAnchor: String, val paidCycles: Int = 1, val archived: Boolean = false, val note: String = "",
-    val balanceAccount: BalanceAccount? = null
+    val balanceAccount: BalanceAccount? = null,
+    @EncodeDefault(EncodeDefault.Mode.NEVER) val usageBalance: UsageBalance? = null
 )
 @Serializable data class Benefit(
     val id: String = newId(), val planId: String, val name: String,
@@ -66,7 +70,7 @@ object Book {
     fun forecastCharges(l: Ledger, from: LocalDate, until: LocalDate): List<ForecastCharge> {
         if(until<=from) return emptyList()
         val charges=mutableListOf<ForecastCharge>()
-        l.plans.filter { it.autoRenew && !it.archived }.forEach { plan ->
+        l.plans.filter { it.autoRenew && !it.archived && it.usageBalance==null }.forEach { plan ->
             val settlement=latestCnySettlement(l,plan,from)
             var originalTotal=BigDecimal.ZERO
             var settledTotal=BigDecimal.ZERO
@@ -129,11 +133,11 @@ object Book {
         if (totals.keys.any { it != "CNY" && !rates.containsKey(it) }) return null
         return totals.entries.fold(BigDecimal.ZERO) { a, (c, v) -> a + v * if (c == "CNY") BigDecimal.ONE else BigDecimal(rates.getValue(c)) }
     }
-    private val paymentTypes=setOf("话费充值","话费扣费","话费额外扣费")
+    private val paymentTypes=setOf("话费充值","话费扣费","话费额外扣费","平台充值")
     /** A reminder only: separate real payments may share a date and amount. */
     fun suspectedDuplicates(l: Ledger, planId: String, amount: String, date: LocalDate): List<Payment> {
         val plan=l.plans.find {it.id==planId} ?: return emptyList()
-        if(plan.balanceAccount!=null) return emptyList()
+        if(plan.balanceAccount!=null || plan.usageBalance!=null) return emptyList()
         val value=amount.trim().toBigDecimalOrNull() ?: return emptyList()
         return l.payments.filter { payment ->
             payment.refundOf==null && payment.planId==planId && payment.currency==plan.currency && payment.date==date.toString() &&
@@ -142,7 +146,7 @@ object Book {
     }
     private fun receipt(p: Plan, amount: String, date: LocalDate, note: String, cnyAmount: String?, selected: Set<String> = emptySet()): Payment {
         require(p.currency=="CNY" || !cnyAmount.isNullOrBlank()) { "请填写付款当天的实际人民币金额" }
-        require(note.trim() !in paymentTypes) { "话费类型请通过话费账户记录" }
+        require(note.trim() !in paymentTypes) { "账户记录类型请通过对应账户记录" }
         return Payment(planId=p.id,planName=p.name,amount=amount.trim(),currency=p.currency,date=date.toString(),note=note.trim(),
             benefitIds=selected.toList(),cnyAmount=if(p.currency=="CNY") null else cnyAmount?.trim())
     }
@@ -150,6 +154,7 @@ object Book {
     fun recordPayment(l: Ledger, planId: String, amount: String, date: LocalDate, note: String = "", cnyAmount: String? = null): Ledger {
         val p=l.plans.single { it.id==planId }
         require(p.balanceAccount==null) { "话费账户请使用充值或余额校准" }
+        require(p.usageBalance==null) { "平台余额请使用充值或余额校准" }
         return l.copy(payments=l.payments+receipt(p,amount,date,note,cnyAmount)).also(::validate)
     }
     /** Correct the receipt only: the recorded benefit term and account balance remain unchanged. */
@@ -157,8 +162,8 @@ object Book {
         val p=l.payments.single { it.id==paymentId }
         require(p.currency=="CNY" || !cnyAmount.isNullOrBlank()) { "请填写付款当天的实际人民币金额" }
         val revisedNote=note.trim()
-        if(p.note in paymentTypes) require(revisedNote==p.note) { "话费记录的类型不能更改" }
-        else require(revisedNote !in paymentTypes) { "不能将普通付款改为话费类型" }
+        if(p.note in paymentTypes) require(revisedNote==p.note) { "账户记录的类型不能更改" }
+        else require(revisedNote !in paymentTypes) { "不能将普通付款改为账户记录类型" }
         val revised=p.copy(amount=amount.trim(),date=date.toString(),note=revisedNote,cnyAmount=if(p.currency=="CNY") null else cnyAmount?.trim())
         return l.copy(payments=l.payments.map { if(it.id==paymentId) revised else it }).also(::validate)
     }
@@ -166,7 +171,7 @@ object Book {
     fun renew(l: Ledger, planId: String, amount: String, date: LocalDate, selected: Set<String>, note: String, cnyAmount: String? = null, restart: Boolean? = null, periods: Int = 1): Ledger {
         require(periods in 1..120) { "本次续费期数应为1至120" }
         val p = l.plans.single { it.id == planId }
-        require(p.balanceAccount == null) { "余额账户请记录充值" }
+        require(p.balanceAccount == null && p.usageBalance == null) { "余额账户请记录充值" }
         require(selected.isNotEmpty()) { "请选择至少一项续费权益" }
         require(selected.all { id -> l.benefits.any { it.id == id && it.planId == planId } })
         val payment=receipt(p,amount,date,note,cnyAmount,selected)
@@ -222,7 +227,14 @@ object Book {
         l.plans.forEach { require(it.name.isNotBlank() && it.name.length <= 100); money(it.amount); currency(it.currency); date(it.billingAnchor); require(it.interval in 1..120 && it.paidCycles in 0..10000) }
         l.benefits.forEach { b -> require(b.name.isNotBlank() && b.name.length <= 100 && l.plans.any { it.id == b.planId }); date(b.anchor); require(b.renewals in 0..10000 && b.giftDays in 0..36500); require(expiry(b, l.plans.single { it.id == b.planId }).year <= 2200) }
         l.plans.forEach { p ->
-            if(p.balanceAccount == null) require(l.benefits.any { it.planId == p.id }) { "每个订阅至少需要一项权益" }
+            require(p.balanceAccount==null || p.usageBalance==null) { "话费账户和平台余额不能同时启用" }
+            if(p.usageBalance!=null) {
+                val account=p.usageBalance
+                require(BigDecimal(p.amount).signum()==0 && !p.autoRenew) { "平台余额不设置周期扣款或自动续费" }
+                require(l.benefits.none { it.planId==p.id }) { "平台余额不设置到期权益" }
+                money(account.balance); date(account.asOf)
+                require(LocalDate.parse(account.asOf)<=LocalDate.now()) { "余额查询日期不能晚于今天" }
+            } else if(p.balanceAccount == null) require(l.benefits.any { it.planId == p.id }) { "每个订阅至少需要一项权益" }
             else {
                 val account=p.balanceAccount
                 require(p.currency == "CNY" && p.cycle == Cycle.MONTH && p.interval == 1) { "余额账户按人民币月费管理" }
@@ -257,7 +269,7 @@ object Book {
         require(l.settings.reminderDays.distinct().size == l.settings.reminderDays.size && l.settings.reminderDays.all { it in 0..365 }) { "提醒天数应为0至365且不能重复" }
         l.settings.rates.forEach { (c, r) -> currency(c); money(r); require(BigDecimal(r) > BigDecimal.ZERO) }
     }
-    fun encode(l: Ledger): String { validate(l); return json.encodeToString(Backup(data = l)) }
+    fun encode(l: Ledger): String { validate(l); return json.encodeToString(Backup(version=if(l.plans.any {it.usageBalance!=null}) 2 else 1,data = l)) }
     fun decode(s: String): Backup {
         require(s.toByteArray().size <= 16 * 1024 * 1024) { "备份超过16MB" }
         val root = json.parseToJsonElement(s).jsonObject
@@ -269,11 +281,15 @@ object Book {
         data.getValue("plans").jsonArray.forEach { fields(it.jsonObject,"id,name,amount,currency,cycle,interval,autoRenew,billingAnchor,paidCycles,archived,note") }
         data.getValue("benefits").jsonArray.forEach { fields(it.jsonObject,"id,planId,name,anchor,renewals,giftDays") }
         data.getValue("payments").jsonArray.forEach { fields(it.jsonObject,"id,planId,planName,amount,currency,date,note,benefitIds") }
-        return json.decodeFromString<Backup>(s).also { require(it.version == 1) { "不支持的备份版本" }; Instant.parse(it.createdAt); validate(it.data) }
+        return json.decodeFromString<Backup>(s).also {
+            require(it.version in 1..2) { "不支持的备份版本" }
+            require(it.version!=1 || it.data.plans.none {p -> p.usageBalance!=null}) { "平台余额需使用新版备份格式" }
+            Instant.parse(it.createdAt); validate(it.data)
+        }
     }
     fun reminderKey(b: Benefit, p: Plan, today: LocalDate) = "${b.id}:${expiry(b,p)}:$today"
     fun due(l: Ledger, today: LocalDate) = l.benefits.filter { b ->
         val p = l.plans.single { it.id == b.planId }
-        !p.archived && p.balanceAccount == null && java.time.temporal.ChronoUnit.DAYS.between(today, expiry(b, p)).toInt() in l.settings.reminderDays
+        !p.archived && p.balanceAccount == null && p.usageBalance==null && java.time.temporal.ChronoUnit.DAYS.between(today, expiry(b, p)).toInt() in l.settings.reminderDays
     }
 }

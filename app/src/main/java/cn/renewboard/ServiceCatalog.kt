@@ -8,6 +8,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Flight
+import androidx.compose.material.icons.rounded.AccountBalanceWallet
+import androidx.compose.material.icons.rounded.Dns
+import androidx.compose.material.icons.rounded.Storage
 import androidx.compose.material.icons.rounded.SportsEsports
 import androidx.compose.material.icons.rounded.Subscriptions
 import androidx.compose.material3.Icon
@@ -30,6 +33,8 @@ data class ServicePreset(
     val currency: String = "CNY",
     val aliases: List<String> = emptyList(),
     val iconRes: Int? = null,
+    val usageBalance: Boolean = false,
+    val defaultCycle: Cycle = Cycle.MONTH,
 )
 
 val servicePresets = listOf(
@@ -60,6 +65,16 @@ val servicePresets = listOf(
     ServicePreset("即梦 AI", "AI 工具", "CNY", listOf("即梦", "jimeng"), R.drawable.service_jimeng),
     ServicePreset("可灵 AI", "AI 工具", "CNY", listOf("可灵", "kling"), R.drawable.service_kling),
     ServicePreset("Suno", "AI 工具", "USD", listOf(), R.drawable.service_suno),
+    ServicePreset("DeepSeek API", "AI 平台余额", "CNY", listOf("deepseek", "深度求索", "deepseek api余额"), R.drawable.service_deepseek, usageBalance = true),
+    ServicePreset("MiMo API", "AI 平台余额", "CNY", listOf("mimo", "小米mimo", "小米米莫"), R.drawable.service_mimo, usageBalance = true),
+    ServicePreset("OpenAI API", "AI 平台余额", "USD", listOf("openai api余额", "openai余额", "chatgpt api"), R.drawable.service_chatgpt, usageBalance = true),
+    ServicePreset("Anthropic API", "AI 平台余额", "USD", listOf("claude api", "anthropic余额", "claude余额"), R.drawable.service_claude, usageBalance = true),
+    ServicePreset("Gemini API", "AI 平台余额", "USD", listOf("google ai studio", "gemini余额", "gemini api余额"), R.drawable.service_gemini, usageBalance = true),
+    ServicePreset("阿里云百炼", "AI 平台余额", "CNY", listOf("百炼", "dashscope", "通义千问api", "qwen api"), R.drawable.service_bailian, usageBalance = true),
+    ServicePreset("火山方舟", "AI 平台余额", "CNY", listOf("方舟", "volcengine ark", "豆包api", "doubao api"), usageBalance = true),
+    ServicePreset("硅基流动", "AI 平台余额", "CNY", listOf("siliconflow", "硅基流动api"), usageBalance = true),
+    ServicePreset("服务器", "云服务", "CNY", listOf("云服务器", "server", "vps", "ecs")),
+    ServicePreset("域名", "云服务", "CNY", listOf("domain", "域名续费"), defaultCycle = Cycle.YEAR),
     ServicePreset("UU加速器", "游戏加速", "CNY", listOf("网易UU", "uu加速", "uu"), R.drawable.service_uu),
     ServicePreset("UU主机加速器", "游戏加速", "CNY", listOf("uuconsole"), R.drawable.service_uuconsole),
     ServicePreset("小黑盒加速器", "游戏加速", "CNY", listOf("小黑盒", "黑盒", "heybox", "heihe"), R.drawable.service_heihe),
@@ -97,7 +112,7 @@ val servicePresets = listOf(
     ServicePreset("游戏加速器（自定义）", "其他", "CNY", listOf("游戏加速器", "加速器")),
 )
 
-/** Longest matching name wins, so a Bilibili charging subscription keeps its own icon. */
+/** Longest matching name wins, distinguishing API balances from consumer memberships. */
 fun servicePresetFor(name: String): ServicePreset? {
     val normalized = name.trim().lowercase().replace(" ", "")
     if (normalized.isEmpty()) return null
@@ -105,7 +120,7 @@ fun servicePresetFor(name: String): ServicePreset? {
         val match = (preset.aliases + preset.name).map { it.lowercase().replace(" ", "") }
             .filter { normalized.contains(it) }.maxOfOrNull { it.length }
         match?.let { preset to it }
-    }.maxByOrNull { it.second }?.first
+    }.maxWithOrNull(compareBy<Pair<ServicePreset, Int>> { it.second }.thenBy { it.first.usageBalance })?.first
 }
 
 /** Bundled app icons work offline; unspecified services use category symbols. */
@@ -116,7 +131,9 @@ fun ServiceIcon(name: String, modifier: Modifier = Modifier, size: Dp = 48.dp) {
     val generic = when (preset?.name) {
         "机场 VPN" -> Icons.Rounded.Flight
         "游戏加速器（自定义）" -> Icons.Rounded.SportsEsports
-        else -> Icons.Rounded.Subscriptions
+        "服务器" -> Icons.Rounded.Storage
+        "域名" -> Icons.Rounded.Dns
+        else -> if (preset?.usageBalance == true) Icons.Rounded.AccountBalanceWallet else Icons.Rounded.Subscriptions
     }
     Box(
         modifier.size(size).clip(RoundedCornerShape(size * .29f))

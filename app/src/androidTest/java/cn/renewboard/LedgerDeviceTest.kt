@@ -280,20 +280,23 @@ class LedgerDeviceTest {
         val original=Payment(id="subscription-payment",planId=plan.id,planName=plan.name,amount="100",currency="CNY",date=today.toString())
         val fee=Payment(id="phone-fee",planId=phone.id,planName=phone.name,amount="30",currency="CNY",date=today.toString(),note="话费扣费")
         val orphan=Payment(id="orphan",planId="deleted",planName="已删应用",amount="10",currency="CNY",date=today.toString())
-        seed(Ledger(plans=listOf(plan,phone),benefits=listOf(benefit),payments=listOf(original,
+        val platform=Plan(id="platform",name="DeepSeek API",amount="0",billingAnchor=today.toString(),autoRenew=false,paidCycles=0,usageBalance=UsageBalance("50",today.toString()))
+        val platformRecharge=Payment(id="platform-topup",planId=platform.id,planName=platform.name,amount="50",currency="CNY",date=today.toString(),note="平台充值")
+        seed(Ledger(plans=listOf(plan,phone,platform),benefits=listOf(benefit),payments=listOf(original,platformRecharge,
             original.copy(id="refund",amount="40",refundOf=original.id),fee,
             fee.copy(id="extra-fee",amount="5",note="话费额外扣费"),fee.copy(id="topup",amount="200",note="话费充值"),orphan)))
         compose.onNodeWithText("账本",substring=false).performClick()
-        compose.onNodeWithText("净支出 ¥105.00",substring=false).assertExists()
+        compose.onNodeWithText("净支出 ¥155.00",substring=false).assertExists()
         click("全部明细")
         compose.onNodeWithContentDescription("选择付款类型").assertIsDisplayed().assertTextContains("类型：全部").performClick()
-        val types=listOf("全部","订阅付款","退款","话费扣费","话费充值","已删订阅")
+        val types=listOf("全部","订阅付款","平台充值","退款","话费扣费","话费充值","已删订阅")
         compose.onAllNodes(hasContentDescription("付款类型 ",substring=true)).assertCountEquals(types.size)
         types.forEach {compose.onNodeWithContentDescription("付款类型 $it").assertIsDisplayed().assertHasClickAction()}
         compose.onNodeWithContentDescription("付款类型 全部").assertIsSelected().performClick()
         selectKind("订阅付款")
         compose.onNodeWithText("2 笔 · 净支出 ¥110.00",substring=false).assertExists()
         compose.onNodeWithText("中国移动",substring=false).assertDoesNotExist()
+        compose.onNodeWithText("DeepSeek API",substring=false).assertDoesNotExist()
         compose.onNodeWithText("¥-40.00",substring=false).assertDoesNotExist()
         compose.onNodeWithText("搜索应用").performTextInput("保留")
         compose.onNodeWithText("1 笔 · 净支出 ¥100.00",substring=false).assertExists()
@@ -311,11 +314,14 @@ class LedgerDeviceTest {
         selectKind("话费充值")
         compose.onNodeWithText("1 笔 · 净支出 ¥0.00",substring=false).assertExists()
         compose.onNodeWithText("充值 ¥200.00 · 不计支出",substring=false).assertExists()
+        selectKind("平台充值")
+        compose.onNodeWithText("1 笔 · 净支出 ¥50.00",substring=false).assertExists()
+        compose.onNodeWithText("DeepSeek API",substring=false).assertExists()
         selectKind("已删订阅")
         compose.onNodeWithText("1 笔 · 净支出 ¥10.00",substring=false).assertExists()
         compose.onNodeWithText("已删应用",substring=false).assertExists()
         selectKind("全部")
-        compose.onNodeWithText("6 笔 · 净支出 ¥105.00",substring=false).assertExists()
+        compose.onNodeWithText("7 笔 · 净支出 ¥155.00",substring=false).assertExists()
     }
 
     @Test fun missingCashHintUsesCurrentRangeAndSelectedDayAndClearsAfterSupplementing() {

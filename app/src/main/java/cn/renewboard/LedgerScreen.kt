@@ -283,11 +283,12 @@ private data class ReceiptRange(val title:String,val from:LocalDate?,val until:L
     val scoped=l.payments.filter { p -> within(p,target.from,target.until) && (target.planName==null || p.planName==target.planName) && (target.planId==null || p.planId==target.planId) && (target.refundOf==null || p.refundOf==target.refundOf) &&
         (!target.missingOnly || (!Prepaid.isTopUp(p) && p.currency!="CNY" && p.cnyAmount==null)) }
     val visible=scoped.filter { p -> p.planName.contains(query.trim(),ignoreCase=true) && when(kind) {
-        "订阅付款" -> p.refundOf==null && !Prepaid.isTopUp(p) && p.note !in setOf("话费扣费","话费额外扣费")
+        "订阅付款" -> p.refundOf==null && !Prepaid.isTopUp(p) && !UsageBalances.isTopUp(p) && p.note !in setOf("话费扣费","话费额外扣费")
         "付款" -> p.refundOf==null && !Prepaid.isTopUp(p)
         "退款" -> p.refundOf!=null
         "话费扣费" -> p.refundOf==null && p.note in setOf("话费扣费","话费额外扣费")
         "话费充值" -> Prepaid.isTopUp(p)
+        "平台充值" -> UsageBalances.isTopUp(p)
         "已删订阅" -> l.plans.none { it.id==p.planId }
         else -> true
     } }.sortedByDescending { it.date }
@@ -317,8 +318,8 @@ private data class ReceiptRange(val title:String,val from:LocalDate?,val until:L
                     if(!target.missingOnly) Box {
                         val options=if(target.planId!=null) {
                             if(l.plans.find {it.id==target.planId}?.balanceAccount!=null) listOf("全部","话费扣费","话费充值","退款")
-                            else listOf("全部","付款","退款")
-                        } else listOf("全部","订阅付款","退款","话费扣费","话费充值","已删订阅")
+                            else if(l.plans.find {it.id==target.planId}?.usageBalance!=null) listOf("全部","平台充值","退款") else listOf("全部","付款","退款")
+                        } else listOf("全部","订阅付款","平台充值","退款","话费扣费","话费充值","已删订阅")
                         OutlinedButton(onClick={kindMenuOpen=true},modifier=Modifier.semantics {contentDescription="选择付款类型"}) {
                             Text("类型：$kind")
                             Icon(Icons.Outlined.ExpandMore,null,modifier=Modifier.padding(start=6.dp).size(20.dp))
@@ -352,7 +353,7 @@ private data class ReceiptRange(val title:String,val from:LocalDate?,val until:L
 @Composable internal fun PlanHistoryScreen(l:Ledger,planId:String,close:()->Unit,change:((Ledger)->Ledger)->Unit) {
     val plan=l.plans.find {it.id==planId}
     val name=plan?.name ?: l.payments.find {it.planId==planId}?.planName ?: "订阅"
-    ReceiptList(l,ReceiptRange("$name · 全部记录",null,null,planId=planId),close,change,if(plan?.balanceAccount!=null) "返回话费详情" else "返回订阅详情")
+    ReceiptList(l,ReceiptRange("$name · 全部记录",null,null,planId=planId),close,change,if(plan?.usageBalance!=null) "返回余额账户" else if(plan?.balanceAccount!=null) "返回话费详情" else "返回订阅详情")
 }
 
 @Composable private fun DeletePaymentsDialog(l:Ledger,ids:Set<String>,close:()->Unit,confirm:()->Unit) {

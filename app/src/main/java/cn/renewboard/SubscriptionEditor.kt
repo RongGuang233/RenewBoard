@@ -30,15 +30,15 @@ import java.time.LocalDate
     val id:String, val prepaid:Boolean, val balance:String, val balanceDate:String, val deductionDay:String,
     val name:String, val amount:String, val currency:String, val cycle:Cycle, val interval:String,
     val auto:Boolean, val anchor:String, val note:String, val paid:Boolean, val cnyAmount:String,
-    val benefits:List<Benefit>, val following:Set<String>
+    val benefits:List<Benefit>, val following:Set<String>, val usage:Boolean=false
 ) {
     companion object {
         fun create(l:Ledger,p:Plan?):SubscriptionDraft {
             val id=p?.id ?: newId();val today=LocalDate.now().toString();val anchor=p?.billingAnchor ?: today
             val benefits=l.benefits.filter {it.planId==id}.ifEmpty {listOf(Benefit(planId=id,name="",anchor=anchor,renewals=1))}
-            return SubscriptionDraft(id,p?.balanceAccount!=null,p?.balanceAccount?.let {Prepaid.balance(p,LocalDate.now()).toPlainString()} ?: "",today,
+            return SubscriptionDraft(id,p?.balanceAccount!=null,p?.usageBalance?.balance ?: p?.balanceAccount?.let {Prepaid.balance(p,LocalDate.now()).toPlainString()} ?: "",p?.usageBalance?.asOf ?: today,
                 p?.billingAnchor?.let {LocalDate.parse(it).dayOfMonth.toString()} ?: "1",p?.name ?: "",p?.amount ?: "",p?.currency ?: "CNY",p?.cycle ?: Cycle.MONTH,
-                (p?.interval ?: 1).toString(),p?.autoRenew ?: true,anchor,p?.note ?: "",p==null,"",benefits,benefits.filter{it.anchor==anchor && it.renewals>0}.map{it.id}.toSet())
+                (p?.interval ?: 1).toString(),p?.autoRenew ?: true,anchor,p?.note ?: "",p==null,"",benefits,benefits.filter{it.anchor==anchor && it.renewals>0}.map{it.id}.toSet(),p?.usageBalance!=null)
         }
     }
 }
@@ -52,6 +52,7 @@ import java.time.LocalDate
     val initial=loaded ?: baseline
     val id=initial.id;val today=LocalDate.now()
     var prepaid by rememberSaveable { mutableStateOf(initial.prepaid) }
+    var usage by rememberSaveable {mutableStateOf(initial.usage)}
     var balance by rememberSaveable { mutableStateOf(initial.balance) }
     var balanceDate by rememberSaveable { mutableStateOf(initial.balanceDate) }
     var deductionDay by rememberSaveable { mutableStateOf(initial.deductionDay) }
@@ -75,7 +76,7 @@ import java.time.LocalDate
     var restored by rememberSaveable {mutableStateOf(loaded!=null)}
     var error by remember {mutableStateOf("")};var busy by remember {mutableStateOf(false)}
     val scope=rememberCoroutineScope()
-    val draft=SubscriptionDraft(id,prepaid,balance,balanceDate,deductionDay,name,amount,currency,cycle,interval,auto,anchor,note,paid,cnyAmount,benefits,following)
+    val draft=SubscriptionDraft(id,prepaid,balance,balanceDate,deductionDay,name,amount,currency,cycle,interval,auto,anchor,note,paid,cnyAmount,benefits,following,usage)
     val dirty=draft!=baseline
     LaunchedEffect(draft) {if(dirty) store.write(draftKey,Book.json.encodeToString(draft)) else store.remove(draftKey)}
     fun back() {if(busy) return;if(picker && name.isNotBlank()) picker=false else if(dirty) confirmExit=true else close()}
@@ -87,8 +88,9 @@ import java.time.LocalDate
         Book.expiry(resolvedBenefit(b),if(b.id in following) previewPlan else existing ?: previewPlan).toString()
     }.getOrDefault(b.anchor)
     fun submit() {try {
-        if(prepaid) {
+        if(prepaid || usage) {
             require(LocalDate.parse(balanceDate)<=today) { "余额查询日期不能晚于今天" }
+            existing?.usageBalance?.let {require(LocalDate.parse(balanceDate)>=LocalDate.parse(it.asOf)) {"余额查询日期不能早于最近余额记录 ${it.asOf}"}}
             existing?.balanceAccount?.let { require(LocalDate.parse(balanceDate)>=LocalDate.parse(it.asOf)) { "余额查询日期不能早于最近余额记录 ${it.asOf}" } }
         }
         val billingAnchor=if(prepaid) {
@@ -96,12 +98,13 @@ import java.time.LocalDate
             require(day!=null && day in 1..31) { "每月扣费日请填写 1–31" }
             if(existing?.balanceAccount!=null && LocalDate.parse(existing.billingAnchor).dayOfMonth==day) existing.billingAnchor
             else LocalDate.of(LocalDate.parse(balanceDate).year,1,day).toString()
-        } else anchor
-        var p=Plan(id,name.trim(),amount,if(prepaid) "CNY" else currency,if(prepaid) Cycle.MONTH else cycle,
-            if(prepaid) 1 else interval.toInt(),if(prepaid) true else auto,billingAnchor,
-            if(prepaid) 0 else existing?.paidCycles ?: if(paid) 1 else 0,existing?.archived ?: false,note,
-            if(prepaid) BalanceAccount(balance,balanceDate,existing?.balanceAccount?.pendingFee) else null)
-        val bs=if(prepaid) l.benefits.filter { it.planId==id } else benefits.map { b ->
+        } else if(usage) balanceDate else anchor
+        var p=Plan(id,name.trim(),if(usage) "0" else amount,if(prepaid) "CNY" else currency,if(prepaid) Cycle.MONTH else cycle,
+            if(prepaid || usage) 1 else interval.toInt(),if(usage) false else if(prepaid) true else auto,billingAnchor,
+            if(prepaid || usage) 0 else existing?.paidCycles ?: if(paid) 1 else 0,existing?.archived ?: false,note,
+            if(prepaid) BalanceAccount(balance,balanceDate,existing?.balanceAccount?.pendingFee) else null,
+            if(usage) UsageBalance(balance,balanceDate) else null)
+        val bs=if(usage) emptyList() else if(prepaid) l.benefits.filter { it.planId==id } else benefits.map { b ->
             val resolved=resolvedBenefit(b)
             val named = if(resolved.name.isBlank() && benefits.size==1) resolved.copy(name=name.trim()) else resolved
             when {
@@ -113,8 +116,8 @@ import java.time.LocalDate
                 else -> named
             }
         }
-        if(!prepaid && existing==null && paid && currency!="CNY") require(cnyAmount.isNotBlank()) { "请填写付款当天的人民币实付金额" }
-        val receipt=if(!prepaid && existing==null && paid) Payment(planId=id,planName=p.name,amount=amount,currency=currency,date=anchor,note="首次付款",benefitIds=bs.map { it.id },cnyAmount=if(currency=="CNY") null else cnyAmount.trim()) else null
+        if(!prepaid && !usage && existing==null && paid && currency!="CNY") require(cnyAmount.isNotBlank()) { "请填写付款当天的人民币实付金额" }
+        val receipt=if(!prepaid && !usage && existing==null && paid) Payment(planId=id,planName=p.name,amount=amount,currency=currency,date=anchor,note="首次付款",benefitIds=bs.map { it.id },cnyAmount=if(currency=="CNY") null else cnyAmount.trim()) else null
         if(prepaid && existing?.balanceAccount!=null && amount.toBigDecimal().compareTo(existing.amount.toBigDecimal())!=0) {
             p=p.copy(balanceAccount=p.balanceAccount?.copy(pendingFee=null))
         }
@@ -133,7 +136,7 @@ import java.time.LocalDate
     Scaffold(modifier=Modifier.imePadding(),contentWindowInsets=WindowInsets(0,0,0,0),topBar={TopAppBar(title={Text(if(picker) "选择会员" else if(existing==null) "记一笔订阅" else "编辑订阅",fontSize=21.sp)},navigationIcon={PageBack(back=::back)},windowInsets=WindowInsets(0,0,0,0))},
         bottomBar={if(!picker) Surface {Button(onClick=::submit,enabled=!busy,modifier=Modifier.fillMaxWidth().padding(horizontal=20.dp,vertical=10.dp).heightIn(min=48.dp)) {Text(if(busy) "保存中…" else "保存订阅")}}}) {padding ->
         if(picker) ServiceSelection(l,Modifier.padding(padding),custom={picker=false}) {preset ->
-            name=preset.name;currency=preset.currency;prepaid=preset.name in listOf("中国电信","中国移动","中国联通")
+            name=preset.name;currency=preset.currency;usage=preset.usageBalance;cycle=preset.defaultCycle;prepaid=preset.name in listOf("中国电信","中国移动","中国联通")
             if(prepaid) anchor=today.withDayOfMonth(1).plusMonths(1).toString()
             benefits=benefits.mapIndexed {i,b->if(i==0) b.copy(name=preset.name) else b};picker=false
         } else Column(Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(horizontal=20.dp,vertical=8.dp),verticalArrangement=Arrangement.spacedBy(6.dp)) {
@@ -147,13 +150,21 @@ import java.time.LocalDate
         Field("订阅 / 套餐名称",name,{name=it},Modifier.weight(1f))
     }
     Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
-        FilterChip(!prepaid,{prepaid=false},label={Text("周期订阅")})
+        FilterChip(!prepaid && !usage,{prepaid=false;usage=false},label={Text("周期订阅")},enabled=existing?.usageBalance==null)
         FilterChip(prepaid,{
             if(!prepaid && existing?.balanceAccount==null) anchor=today.withDayOfMonth(1).plusMonths(1).toString()
-            prepaid=true
-        },label={Text("话费余额")})
+            prepaid=true;usage=false
+        },label={Text("话费余额")},enabled=existing?.usageBalance==null)
+        FilterChip(usage,{usage=true;prepaid=false},label={Text("平台余额")},enabled=existing==null || existing.usageBalance!=null)
     }
-    if(prepaid) MoneyField("每月扣费金额",amount,{amount=it}) else Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(10.dp)) {
+    if(usage) {
+        Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(10.dp)) {
+            MoneyField("查询到的余额",balance,{balance=it},Modifier.weight(1f))
+            if(existing?.usageBalance==null) CurrencyPicker(currency,compact=true) {currency=it} else Text(currency)
+        }
+        Field("余额查询日期",balanceDate,{balanceDate=it},dateField=true)
+        Text("充值计支出，更新余额不重复记账。",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+    } else if(prepaid) MoneyField("每月扣费金额",amount,{amount=it}) else Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(10.dp)) {
         MoneyField("套餐价格",amount,{amount=it},Modifier.weight(1f))
         CurrencyPicker(currency,compact=true) {currency=it}
     }
@@ -164,7 +175,7 @@ import java.time.LocalDate
         OutlinedTextField(deductionDay,{deductionDay=it},label={Text("每月扣费日")},suffix={Text("日")},
             keyboardOptions=KeyboardOptions(keyboardType=KeyboardType.Number),singleLine=true,modifier=Modifier.fillMaxWidth())
 
-    } else {
+    } else if(!usage) {
     Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(12.dp),verticalAlignment=Alignment.CenterVertically) {
         OutlinedTextField(interval,{interval=it},label={Text("周期")},singleLine=true,
             keyboardOptions=KeyboardOptions(keyboardType=KeyboardType.Number),modifier=Modifier.weight(1f))

@@ -12,9 +12,14 @@ internal object SubscriptionList {
 
     fun matches(l:Ledger,p:Plan,query:String)=p.name.contains(query.trim(),ignoreCase=true) || matchingBenefits(l,p,query).isNotEmpty()
 
-    fun originalAmount(p:Plan,today:LocalDate):BigDecimal = if(p.balanceAccount!=null) Prepaid.feeAt(p,today) else BigDecimal(p.amount)
+    fun originalAmount(p:Plan,today:LocalDate):BigDecimal = when {
+        p.usageBalance!=null -> BigDecimal(p.usageBalance.balance)
+        p.balanceAccount!=null -> Prepaid.feeAt(p,today)
+        else -> BigDecimal(p.amount)
+    }
 
     fun comparisonCny(l:Ledger,p:Plan,monthly:Boolean,today:LocalDate):BigDecimal? {
+        if(p.usageBalance!=null) return null
         val amount=originalAmount(p,today)
         val cny=if(p.currency=="CNY") amount else {
             val receipt=latestCnySettlement(l,p,today) ?: return null
@@ -35,7 +40,7 @@ internal object SubscriptionList {
             .thenByDescending {amounts[it.id]}.thenBy {it.name})
     }
 
-    fun period(p:Plan):String = if(p.balanceAccount!=null) "月" else when(p.cycle) {
+    fun period(p:Plan):String = if(p.usageBalance!=null) "余额" else if(p.balanceAccount!=null) "月" else when(p.cycle) {
         Cycle.WEEK -> if(p.interval==1) "周" else "${p.interval}周"
         Cycle.MONTH -> if(p.interval==1) "月" else "${p.interval}个月"
         Cycle.YEAR -> if(p.interval==1) "年" else "${p.interval}年"

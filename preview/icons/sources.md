@@ -126,3 +126,26 @@
   - 原图：https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/61/5b/2a/615b2a1b-d8d7-a14d-4c08-67b9ece0d57a/AppIconKlingapp-0-0-1x_U007epad-0-1-0-sRGB-85-220.png/512x512bb.jpg
 - uuconsole: [UU主机加速器-完美支持NS/PS/Xbox/Steam加速](https://apps.apple.com/cn/app/uu%E4%B8%BB%E6%9C%BA%E5%8A%A0%E9%80%9F%E5%99%A8-%E5%AE%8C%E7%BE%8E%E6%94%AF%E6%8C%81ns-ps-xbox-steam%E5%8A%A0%E9%80%9F/id1440256574?uo=4) · Hangzhou Bobo Technology Co Ltd
   - 原图：https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/cf/0b/50/cf0b5052-3b68-b69b-2474-5c076e8876e1/AppIcon-0-0-1x_U007ephone-0-11-0-85-220.png/512x512bb.jpg
+
+## 服务器、域名与 AI 平台余额（1.12.0）
+
+目录仅提供名称、图标、默认币种与默认计费方式；金额、余额由用户填写，不查询平台账户，也不需要 API 密钥。人民币平台默认 CNY，国际平台默认 USD，用户可在表单修改。服务器默认按月、域名默认按年，均可修改。
+
+- 服务器、域名：使用 Compose Material `Storage`、`Dns` 通用图形，无特定供应商品牌。
+- DeepSeek API：[官方 API 余额文档](https://api-docs.deepseek.com/zh-cn/api/get-user-balance/)；余额可包含 CNY / USD，目录面向国内使用默认 CNY。
+- MiMo API：[小米 MiMo 官方开放平台](https://platform.xiaomimimo.com/)，与 Token Plan 周期会员分开，目录条目用于手动登记按量账户余额。
+- OpenAI API：[官方预付费帮助](https://help.openai.com/en/articles/8264644-how-can-i-set-up-prepaid-billing)，复用现有 OpenAI 应用图标。
+- Anthropic API：[官方 API 预付费帮助](https://support.claude.com/en/articles/8977456-how-do-i-pay-for-my-claude-api-usage)，复用现有 Claude 应用图标。
+- Gemini API：[官方 API 计费说明](https://ai.google.dev/gemini-api/docs/billing)，复用现有 Gemini 应用图标。目录余额是用户手动管理的账户额度，不假定所有账户都已切换预付费。
+- 阿里云百炼：[官方服务说明](https://help.aliyun.com/zh/model-studio/what-is-model-studio/)、[账单与费用管理](https://help.aliyun.com/zh/model-studio/bill-query-and-cost-management)。百炼使用阿里云账户可用余额，此条目可手动记录，不能理解成百炼独立账户。
+- 火山方舟：[官方控制台](https://ark.volcengine.com/)，公开首页提供账户余额与账户充值入口。
+- 硅基流动：[官方财务说明](https://api-docs.siliconflow.cn/docs/userguide/faqs/misc_finance)，提供在线充值、自动充值与余额查询。
+
+官方品牌图标仅用于识别对应服务，商标权属于各品牌；不将站点图标来源等同于开源许可。没有可靠可用图标的入口统一使用 Material `AccountBalanceWallet`，不绘制相似的伪品牌图标。
+
+图标核对于 2026-10-13：
+
+- `service_deepseek.xml`：[DeepSeek 官方文档 favicon](https://api-docs.deepseek.com/img/favicon.svg)，蓝色鲸鱼，原 SVG 单路径转换为 Android VectorDrawable，保留颜色和比例。
+- `service_mimo.png`：[小米 MiMo 官方平台 favicon](https://platform.xiaomimimo.com/favicon.png)，512 × 512 PNG，黑底 Xiaomi / MiMo 标识，直接保留原图。
+- `service_bailian.png`：[百炼官方控制台](https://bailian.console.aliyun.com/) 的 [favicon](https://img.alicdn.com/imgextra/i1/O1CN01Es0c28049TL083Vo_!!6000000002263-2-tps-64-64.png)，64 × 64 PNG，紫色立方体标识，直接保留原图。
+- 火山方舟、硅基流动：本轮未取得可靠的独立品牌图标，使用通用余额图形。

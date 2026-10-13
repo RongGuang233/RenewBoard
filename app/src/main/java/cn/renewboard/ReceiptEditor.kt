@@ -40,7 +40,8 @@ import java.time.LocalDate
     var saving by remember {mutableStateOf(false)}
     var error by remember {mutableStateOf<String?>(null)}
     val scope=rememberCoroutineScope()
-    val fixedType=Prepaid.isTopUp(p) || p.note in setOf("话费扣费","话费额外扣费")
+    val phoneRecord=Prepaid.isTopUp(p) || p.note in setOf("话费扣费","话费额外扣费")
+    val fixedType=phoneRecord || UsageBalances.isTopUp(p)
     val kind=if(p.refundOf==null) "付款" else "退款"
     fun update(next:ReceiptDraft) {
         if(saving) return
@@ -94,7 +95,7 @@ import java.time.LocalDate
                 Text("${p.date} · ${displayMoney(p.currency,p.amount)}",color=MaterialTheme.colorScheme.onSurfaceVariant)
                 if(continueRefund) Text("先补齐原付款金额，保存后继续记录退款。",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
             } else {
-                Text(if(fixedType) "仅修改账目，话费余额不变。" else "仅修改账目，权益到期日不变。",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(if(phoneRecord) "仅修改账目，话费余额不变。" else if(UsageBalances.isTopUp(p)) "仅修改账目，平台余额不变。" else "仅修改账目，权益到期日不变。",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
                 MoneyField("${kind}金额 ${if(p.currency=="CNY") "¥" else p.currency}",draft.amount,{update(draft.copy(amount=it))})
                 Field("${kind}日期",draft.date,{update(draft.copy(date=it))},dateField=true)
             }

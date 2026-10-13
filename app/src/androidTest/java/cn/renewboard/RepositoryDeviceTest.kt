@@ -106,6 +106,25 @@ class RepositoryDeviceTest {
         assertEquals(deviceLedger(), repository.read())
     }
 
+    @Test fun platformBalanceAndFrozenRechargeSurviveRoomReopenAndBackupRestore() = runBlocking {
+        val p=Plan(id="usage-room",name="OpenAI API",amount="0",currency="USD",billingAnchor="2024-01-01",
+            autoRenew=false,paidCycles=0,usageBalance=UsageBalance("10","2024-01-01"))
+        val baseline=deviceLedger()
+        val mixed=baseline.copy(plans=baseline.plans+p)
+        val topped=UsageBalances.topUp(mixed,p.id,"5",java.time.LocalDate.of(2024,1,2),"36.20")
+        val consumed=UsageBalances.calibrate(topped,p.id,"7",java.time.LocalDate.of(2024,1,3))
+        repository.update {consumed};database.close();openDatabase()
+        assertEquals(consumed,repository.read())
+        val backup=Book.decode(Book.encode(repository.read()))
+        assertEquals(2,backup.version)
+        repository.restore(Book.decode(Book.encode(baseline)))
+        assertEquals(baseline,repository.read())
+        repository.restore(backup);database.close();openDatabase()
+        assertEquals(consumed,repository.read())
+        assertEquals("7",repository.read().plans.single {it.id==p.id}.usageBalance!!.balance)
+        assertEquals("36.20",repository.read().payments.last().cnyAmount)
+    }
+
     @Test fun legacyPayloadAddsDevicesWithoutChangingSubscriptionsAndSurvivesRestore() = runBlocking {
         val old = deviceLedger()
         val oldPayload = Book.json.encodeToString(Ledger.serializer(), old).replace(",\"devices\":[]", "")
