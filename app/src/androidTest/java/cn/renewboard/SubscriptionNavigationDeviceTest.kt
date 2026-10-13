@@ -27,10 +27,15 @@ class SubscriptionNavigationDeviceTest {
         compose.waitForIdle()
     }
     @After fun clean() {runBlocking {app.repository.update {Ledger()}};compose.waitForIdle()}
-    private fun menu() {compose.onNodeWithContentDescription("订阅筛选与排序").performScrollTo().performClick()}
+    private fun openServices() {
+        compose.onNodeWithText("账本",substring=false).performClick()
+        compose.onNodeWithContentDescription("打开服务管理").performScrollTo().performClick()
+    }
+
+    private fun menu() {compose.onNodeWithContentDescription("服务筛选与排序").performScrollTo().performClick()}
     @Test fun returningFromDetailsKeepsQueryFilterSortAndScrollAcrossRecreation() {
-        compose.onNodeWithText("订阅",substring=false).performClick()
-        compose.onNode(hasText("搜索订阅") and hasSetTextAction()).performTextInput("导航测试")
+        openServices()
+        compose.onNode(hasText("搜索服务") and hasSetTextAction()).performTextInput("导航测试")
         menu();compose.onNodeWithText("自动续费",substring=false).performClick()
         menu();compose.onNodeWithText("单次金额",substring=false).performClick()
         compose.onNodeWithText("导航测试 手动",substring=false).assertDoesNotExist()
@@ -42,7 +47,7 @@ class SubscriptionNavigationDeviceTest {
         compose.onNodeWithContentDescription("返回",useUnmergedTree=true).performClick()
         target.assertIsDisplayed()
         assertEquals(before,target.fetchSemanticsNode().boundsInRoot.top,2f)
-        compose.onNode(hasText("搜索订阅") and hasSetTextAction()).assertTextContains("导航测试")
+        compose.onNode(hasText("搜索服务") and hasSetTextAction()).assertTextContains("导航测试")
         menu();compose.onNodeWithText("✓ 自动续费",substring=false).assertExists();compose.onNodeWithText("✓ 单次金额",substring=false).assertExists()
         InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
         compose.waitForIdle();target.performScrollTo()
@@ -55,19 +60,19 @@ class SubscriptionNavigationDeviceTest {
         target.assertIsDisplayed()
         assertEquals(savedOffset,viewport().config[androidx.compose.ui.semantics.SemanticsProperties.VerticalScrollAxisRange].value(),0f)
         assertEquals(savedTop,target.fetchSemanticsNode().boundsInRoot.top-viewport().boundsInRoot.top,2f)
-        compose.onNode(hasText("搜索订阅") and hasSetTextAction()).assertTextContains("导航测试")
+        compose.onNode(hasText("搜索服务") and hasSetTextAction()).assertTextContains("导航测试")
         compose.onNodeWithText("导航测试 手动",substring=false).assertDoesNotExist()
     }
     @Test fun activeFilterCanBeClearedWithoutLosingQueryOrSort() {
-        compose.onNodeWithText("订阅",substring=false).performClick()
+        openServices()
         compose.onNodeWithContentDescription("清除续费筛选").assertDoesNotExist()
-        compose.onNode(hasText("搜索订阅") and hasSetTextAction()).performTextInput("导航测试")
+        compose.onNode(hasText("搜索服务") and hasSetTextAction()).performTextInput("导航测试")
         menu();compose.onNodeWithText("单次金额",substring=false).performClick()
         menu();compose.onNodeWithText("自动续费",substring=false).performClick()
         compose.onNodeWithContentDescription("清除续费筛选").assertExists().performScrollTo().performClick()
         compose.onNodeWithContentDescription("清除续费筛选").assertDoesNotExist()
         compose.onNodeWithText("导航测试 手动",substring=false).performScrollTo().assertIsDisplayed()
-        compose.onNode(hasText("搜索订阅") and hasSetTextAction()).assertTextContains("导航测试")
+        compose.onNode(hasText("搜索服务") and hasSetTextAction()).assertTextContains("导航测试")
         compose.onNodeWithText("单次金额",substring=false).assertExists()
     }
 
@@ -79,8 +84,8 @@ class SubscriptionNavigationDeviceTest {
         val benefits=listOf(Benefit(planId=bundle.id,name="百度网盘",anchor=today),Benefit(planId=bundle.id,name="网易云音乐",anchor=today),
             Benefit(planId=single.id,name=single.name,anchor=today),Benefit(planId=other.id,name=other.name,anchor=today))
         runBlocking {app.repository.update {Ledger(plans=listOf(bundle,single,other),benefits=benefits)}}
-        compose.waitForIdle();compose.onNodeWithText("订阅",substring=false).performClick()
-        compose.onNode(hasText("搜索订阅") and hasSetTextAction()).performTextReplacement("百度")
+        compose.waitForIdle();openServices()
+        compose.onNode(hasText("搜索服务") and hasSetTextAction()).performTextReplacement("百度")
         compose.onNodeWithText("联合会员套餐").assertExists()
         compose.onNodeWithText("百度网盘",substring=false).assertExists()
         compose.onNodeWithText("包含：百度网盘").assertExists()
@@ -89,7 +94,7 @@ class SubscriptionNavigationDeviceTest {
         compose.onNodeWithText("联合会员套餐").performClick()
         compose.onNodeWithText("网易云音乐").assertExists()
         compose.onNodeWithContentDescription("返回",useUnmergedTree=true).performClick()
-        compose.onNode(hasText("搜索订阅") and hasSetTextAction()).assertTextContains("百度")
+        compose.onNode(hasText("搜索服务") and hasSetTextAction()).assertTextContains("百度")
         compose.onNodeWithText("包含：百度网盘").assertExists()
     }
     @Test fun comparisonShowsMonthlyCostsAndPhoneFeeWithoutChangingPayments() {
@@ -103,7 +108,7 @@ class SubscriptionNavigationDeviceTest {
         val receipt=Payment(planId=ai.id,planName=ai.name,amount="20",currency="USD",date=today,cnyAmount="142.80")
         val ledger=Ledger(plans=plans,benefits=plans.filter{it.balanceAccount==null}.map{Benefit(planId=it.id,name=it.name,anchor=today)},payments=listOf(receipt))
         runBlocking {app.repository.update {ledger}}
-        compose.waitForIdle();compose.onNodeWithText("订阅",substring=false).performClick()
+        compose.waitForIdle();openServices()
         menu();compose.onNodeWithText("折合月费",substring=false).performClick()
         compose.onNodeWithText("≈¥142.80").assertExists()
         compose.onNodeWithText("≈¥12.33").assertExists()

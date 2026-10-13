@@ -111,9 +111,10 @@ class BalanceDeviceTest {
         assertEquals(java.math.BigDecimal("60"),Book.paidCny(saved))
         compose.activityRule.scenario.recreate();compose.waitForIdle()
         assertEquals(saved.payments,ledger().payments)
-        compose.onNodeWithText("订阅",substring=false).performClick()
-        compose.onNodeWithText("中国移动").assertExists()
         compose.onNodeWithText("账本",substring=false).performClick()
+        compose.onNodeWithContentDescription("打开服务管理").performScrollTo().performClick()
+        compose.onNodeWithText("中国移动").assertExists()
+        compose.onNodeWithContentDescription("返回账本").performClick()
         compose.onNodeWithText("净支出 ¥60.00").assertExists()
     }
 

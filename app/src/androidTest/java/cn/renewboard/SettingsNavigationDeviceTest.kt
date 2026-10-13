@@ -143,10 +143,11 @@ class SettingsNavigationDeviceTest {
         compose.onNodeWithText("坚果云 · WebDAV").performScrollTo().performClick()
         compose.onNode(hasText("WebDAV 地址") and hasSetTextAction()).assertExists()
         compose.onNodeWithText("返回", substring = false).assertIsDisplayed()
-        compose.onNodeWithText("订阅", substring = false).assertDoesNotExist()
+        listOf("到期","账本","设备","设置").forEach {compose.onNode(hasText(it,substring=false) and hasClickAction()).assertDoesNotExist()}
         back()
         compose.onNodeWithText("WebDAV 地址").assertDoesNotExist()
-        compose.onNodeWithText("订阅", substring = false).assertIsDisplayed()
+        listOf("到期","账本","设备","设置").forEach {compose.onNode(hasText(it,substring=false) and hasClickAction()).assertIsDisplayed()}
+        compose.onNodeWithText("订阅",substring=false).assertDoesNotExist()
 
         compose.onNodeWithText("本地备份", substring = false).performScrollTo().performClick()
         compose.onNodeWithText("从文件恢复", substring = false).performScrollTo().assertIsDisplayed()

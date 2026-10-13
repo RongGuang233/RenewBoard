@@ -36,6 +36,11 @@ class MainActivityDeviceTest {
         }
     }
 
+    private fun openServices() {
+        compose.onNodeWithText("账本",substring=false).performClick()
+        compose.onNodeWithContentDescription("打开服务管理").performScrollTo().performClick()
+    }
+
     private fun fill(label: String, value: String) {
         if(compose.onAllNodesWithText("自定义订阅",substring=false).fetchSemanticsNodes().isNotEmpty()) compose.onNodeWithText("自定义订阅",substring=false).performClick()
         if(label=="付款备注" && compose.onAllNodes(hasText(label) and hasSetTextAction()).fetchSemanticsNodes().isEmpty()) compose.onNodeWithText("付款备注",substring=false).performScrollTo().performClick()
@@ -103,7 +108,7 @@ class MainActivityDeviceTest {
         assertEquals("36.80", created.payments.single().amount)
         assertEquals(listOf(created.benefits.single().id), created.payments.single().benefitIds)
 
-        compose.onNodeWithText("订阅", substring = false).performClick()
+        openServices()
         click("设备录入套餐")
         click("编辑订阅与到期日")
         fill("订阅 / 套餐名称", "已编辑套餐")
@@ -132,7 +137,7 @@ class MainActivityDeviceTest {
         val deleted = awaitLedger { it.plans.isEmpty() }
         assertTrue(deleted.benefits.isEmpty())
         assertEquals(created.payments, deleted.payments)
-        compose.onNodeWithText("账本", substring = false).performClick()
+        compose.onNodeWithContentDescription("返回账本").performClick()
         compose.onNodeWithText("全部明细",substring=false).performScrollTo().performClick()
         compose.onAllNodesWithText("设备录入套餐").onFirst().performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("2026-09-01",substring=false).assertExists()
@@ -150,7 +155,7 @@ class MainActivityDeviceTest {
         val created = awaitLedger { it.plans.size == 1 && it.payments.size == 1 }
         assertEquals("2024-02-29", Book.expiry(created.benefits.single(), created.plans.single()).toString())
 
-        compose.onNodeWithText("订阅", substring = false).performClick()
+        openServices()
         click("月末续费套餐")
         click("记录付款 / 提前续费")
         fill("付款日期", "2024-02-10")
@@ -182,7 +187,7 @@ class MainActivityDeviceTest {
         val plan=Plan(name="返回测试",amount="10",billingAnchor="2026-09-01")
         runBlocking { app.repository.update { Ledger(plans=listOf(plan),benefits=listOf(Benefit(planId=plan.id,name=plan.name,anchor="2026-10-01"))) } }
         compose.waitForIdle()
-        compose.onNodeWithText("订阅",substring=false).performClick()
+        openServices()
         click("返回测试")
         click("编辑订阅与到期日")
         openMoreOptions()
@@ -206,10 +211,10 @@ class MainActivityDeviceTest {
         compose.waitForIdle()
         androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
         compose.waitForIdle()
-        compose.onNodeWithText("订阅",substring=false).assertExists()
+        compose.onNodeWithText("服务管理",substring=false).assertExists()
         compose.onNodeWithContentDescription("记一笔订阅").performClick()
         compose.onNodeWithText("返回",substring=false).performClick()
-        compose.onNodeWithText("订阅",substring=false).assertExists()
+        compose.onNodeWithText("服务管理",substring=false).assertExists()
     }
 
     @Test fun compactCycleSelectorAndCollapsedBenefitsPreserveInput() {
@@ -262,7 +267,7 @@ class MainActivityDeviceTest {
         val custom=Benefit(planId=plan.id,name="独立权益",anchor="2024-02-10",renewals=1,giftDays=2)
         runBlocking { app.repository.update { Ledger(plans=listOf(plan),benefits=listOf(automatic,custom)) } }
         compose.waitForIdle()
-        compose.onNodeWithText("订阅",substring=false).performClick()
+        openServices()
         click(plan.name)
         click("编辑订阅与到期日")
         fill("扣款日期","2024-02-29")
@@ -357,7 +362,7 @@ class MainActivityDeviceTest {
         val saved=awaitLedger { it.payments.size==1 }
         assertEquals("USD",saved.payments.single().currency)
         assertEquals("142.80",saved.payments.single().cnyAmount)
-        compose.onNodeWithText("订阅",substring=false).performClick()
+        openServices()
         click("ChatGPT")
         click("记录付款 / 提前续费")
         fill("人民币实付金额","145.60")
@@ -370,7 +375,7 @@ class MainActivityDeviceTest {
         runBlocking { app.repository.update { it.copy(settings=it.settings.copy(rates=mapOf("USD" to "99"))) } }
         recreateDetails("foreign-after-recreate")
         click("返回")
-        compose.onNodeWithText("账本",substring=false).performClick()
+        compose.onNodeWithContentDescription("返回账本").performClick()
         assertTrue(compose.onAllNodesWithText("¥288.40",substring=false).fetchSemanticsNodes().isNotEmpty())
         screenshot("frozen-receipts")
     }
@@ -402,7 +407,7 @@ class MainActivityDeviceTest {
         compose.waitUntil(5000) { compose.onAllNodesWithText("哔哩哔哩大会员").fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithText("¥210.80",substring=false).assertExists()
         screenshot("overview-v1.1")
-        compose.onNodeWithText("订阅",substring=false).performClick()
+        openServices()
         compose.onNodeWithText("哔哩哔哩大会员").assertExists()
         compose.onNodeWithText("¥25.00",substring=false).assertExists()
         compose.onNodeWithText("CNY 25",substring=false).assertDoesNotExist()
@@ -426,7 +431,7 @@ class MainActivityDeviceTest {
         val plan=Plan(id="history-plan",name="补记测试",amount="30",billingAnchor=today.minusMonths(2).toString(),paidCycles=3)
         val benefit=Benefit(id="history-benefit",planId=plan.id,name="已有权益",anchor=today.plusMonths(1).toString(),giftDays=3)
         runBlocking {app.repository.update {Ledger(plans=listOf(plan),benefits=listOf(benefit))}}
-        compose.waitForIdle();compose.onNodeWithText("订阅",substring=false).performClick();click(plan.name)
+        compose.waitForIdle();openServices();click(plan.name)
         click("仅补记付款")
         compose.onNodeWithText("仅记账").assertIsSelected()
         compose.onNodeWithText("本次续费 1个月").assertDoesNotExist()
@@ -446,7 +451,7 @@ class MainActivityDeviceTest {
         val plan=Plan(id="cancel-plan",name="关闭续费测试",amount="30",billingAnchor=today.toString())
         val benefit=Benefit(id="cancel-benefit",planId=plan.id,name="仍可使用的权益",anchor=today.plusDays(3).toString())
         runBlocking {app.repository.update {Ledger(plans=listOf(plan),benefits=listOf(benefit))}}
-        compose.waitForIdle();compose.onNodeWithText("订阅",substring=false).performClick();click(plan.name)
+        compose.waitForIdle();openServices();click(plan.name)
         click("标记已关闭自动续费")
         val saved=awaitLedger {it.plans.singleOrNull()?.autoRenew==false}
         assertFalse(saved.plans.single().archived)
@@ -456,7 +461,8 @@ class MainActivityDeviceTest {
         assertTrue(Book.forecast(saved,today,today.plusDays(30)).isEmpty())
         compose.onNodeWithText("已标记关闭自动续费 · 有效期提醒仍保留").assertExists()
         screenshot("subscription-renewal-disabled")
-        click("返回");compose.onNodeWithText("到期",substring=false).performClick()
+        click("返回");compose.onNodeWithContentDescription("返回账本").performClick()
+        compose.onNodeWithText("到期",substring=false).performClick()
         compose.onNodeWithText(benefit.name,substring=false).assertExists()
     }
 
@@ -466,16 +472,16 @@ class MainActivityDeviceTest {
         val plans=names.mapIndexed {i,name->Plan(id="search-$i",name=name,amount="18",billingAnchor=today.toString())}
         val benefits=plans.map {Benefit(planId=it.id,name=it.name+"权益",anchor=today.plusMonths(1).toString())}
         runBlocking {app.repository.update {Ledger(plans=plans,benefits=benefits)}}
-        compose.waitForIdle();compose.onNodeWithText("订阅",substring=false).performClick()
-        fill("搜索订阅","音乐")
+        compose.waitForIdle();openServices()
+        fill("搜索服务","音乐")
         compose.onNodeWithText("网易云音乐",substring=false).assertExists()
         compose.onNodeWithText("QQ音乐",substring=false).assertExists()
         compose.onNodeWithText("ChatGPT",substring=false).assertDoesNotExist()
-        fill("搜索订阅","QQ")
+        fill("搜索服务","QQ")
         compose.onNodeWithText("QQ音乐",substring=false).assertExists()
         compose.onNodeWithText("网易云音乐",substring=false).assertDoesNotExist()
         screenshot("subscription-search")
-        fill("搜索订阅","")
+        fill("搜索服务","")
         names.forEach {compose.onNodeWithText(it,substring=false).assertExists()}
         assertEquals(plans,runBlocking {app.repository.read()}.plans)
     }
@@ -486,7 +492,7 @@ class MainActivityDeviceTest {
         val target=Plan(id="intent-target",name="通知目标订阅",amount="45",billingAnchor=today.toString())
         val benefits=listOf(first,target).map {Benefit(planId=it.id,name=it.name+"权益",anchor=today.plusMonths(1).toString())}
         runBlocking {app.repository.update {Ledger(plans=listOf(first,target),benefits=benefits)}}
-        compose.waitForIdle();compose.onNodeWithText("订阅",substring=false).performClick();click(first.name)
+        compose.waitForIdle();openServices();click(first.name)
         click("仅补记付款")
         fill("本次实付总额 ¥","17.50")
         fill("付款备注","A的未保存草稿")
@@ -527,7 +533,7 @@ class MainActivityDeviceTest {
         val expired=Benefit(id="expired-right",planId=plan.id,name="已过期权益",anchor=today.minusMonths(2).toString(),renewals=1)
         val active=Benefit(id="active-right",planId=plan.id,name="有效权益",anchor=today.toString(),renewals=2,giftDays=5)
         runBlocking {app.repository.update {Ledger(plans=listOf(plan),benefits=listOf(expired,active))}}
-        compose.waitForIdle();compose.onNodeWithText("订阅",substring=false).performClick();click(plan.name)
+        compose.waitForIdle();openServices();click(plan.name)
         click("记录付款 / 提前续费")
         compose.onNodeWithText("从付款日重新开通",substring=false)
             .performScrollTo().performClick().assertIsSelected()

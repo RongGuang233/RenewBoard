@@ -78,7 +78,7 @@ class MainTabNavigationDeviceTest {
         fun offset()=compose.onNode(hasScrollAction() and hasAnyDescendant(hasText("支出概览"))).fetchSemanticsNode()
             .config[SemanticsProperties.VerticalScrollAxisRange].value()
         val before=offset();assertTrue(before>0)
-        tab("订阅");tab("账本")
+        tab("到期");tab("账本")
         assertEquals(before,offset(),0f)
         compose.onNodeWithText("近30天",substring=false).assertExists()
         compose.onNodeWithContentDescription(description).assertIsSelected()

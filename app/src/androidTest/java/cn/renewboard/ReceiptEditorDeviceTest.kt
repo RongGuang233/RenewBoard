@@ -35,7 +35,8 @@ class ReceiptEditorDeviceTest {
     }
     private fun seed(p:Payment) {runBlocking {app.repository.update {Ledger(plans=listOf(Plan(id=p.planId,name=p.planName,amount="20",currency=p.currency,billingAnchor=p.date)),benefits=listOf(Benefit(planId=p.planId,name=p.planName,anchor=p.date)),payments=listOf(p))}};compose.waitForIdle()}
     private fun open() {
-        compose.onNodeWithText("订阅",substring=false).performClick()
+        compose.onNodeWithText("账本",substring=false).performClick()
+        compose.onNodeWithContentDescription("打开服务管理").performScrollTo().performClick()
         compose.onNodeWithText(original.planName,substring=false).performScrollTo().performClick()
         compose.onNodeWithText(original.date,substring=false).performScrollTo().performClick()
     }

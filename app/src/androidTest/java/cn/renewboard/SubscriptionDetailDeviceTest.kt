@@ -35,7 +35,8 @@ class SubscriptionDetailDeviceTest {
     private fun waitFor(check:(Ledger)->Boolean) {compose.waitUntil(10000) {check(ledger())};compose.waitForIdle()}
     private fun click(text:String)=compose.onNodeWithText(text,substring=false).performScrollTo().performClick()
     private fun openPlan(name:String,archived:Boolean=false) {
-        compose.onNodeWithText("订阅",substring=false).performClick()
+        compose.onNodeWithText("账本",substring=false).performClick()
+        compose.onNodeWithContentDescription("打开服务管理").performScrollTo().performClick()
         if(archived) click("已归档")
         click(name)
     }

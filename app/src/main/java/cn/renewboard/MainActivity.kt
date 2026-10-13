@@ -126,6 +126,7 @@ private fun money(totals: Map<String,BigDecimal>) = if(totals.isEmpty()) "暂无
     var receiptId by rememberSaveable { mutableStateOf<String?>(null) }
     var forecastOpen by rememberSaveable { mutableStateOf(false) }
     var accountHistoryId by rememberSaveable { mutableStateOf<String?>(null) }
+    var servicesOpen by rememberSaveable {mutableStateOf(false)}
     var paymentPlanId by rememberSaveable {mutableStateOf<String?>(null)}
     var paymentOnlyRecord by rememberSaveable {mutableStateOf(false)}
     var balanceAction by rememberSaveable {mutableStateOf<BalanceAction?>(null)}
@@ -143,7 +144,7 @@ private fun money(totals: Map<String,BigDecimal>) = if(totals.isEmpty()) "暂无
         val id=intent.getStringExtra("planId")
         if(id!=null) {
             if(ledger.plans.any {it.id==id}) {
-                creating=false;editId=null;receiptId=null;forecastOpen=false;accountHistoryId=null;detailId=id;tab=1
+                creating=false;editId=null;receiptId=null;forecastOpen=false;accountHistoryId=null;servicesOpen=false;detailId=id;tab=0
                 paymentOnlyRecord=false;balanceAction=null;usageAction=null
                 paymentPlanId=if(intent.getStringExtra("subscriptionAction")=="pay" && ledger.plans.single{it.id==id}.balanceAccount==null) id else null
                 when(intent.getStringExtra("subscriptionAction")) {
@@ -156,23 +157,25 @@ private fun money(totals: Map<String,BigDecimal>) = if(totals.isEmpty()) "暂无
     LaunchedEffect(receiptId,ledger.payments,received) {
         if(received!=null && receiptId!=null && ledger.payments.none {it.id==receiptId}) receiptId=null
     }
-    val hasPreviousPage=creating || editId!=null || detailId!=null
+    val hasPreviousPage=creating || editId!=null || detailId!=null || servicesOpen
     fun goBack() {
+        focusManager.clearFocus(force=true);keyboard?.hide()
         when {
             creating -> creating=false
             editId!=null -> editId=null
-            else -> detailId=null
+            detailId!=null -> detailId=null
+            else -> servicesOpen=false
         }
     }
     BackHandler(enabled=hasPreviousPage && !creating && editId==null && paymentPlanId==null && balanceAction==null && usageAction==null) { goBack() }
     Scaffold(snackbarHost={SnackbarHost(snack,modifier=Modifier.padding(bottom=if(hasPreviousPage) 80.dp else 0.dp).then(if(hasPreviousPage) Modifier.imePadding() else Modifier))}, topBar={
         if(hasPreviousPage && !creating && editId==null && paymentPlanId==null && balanceAction==null && usageAction==null && receiptId==null && accountHistoryId==null) Surface(color=Paper) {
             Row(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal=20.dp,vertical=8.dp)) {
-                PageBack(back=::goBack)
+                PageBack(description=if(servicesOpen && detailId==null) "返回账本" else "返回",back=::goBack)
             }
         }
     }, bottomBar={ if(!hasPreviousPage && !subpage && paymentPlanId==null && receiptId==null && !forecastOpen && accountHistoryId==null) NavigationBar(modifier=Modifier.imePadding(),containerColor=Paper) {
-        listOf("到期","订阅","账本","设备","设置").forEachIndexed { i,s -> NavigationBarItem(selected=tab==i,onClick={focusManager.clearFocus(force=true);keyboard?.hide();tab=i},icon={Icon(listOf(Icons.Outlined.Event,Icons.Outlined.Bookmarks,Icons.Outlined.ReceiptLong,Icons.Outlined.Devices,Icons.Outlined.Settings)[i],null)},label={Text(s)}) }
+        listOf("到期","账本","设备","设置").forEachIndexed { i,s -> NavigationBarItem(selected=tab==i,onClick={focusManager.clearFocus(force=true);keyboard?.hide();tab=i},icon={Icon(listOf(Icons.Outlined.Event,Icons.Outlined.ReceiptLong,Icons.Outlined.Devices,Icons.Outlined.Settings)[i],null)},label={Text(s)}) }
     } }) { padding ->
         val receipt=ledger.payments.find {it.id==receiptId}
         if(received==null) {
@@ -211,14 +214,6 @@ private fun money(totals: Map<String,BigDecimal>) = if(totals.isEmpty()) "暂无
             pageStates.SaveableStateProvider("forecast") {
                 Box(Modifier.fillMaxSize().padding(padding)) {ForecastScreen(ledger,{forecastOpen=false},::openPlan)}
             }
-        } else if(!hasPreviousPage && tab>=2) {
-            Box(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding).imePadding()) {
-                when(tab) {
-                    2 -> pageStates.SaveableStateProvider("ledger") {LedgerScreen(ledger,::change) { subpage=it }}
-                    3 -> pageStates.SaveableStateProvider("devices") {DevicesScreen(ledger,::change) { subpage=it }}
-                    4 -> SettingsScreen(ledger,::message) { subpage=it }
-                }
-            }
         } else if(detailId!=null) {
             val p=ledger.plans.find {it.id==detailId}
             if(p==null) {LaunchedEffect(detailId) {detailId=null}} else key(p.id) {
@@ -232,12 +227,28 @@ private fun money(totals: Map<String,BigDecimal>) = if(totals.isEmpty()) "暂无
                         openPayment={receiptId=it},openHistory={accountHistoryId=p.id},recordPayment={only->paymentOnlyRecord=only;paymentPlanId=p.id},save={repo.update(it)})
                 }
             }
-        } else pageStates.SaveableStateProvider(if(tab==0) "home" else "subscriptions") {
+        } else if(servicesOpen) pageStates.SaveableStateProvider("subscriptions") {
             Column(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding).padding(horizontal=20.dp).imePadding().verticalScroll(rememberScrollState()).padding(bottom=24.dp)) {
-                when(tab) {
-                    0 -> Overview(ledger,onAdd={creating=true},openForecast={forecastOpen=true},open=::openPlan)
-                    1 -> Subscriptions(ledger,onAdd={creating=true},open=::openPlan)
+                Subscriptions(ledger,onAdd={creating=true},open=::openPlan)
+            }
+        } else when(tab) {
+            0 -> pageStates.SaveableStateProvider("home") {
+                Column(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding).padding(horizontal=20.dp).imePadding().verticalScroll(rememberScrollState()).padding(bottom=24.dp)) {
+                    Overview(ledger,onAdd={creating=true},openForecast={forecastOpen=true},open=::openPlan)
                 }
+            }
+            1 -> pageStates.SaveableStateProvider("ledger") {
+                Box(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding).imePadding()) {
+                    LedgerScreen(ledger,::change,openServices={servicesOpen=true}) {subpage=it}
+                }
+            }
+            2 -> pageStates.SaveableStateProvider("devices") {
+                Box(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding).imePadding()) {
+                    DevicesScreen(ledger,::change) {subpage=it}
+                }
+            }
+            3 -> Box(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding).imePadding()) {
+                SettingsScreen(ledger,::message) {subpage=it}
             }
         }
     }
@@ -314,11 +325,11 @@ private fun money(totals: Map<String,BigDecimal>) = if(totals.isEmpty()) "暂无
     var costHelp by remember {mutableStateOf(false)}
     val today=LocalDate.now()
     val comparing=sort in listOf("单次金额","折合月费")
-    Title("我的订阅",action=onAdd)
+    Title("服务管理",action=onAdd)
     Row(verticalAlignment=Alignment.CenterVertically) {
-        Field("搜索订阅",query,{query=it},Modifier.weight(1f))
+        Field("搜索服务",query,{query=it},Modifier.weight(1f))
         Box {
-            IconButton(onClick={filters=true}) {Icon(Icons.Outlined.Tune,"订阅筛选与排序")}
+            IconButton(onClick={filters=true}) {Icon(Icons.Outlined.Tune,"服务筛选与排序")}
             DropdownMenu(filters,{filters=false}) {
                 listOf("全部","自动续费","手动续费").forEach {value->DropdownMenuItem(text={Text((if(renewalFilter==value) "✓ " else "")+value)},onClick={renewalFilter=value;filters=false})}
                 HorizontalDivider()

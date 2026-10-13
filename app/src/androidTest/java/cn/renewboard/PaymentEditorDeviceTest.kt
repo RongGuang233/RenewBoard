@@ -44,7 +44,8 @@ class PaymentEditorDeviceTest {
     }
     private fun fill(label: String,text: String) {compose.onNode(hasText(label) and hasSetTextAction()).performScrollTo().performTextReplacement(text)}
     private fun open(name: String) {
-        compose.onNodeWithText("订阅",substring=false).performClick()
+        compose.onNodeWithText("账本",substring=false).performClick()
+        compose.onNodeWithContentDescription("打开服务管理").performScrollTo().performClick()
         click(name);click("记录付款 / 提前续费")
         compose.onNodeWithText("记录付款",substring=false).assertExists()
     }
@@ -65,9 +66,11 @@ class PaymentEditorDeviceTest {
         compose.onNode(hasText("本次实付总额 ¥") and hasSetTextAction()).assertTextContains("35.80")
         back();compose.onNodeWithText("保留草稿",substring=false).performClick()
         back()
+        compose.onNodeWithContentDescription("返回账本").performClick()
         open(second.name)
         compose.onNode(hasText("本次实付总额 ¥") and hasSetTextAction()).assertTextContains("20")
         back();back()
+        compose.onNodeWithContentDescription("返回账本").performClick()
         open(first.name)
         compose.onNodeWithText("已恢复付款草稿").assertExists()
         compose.onNode(hasText("本次实付总额 ¥") and hasSetTextAction()).assertTextContains("35.80")
@@ -75,6 +78,7 @@ class PaymentEditorDeviceTest {
         assertNull(DraftStore(app).read("payment:${first.id}"))
         assertTrue(runBlocking {app.repository.read()}.payments.isEmpty())
         back()
+        compose.onNodeWithContentDescription("返回账本").performClick()
         open(first.name)
         fill("本次实付总额 ¥","99")
         fill("本次实付总额 ¥","20")

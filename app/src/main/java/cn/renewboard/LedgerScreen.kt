@@ -45,7 +45,7 @@ private fun within(p: Payment, from: LocalDate?, until: LocalDate?) =
     (from==null || LocalDate.parse(p.date)>=from) && (until==null || LocalDate.parse(p.date)<until)
 private data class ReceiptRange(val title:String,val from:LocalDate?,val until:LocalDate?,val planName:String?=null,val planId:String?=null,val refundOf:String?=null,val missingOnly:Boolean=false)
 
-@Composable internal fun LedgerScreen(l:Ledger,change:((Ledger)->Ledger)->Unit,onSubpageChange:(Boolean)->Unit={}) {
+@Composable internal fun LedgerScreen(l:Ledger,change:((Ledger)->Ledger)->Unit,openServices:()->Unit={},onSubpageChange:(Boolean)->Unit={}) {
     val today=LocalDate.now()
     val month=YearMonth.from(today)
     val overviewScroll=rememberScrollState()
@@ -93,7 +93,7 @@ private data class ReceiptRange(val title:String,val from:LocalDate?,val until:L
     Column(Modifier.fillMaxSize().verticalScroll(overviewScroll).padding(horizontal=20.dp).padding(bottom=24.dp)) {
     Row(Modifier.fillMaxWidth().padding(top=14.dp,bottom=4.dp),verticalAlignment=Alignment.CenterVertically) {
         Text("支出概览",fontSize=28.sp,fontWeight=FontWeight.Bold,modifier=Modifier.weight(1f))
-        TextButton({detail=selectedDetail ?: ReceiptRange("全部付款",null,null)}) { Text(if(selectedDetail!=null) "所选时段明细" else "全部明细");Icon(Icons.Outlined.ChevronRight,null) }
+        TextButton(openServices,modifier=Modifier.semantics {contentDescription="打开服务管理"}) {Text("服务管理");Icon(Icons.Outlined.ChevronRight,null)}
     }
     Heading("支出趋势", "截至 ${today.monthValue}月${today.dayOfMonth}日")
     Box {
@@ -152,6 +152,9 @@ private data class ReceiptRange(val title:String,val from:LocalDate?,val until:L
             }
             if(buckets.any { it.summary.known.signum()<0 }) Text("零线上方为净支出，下方为净退款",fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
         }
+    }
+    Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.End) {
+        TextButton({detail=selectedDetail ?: ReceiptRange("全部付款",null,null)}) {Text(if(selectedDetail!=null) "所选时段明细" else "全部明细");Icon(Icons.Outlined.ChevronRight,null)}
     }
     Heading("钱花在哪里", "$rankPeriod · 按应用")
     val ranking=rankedPayments.groupBy { it.planName }.map { (name,ps)->name to LedgerStats.summary(ps) }.sortedByDescending { it.second.known }

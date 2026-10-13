@@ -42,6 +42,15 @@ class UsageBalanceDeviceTest {
     }
     private fun click(s:String)=compose.onNode(hasText(s,substring=false) and !hasSetTextAction()).performScrollTo().performClick()
     private fun tab(s:String)=compose.onNodeWithText(s,substring=false).performClick()
+    private fun openServices() {
+        tab("账本")
+        compose.onNodeWithContentDescription("打开服务管理").performScrollTo().performClick()
+    }
+    private fun returnToLedger() {
+        compose.onNodeWithContentDescription("返回账本").performClick()
+        compose.onNodeWithText("支出概览",substring=false).assertExists()
+        compose.waitUntil(10000) {ViewCompat.getRootWindowInsets(compose.activity.window.decorView)?.isVisible(WindowInsetsCompat.Type.ime())==false}
+    }
     private fun create(name:String,balance:String) {
         compose.onNodeWithContentDescription("记一笔订阅").performClick()
         field("搜索会员").performTextReplacement(name)
@@ -53,7 +62,7 @@ class UsageBalanceDeviceTest {
         waitFor {it.plans.size==1}
         assertNotNull(read().plans.single().usageBalance)
         assertTrue(read().payments.isEmpty());assertTrue(read().benefits.isEmpty())
-        tab("订阅");click(name)
+        openServices();click(name)
     }
     private fun back() {compose.activityRule.scenario.onActivity {it.onBackPressedDispatcher.onBackPressed()};compose.waitForIdle()}
     @Test fun walletCreationTopupAndConsumptionDoNotDuplicateExpenses() {
@@ -125,25 +134,26 @@ class UsageBalanceDeviceTest {
         waitFor {it.plans.size==2}
         assertEquals(Cycle.MONTH,read().plans.single {it.name=="服务器"}.cycle)
     }
-    @Test fun dueAndSubscriptionsSwitchWithKeyboardAndRetainQuery() {
-        tab("订阅")
-        field("搜索订阅").performClick().performTextInput("DeepSeek")
+    @Test fun serviceManagementReturnsWithKeyboardAndRetainsQueryAcrossTabsAndRecreation() {
+        openServices()
+        field("搜索服务").performClick().performTextInput("DeepSeek")
         compose.waitUntil(10000) {ViewCompat.getRootWindowInsets(compose.activity.window.decorView)?.isVisible(WindowInsetsCompat.Type.ime())==true}
-        compose.onNodeWithText("到期",substring=false).assertIsDisplayed().performClick()
-        compose.onNodeWithText("订阅簿",substring=false).assertExists()
-        compose.waitUntil(10000) {ViewCompat.getRootWindowInsets(compose.activity.window.decorView)?.isVisible(WindowInsetsCompat.Type.ime())==false}
+        returnToLedger()
+        tab("到期");compose.onNodeWithText("订阅簿",substring=false).assertExists()
         repeat(12) {
-            tab("订阅");compose.onNodeWithText("我的订阅",substring=false).assertExists()
-            field("搜索订阅").assertTextContains("DeepSeek")
+            openServices();compose.onNodeWithText("服务管理",substring=false).assertExists()
+            field("搜索服务").assertTextContains("DeepSeek")
+            returnToLedger()
             tab("到期");compose.onNodeWithText("订阅簿",substring=false).assertExists()
         }
-        tab("订阅");field("搜索订阅").performClick()
+        openServices();field("搜索服务").performClick()
         compose.waitUntil(10000) {ViewCompat.getRootWindowInsets(compose.activity.window.decorView)?.isVisible(WindowInsetsCompat.Type.ime())==true}
-        tab("到期");tab("订阅");compose.onNodeWithText("我的订阅",substring=false).assertExists()
+        returnToLedger();tab("到期");openServices()
+        compose.onNodeWithText("服务管理",substring=false).assertExists()
         compose.activityRule.scenario.recreate();compose.waitForIdle()
-        compose.waitUntil(10000) {compose.onAllNodesWithText("我的订阅",substring=false).fetchSemanticsNodes().isNotEmpty()}
-        field("搜索订阅").assertTextContains("DeepSeek")
-        tab("到期");compose.onNodeWithText("订阅簿",substring=false).assertExists()
+        compose.waitUntil(10000) {compose.onAllNodesWithText("服务管理",substring=false).fetchSemanticsNodes().isNotEmpty()}
+        field("搜索服务").assertTextContains("DeepSeek")
+        returnToLedger();tab("到期");compose.onNodeWithText("订阅簿",substring=false).assertExists()
     }
 }
 
