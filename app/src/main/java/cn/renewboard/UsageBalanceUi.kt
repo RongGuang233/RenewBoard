@@ -18,7 +18,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
@@ -30,17 +32,17 @@ import java.time.format.DateTimeFormatter
 @Serializable internal enum class UsageAction { TOP_UP, CALIBRATE }
 @Serializable private data class UsageDraft(val planId:String,val amount:String,val date:String,val cnyAmount:String="",val affectBalance:Boolean=true)
 
-@Composable internal fun UsageBalanceCard(p:Plan,open:()->Unit) {
-    Card(onClick=open,modifier=Modifier.fillMaxWidth().padding(vertical=6.dp),shape=RoundedCornerShape(20.dp),colors=CardDefaults.cardColors(containerColor=MaterialTheme.colorScheme.surfaceContainerLowest)) {
-        Row(Modifier.padding(16.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(12.dp)) {
-            ServiceIcon(p.name)
+@Composable internal fun UsageBalanceCard(p:Plan,compact:Boolean=false,open:()->Unit) {
+    Card(onClick=open,modifier=Modifier.fillMaxWidth().padding(vertical=6.dp),shape=RoundedCornerShape(20.dp),colors=CardDefaults.cardColors(containerColor=if(compact) Color.White else MaterialTheme.colorScheme.surfaceContainerLowest)) {
+        Row(Modifier.padding(if(compact) 12.dp else 16.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(12.dp)) {
+            ServiceIcon(p.name,size=if(compact) 32.dp else 48.dp)
             Column(Modifier.weight(1f)) {
-                Text(p.name,fontWeight=FontWeight.SemiBold)
+                Text(p.name,fontWeight=FontWeight.SemiBold,fontSize=if(compact) 17.sp else MaterialTheme.typography.bodyLarge.fontSize)
                 Text(if(p.archived) "已归档" else "${p.usageBalance!!.asOf} 更新",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
             }
             Column(horizontalAlignment=Alignment.End) {
-                Text(displayMoney(p.currency,p.usageBalance!!.balance),fontWeight=FontWeight.Bold,color=MaterialTheme.colorScheme.primary)
-                Text("平台余额",style=MaterialTheme.typography.bodySmall)
+                Text(displayMoney(p.currency,p.usageBalance!!.balance),fontWeight=FontWeight.Bold,color=MaterialTheme.colorScheme.primary,fontSize=if(compact) 18.sp else MaterialTheme.typography.bodyLarge.fontSize)
+                if(!compact) Text("平台余额",style=MaterialTheme.typography.bodySmall)
             }
         }
     }

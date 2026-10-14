@@ -285,12 +285,13 @@ private fun money(totals: Map<String,BigDecimal>) = if(totals.isEmpty()) "暂无
         }
     }
     val balances=l.plans.filter { it.balanceAccount!=null && !it.archived }
+    val platformBalances=l.plans.filter {it.usageBalance!=null && !it.archived}
     val urgentBalances=balances.filter {Prepaid.balance(it,today).signum()<0 || Prepaid.rechargeDate(it)?.let {d->d<=today.plusDays(7)}==true}
     if(urgentBalances.isNotEmpty()) {
         Section("话费待充值")
         urgentBalances.forEach {BalanceCard(it,compact=true) {open(it.id)}}
     }
-    if(upcoming.isNotEmpty() || balances.isEmpty()) {
+    if(upcoming.isNotEmpty() || (balances.isEmpty() && platformBalances.isEmpty())) {
     Row(Modifier.fillMaxWidth().padding(top=20.dp,bottom=10.dp),horizontalArrangement=Arrangement.SpaceBetween,verticalAlignment=Alignment.CenterVertically) {
         Text("最近到期",fontSize=22.sp,fontWeight=FontWeight.Bold)
         if(soon>0) Surface(color=Color(0xFFFFE9D8),shape=RoundedCornerShape(12.dp)) { Text("本周 $soon 项",color=Amber,fontWeight=FontWeight.SemiBold,modifier=Modifier.padding(horizontal=12.dp,vertical=8.dp)) }
@@ -316,9 +317,10 @@ private fun money(totals: Map<String,BigDecimal>) = if(totals.isEmpty()) "暂无
         }
     }
     val healthyBalances=balances.filterNot {it in urgentBalances}
-    if(healthyBalances.isNotEmpty()) {
-        Section("话费余额")
+    if(healthyBalances.isNotEmpty() || platformBalances.isNotEmpty()) {
+        Section("余额")
         healthyBalances.forEach {BalanceCard(it,compact=true) {open(it.id)}}
+        platformBalances.forEach {UsageBalanceCard(it,compact=true) {open(it.id)}}
     }
 }
 
