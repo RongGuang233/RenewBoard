@@ -8,6 +8,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.MoreVert
+import androidx.compose.material.icons.outlined.Refresh
+import androidx.compose.material.icons.outlined.ExpandMore
+import androidx.compose.material.icons.outlined.ExpandLess
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -21,6 +24,8 @@ import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import java.time.LocalDate
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 
 @Serializable internal enum class UsageAction { TOP_UP, CALIBRATE }
 @Serializable private data class UsageDraft(val planId:String,val amount:String,val date:String,val cnyAmount:String="",val affectBalance:Boolean=true)
@@ -42,9 +47,29 @@ import java.time.LocalDate
 }
 
 @Composable internal fun UsageBalanceDetail(l:Ledger,p:Plan,onEdit:()->Unit,change:((Ledger)->Ledger)->Unit,onDeleted:()->Unit,
-    openPayment:(String)->Unit,openHistory:()->Unit,openAction:(UsageAction)->Unit) {
+    openPayment:(String)->Unit,openHistory:()->Unit,openAction:(UsageAction)->Unit,openConnection:()->Unit={}) {
+    val app=LocalContext.current.applicationContext as RenewApp
     var menu by remember {mutableStateOf(false)}
     var deleting by remember {mutableStateOf(false)}
+    var disconnecting by remember {mutableStateOf(false)}
+    val initialConnection=remember(p.id) {runCatching {app.platformConnections.connection(p.id)}}
+    var connection by remember(p.id) {mutableStateOf(initialConnection.getOrNull())}
+    val preset=servicePresetFor(p.name)
+    val canConnect=connection!=null || preset==null || preset.name=="DeepSeek API"
+    var refreshing by remember {mutableStateOf(false)}
+    var error by remember {mutableStateOf(initialConnection.exceptionOrNull()?.let {"无法读取平台连接，请重新连接"})}
+    var breakdown by rememberSaveable {mutableStateOf(false)}
+    val scope=rememberCoroutineScope()
+    fun refresh() {
+        if(refreshing) return
+        refreshing=true;error=null
+        scope.launch {
+            try {app.platformBalances.refresh(p.id);connection=app.platformConnections.connection(p.id)}
+            catch(e:CancellationException) {throw e}
+            catch(e:Exception) {error=platformBalanceError(e)}
+            finally {refreshing=false}
+        }
+    }
     Scaffold(modifier=Modifier.imePadding(),containerColor=MaterialTheme.colorScheme.background,contentWindowInsets=WindowInsets(0,0,0,0),bottomBar={
         Surface {Button(onClick={if(p.archived) change {old->old.copy(plans=old.plans.map {if(it.id==p.id) it.copy(archived=false) else it})} else openAction(UsageAction.TOP_UP)},
             modifier=Modifier.fillMaxWidth().padding(horizontal=20.dp,vertical=12.dp).heightIn(min=48.dp)) {Text(if(p.archived) "恢复使用" else "记录充值")}}
@@ -53,9 +78,11 @@ import java.time.LocalDate
             Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(12.dp)) {
                 ServiceIcon(p.name,size=40.dp);Text(p.name,style=MaterialTheme.typography.headlineSmall,fontWeight=FontWeight.Bold,modifier=Modifier.weight(1f))
                 Box {
-                    IconButton({menu=true}) {Icon(Icons.Outlined.MoreVert,"余额账户更多操作")}
+                    IconButton({menu=true},enabled=!refreshing) {Icon(Icons.Outlined.MoreVert,"余额账户更多操作")}
                     DropdownMenu(menu,{menu=false}) {
                         DropdownMenuItem(text={Text("编辑账户")},onClick={menu=false;onEdit()})
+                        if(!p.archived && canConnect) DropdownMenuItem(text={Text(if(connection==null) "连接平台" else "更换密钥")},onClick={menu=false;openConnection()})
+                        if(connection!=null) DropdownMenuItem(text={Text("断开连接")},onClick={menu=false;disconnecting=true})
                         if(!p.archived) DropdownMenuItem(text={Text("归档订阅")},onClick={menu=false;change {old->old.copy(plans=old.plans.map {if(it.id==p.id) it.copy(archived=true) else it})}})
                         DropdownMenuItem(text={Text("删除订阅")},onClick={menu=false;deleting=true})
                     }
@@ -63,11 +90,32 @@ import java.time.LocalDate
             }
             Card(Modifier.fillMaxWidth(),colors=CardDefaults.cardColors(containerColor=MaterialTheme.colorScheme.primaryContainer)) {
                 Column(Modifier.padding(20.dp),verticalArrangement=Arrangement.spacedBy(6.dp)) {
-                    Text(if(p.archived) "已归档 · 平台余额" else "平台余额")
+                    Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically) {
+                        Text(if(p.archived) "已归档 · 平台余额" else "平台余额",modifier=Modifier.weight(1f))
+                        if(connection!=null && !p.archived) IconButton(::refresh,enabled=!refreshing) {
+                            if(refreshing) CircularProgressIndicator(Modifier.size(20.dp),strokeWidth=2.dp)
+                            else Icon(Icons.Outlined.Refresh,"刷新余额")
+                        }
+                    }
                     Text(displayMoney(p.currency,p.usageBalance!!.balance),style=MaterialTheme.typography.headlineLarge,fontWeight=FontWeight.Bold)
-                    Text("${p.usageBalance.asOf} 查询",style=MaterialTheme.typography.bodySmall)
+                    val snapshot=connection?.snapshot
+                    if(snapshot==null) Text("${p.usageBalance.asOf} 查询",style=MaterialTheme.typography.bodySmall)
+                    else {
+                        Text("最近联网查询 ${snapshot.queriedAt.atZone(ZoneId.systemDefault()).format(DateTimeFormatter.ofPattern("MM-dd HH:mm"))}",style=MaterialTheme.typography.bodySmall)
+                        if(snapshot.currency!=p.currency || java.math.BigDecimal(snapshot.totalBalance).compareTo(java.math.BigDecimal(p.usageBalance.balance))!=0 || snapshot.queriedAt.atZone(ZoneId.systemDefault()).toLocalDate().toString()!=p.usageBalance.asOf)
+                            Text("${p.usageBalance.asOf} 手动更新",style=MaterialTheme.typography.bodySmall)
+                        TextButton({breakdown=!breakdown},contentPadding=PaddingValues(0.dp)) {
+                            Text(if(breakdown) "收起查询明细" else "查询明细")
+                            Icon(if(breakdown) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore,null)
+                        }
+                        if(breakdown) {
+                            Text("充值余额 ${displayMoney(snapshot.currency,snapshot.toppedUpBalance)}",style=MaterialTheme.typography.bodyMedium)
+                            Text("赠金 ${displayMoney(snapshot.currency,snapshot.grantedBalance)}",style=MaterialTheme.typography.bodyMedium)
+                        }
+                    }
                 }
             }
+            error?.let {Text(it,color=MaterialTheme.colorScheme.error,style=MaterialTheme.typography.bodySmall)}
             if(!p.archived) OutlinedButton(onClick={openAction(UsageAction.CALIBRATE)},modifier=Modifier.fillMaxWidth()) {Text("更新余额")}
             Text("充值计支出，余额变化不重复记账。",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
             if(p.note.isNotBlank()) Text(p.note)
@@ -86,6 +134,13 @@ import java.time.LocalDate
             Spacer(Modifier.height(12.dp))
         }
     }
+    if(disconnecting) AlertDialog(onDismissRequest={disconnecting=false},title={Text("断开 DeepSeek 连接？")},text={Text("保留当前余额和充值记录，删除本机连接密钥。")},confirmButton={TextButton({
+        scope.launch {
+            try {app.platformBalances.disconnect(p.id);connection=null;breakdown=false;error=null;disconnecting=false}
+            catch(e:CancellationException) {throw e}
+            catch(e:Exception) {error=platformBalanceError(e);disconnecting=false}
+        }
+    }) {Text("断开连接")}},dismissButton={TextButton({disconnecting=false}) {Text("取消")}})
     if(deleting) DeletePlanDialog(l,p,{deleting=false}) {include->change {Book.delete(it,p.id,include)};deleting=false;onDeleted()}
 }
 

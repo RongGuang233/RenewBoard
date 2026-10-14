@@ -28,13 +28,15 @@ class Repository(val db: BookDatabase,
     val flow: Flow<Ledger> = db.book().observe().map { parse(it) }
     private fun parse(row: BookRow?) = row?.let { Book.json.decodeFromString<Ledger>(it.payload) } ?: Ledger()
     suspend fun read() = parse(db.book().read())
-    suspend fun update(transform: (Ledger) -> Ledger) {
+    suspend fun update(transform: (Ledger) -> Ledger) = update(transform,onCommitted={})
+    internal suspend fun update(transform: (Ledger) -> Ledger,onCommitted:()->Unit) {
         val (before, after) = db.withTransaction {
             val before = read()
             val next = transform(before); Book.validate(next)
             db.book().put(BookRow(payload = Book.json.encodeToString(next)))
             before to next
         }
+        onCommitted()
         ledgerChanged(before, after)
         changed()
     }
@@ -55,11 +57,18 @@ class Repository(val db: BookDatabase,
 }
 class RenewApp: Application() {
     lateinit var repository: Repository
+    internal var platformBalanceQuery: PlatformBalanceQuery = DeepSeekBalanceQuery()
+    internal val platformConnections by lazy {PlatformConnectionStore(this)}
+    internal val platformBalances by lazy {PlatformBalanceService({repository},platformConnections,{platformBalanceQuery})}
     override fun onCreate() {
         super.onCreate()
         repository = Repository(Room.databaseBuilder(this, BookDatabase::class.java, "renewboard.db").build(),
             ledgerChanged = { before, after ->
-                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { Jobs.clearResolvedReminders(this@RenewApp, before, after) }
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    Jobs.clearResolvedReminders(this@RenewApp, before, after)
+                    before.plans.filter {it.usageBalance!=null && after.plans.none {p->p.id==it.id && p.usageBalance!=null}}
+                        .forEach {platformConnections.disconnect(it.id)}
+                }
             }, changed = { Jobs.backup(this) })
         Jobs.schedule(this)
     }

@@ -38,7 +38,10 @@ class MainActivityDeviceTest {
 
     private fun openServices() {
         compose.onNodeWithText("账本",substring=false).performClick()
-        compose.onNodeWithContentDescription("打开服务管理").performScrollTo().performClick()
+        try {
+            compose.onNodeWithText("账本",substring=false).assertIsSelected()
+            compose.onNodeWithContentDescription("打开服务管理").performScrollTo().performClick()
+        } catch(e:Throwable) {throw AssertionError("Navigation after saving\n"+compose.onRoot(useUnmergedTree=true).printToString(),e)}
     }
 
     private fun fill(label: String, value: String) {
