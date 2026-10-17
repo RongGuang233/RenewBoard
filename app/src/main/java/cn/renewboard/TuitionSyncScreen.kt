@@ -5,6 +5,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -25,13 +26,19 @@ import java.time.Instant
     Text("手机读取：${display(ledger.assets.tuitionFetchedAt)}", style = MaterialTheme.typography.bodySmall)
 }
 
-// Teacher checks published/fetched dates, then explicitly refreshes. Configuration stays secondary.
-@Composable internal fun TuitionSyncScreen(ledger: Ledger) {
+// A homepage refresh is an explicit user action; merely opening students never downloads.
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable internal fun TuitionSyncScreen(
+    ledger: Ledger,
+    refreshOnOpen: Boolean = false,
+    onRefreshConsumed: () -> Unit = {},
+    studentContent: @Composable () -> Unit = {},
+) {
     val app = LocalContext.current.applicationContext as RenewApp
     val store = remember { app.tuitionConnection }
     val scope = rememberCoroutineScope()
     var configured by remember { mutableStateOf(store.configured) }
-    var editing by remember { mutableStateOf(!configured) }
+    var editing by remember { mutableStateOf(false) }
     var url by remember { mutableStateOf("") }
     var token by remember { mutableStateOf("") }
     var secret by remember { mutableStateOf("") }
@@ -41,6 +48,7 @@ import java.time.Instant
     var pending by remember { mutableStateOf<TuitionSnapshot?>(null) }
     var selected by remember { mutableStateOf(setOf<String>()) }
     var disconnect by remember { mutableStateOf(false) }
+    var refreshConsumed by rememberSaveable { mutableStateOf(false) }
     fun operation(block: suspend () -> Unit) {
         if(busy) return
         busy = true; message = null
@@ -51,33 +59,55 @@ import java.time.Instant
             finally { busy = false }
         }
     }
-    LaunchedEffect(Unit) {
-        try { existing = withContext(Dispatchers.IO) { store.read() }; url = existing?.url.orEmpty() }
-        catch(e: Exception) { message = e.message; editing = true }
-    }
     suspend fun apply(snapshot: TuitionSnapshot, ids: Set<String>) {
         app.repository.update { Assets.importTuition(it, snapshot, ids, Instant.now().toString()) }
         pending = null
         message = "已更新学费余额；银行卡余额请按实际金额单独更新"
     }
+    fun refresh() {
+        if(!configured) {
+            editing = true
+            return
+        }
+        operation {
+            val connection = withContext(Dispatchers.IO) { store.read() }
+                ?: throw TuitionSyncException("请先填写连接设置")
+            val snapshot = app.tuitionQuery.download(connection)
+            val newStudents = Assets.newTuitionStudents(ledger, snapshot)
+            if(newStudents.isEmpty()) apply(snapshot, emptySet()) else {
+                selected = newStudents.filter { it.status == "active" }.map { it.id }.toSet()
+                pending = snapshot
+            }
+        }
+    }
+    LaunchedEffect(Unit) {
+        val shouldRefresh = refreshOnOpen && !refreshConsumed
+        if(refreshOnOpen) {
+            refreshConsumed = true
+            onRefreshConsumed()
+        }
+        try {
+            existing = withContext(Dispatchers.IO) { store.read() }
+            url = existing?.url.orEmpty()
+            configured = existing != null
+            if(shouldRefresh) refresh()
+        } catch(e: CancellationException) { throw e }
+        catch(e: Exception) { message = e.message; editing = true }
+    }
     Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(bottom = 24.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        Card(Modifier.fillMaxWidth()) {
+        AssetCard {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("LessonManager", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                Text("电脑记课后点击「发布学费余额」，再在这里手动刷新。只读取学生余额，不修改课程或银行卡。")
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text("学费同步", modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold)
+                    TextButton(onClick = { editing = true }, enabled = !busy) { Text("连接设置") }
+                }
+                Text("在 LessonManager 记课并发布后，手动刷新余额。",
+                    style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 TuitionSyncDates(ledger)
-                Button(onClick = { operation {
-                    val connection = withContext(Dispatchers.IO) { store.read() }
-                        ?: throw TuitionSyncException("请先填写连接设置")
-                    val snapshot = app.tuitionQuery.download(connection)
-                    val newStudents = Assets.newTuitionStudents(ledger, snapshot)
-                    if(newStudents.isEmpty()) apply(snapshot, emptySet()) else {
-                        selected = newStudents.filter { it.status == "active" }.map { it.id }.toSet()
-                        pending = snapshot
-                    }
-                } }, enabled = configured && !busy && pending == null, modifier = Modifier.fillMaxWidth()) { Text("刷新学费余额") }
-                TextButton(onClick = { editing = !editing }, enabled = !busy) { Text(if(editing) "收起连接设置" else "连接设置") }
+                Button(onClick = { refresh() }, enabled = !busy && pending == null,
+                    modifier = Modifier.fillMaxWidth()) { Text(if(configured) "刷新学费余额" else "连接学费同步") }
             }
         }
         if(busy) LinearProgressIndicator(Modifier.fillMaxWidth())
@@ -98,30 +128,49 @@ import java.time.Instant
                                 Text(when(student.status) { "archived" -> "已归档"; "paused" -> "已暂停"; else -> "在读" } +
                                     if(student.verified) "" else " · 待核对", style = MaterialTheme.typography.bodySmall)
                             }
-                            Text(displayMoney("CNY", java.math.BigDecimal.valueOf(student.balanceCents, 2).toPlainString()))
+                            Column(horizontalAlignment = Alignment.End) {
+                                Text(displayMoney("CNY", java.math.BigDecimal.valueOf(student.balanceCents, 2).abs().toPlainString()))
+                                Text(when {
+                                    student.balanceCents > 0 -> "待上课预收款"
+                                    student.balanceCents < 0 -> "已上课待收款"
+                                    else -> "已结清"
+                                }, style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
                         }
                     }
-                    Text("正余额是待授课学费，作为负债；负余额是已上课待收款。")
+                    Text("待上课预收款计入负债；已上课待收款计入资产。")
                     Button(onClick = { operation { apply(snapshot, selected) } }, enabled = !busy,
                         modifier = Modifier.fillMaxWidth()) { Text("确认导入并更新") }
                     TextButton(onClick = { pending = null }, enabled = !busy) { Text("取消") }
                 }
             }
         }
-        if(editing) {
-            Field("HTTPS 同步地址", url, { url = it })
-            Field("读取令牌", token, { token = it }, secret = true)
-            Field("加密密钥", secret, { secret = it }, secret = true)
-            Hint(if(existing != null) "令牌和密钥留空可保留已保存值。只保存到本机，不加入 JSON 或 WebDAV 备份。" else
-                "填写电脑发布端的加密密钥和服务器读取令牌。连接信息不加入备份；更换手机后重新连接。")
-            Button(onClick = { operation {
-                val connection = TuitionConnection(url.trim(), token.trim().ifEmpty { existing?.token.orEmpty() },
-                    secret.trim().ifEmpty { existing?.encryptionKey.orEmpty() })
-                withContext(Dispatchers.IO) { store.save(connection) }
-                existing = connection; configured = true; editing = false; token = ""; secret = ""; pending = null
-                message = "连接已保存，点击刷新读取最新学费余额"
-            } }, enabled = !busy, modifier = Modifier.fillMaxWidth()) { Text("保存连接") }
-            if(configured) TextButton(onClick = { disconnect = true }, enabled = !busy) { Text("断开学费连接") }
+        studentContent()
+    }
+    if(editing) {
+        ModalBottomSheet(onDismissRequest = { if(!busy) { editing = false; token = ""; secret = "" } },
+            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
+            Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState())
+                .padding(horizontal = 20.dp).padding(bottom = 28.dp).imePadding(),
+                verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("学费连接设置", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+                Field("HTTPS 同步地址", url, { url = it })
+                Field("读取令牌", token, { token = it }, secret = true)
+                Field("加密密钥", secret, { secret = it }, secret = true)
+                Hint(if(existing != null) "令牌和密钥留空可保留已保存值。只保存到本机，不加入 JSON 或 WebDAV 备份。" else
+                    "填写电脑发布端的加密密钥和服务器读取令牌。连接信息不加入备份；更换手机后重新连接。")
+                Button(onClick = { operation {
+                    val connection = TuitionConnection(url.trim(), token.trim().ifEmpty { existing?.token.orEmpty() },
+                        secret.trim().ifEmpty { existing?.encryptionKey.orEmpty() })
+                    withContext(Dispatchers.IO) { store.save(connection) }
+                    existing = connection; configured = true; editing = false; token = ""; secret = ""; pending = null
+                    message = "连接已保存，点击刷新读取最新学费余额"
+                } }, enabled = !busy, modifier = Modifier.fillMaxWidth()) { Text("保存连接") }
+                if(busy) LinearProgressIndicator(Modifier.fillMaxWidth())
+                message?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                if(configured) TextButton(onClick = { disconnect = true }, enabled = !busy) { Text("断开学费连接") }
+            }
         }
     }
     if(disconnect) AlertDialog(onDismissRequest = { disconnect = false }, title = { Text("断开学费连接？") },

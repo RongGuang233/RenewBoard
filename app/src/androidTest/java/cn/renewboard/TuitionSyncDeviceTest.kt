@@ -14,6 +14,7 @@ import org.junit.Assert.*
 import org.junit.runner.RunWith
 import java.time.Instant
 import java.util.Base64
+import java.util.concurrent.atomic.AtomicInteger
 
 /** Isolated debug data and an injected query; no real server or credentials. */
 @RunWith(AndroidJUnit4::class)
@@ -30,6 +31,7 @@ class TuitionSyncDeviceTest {
         app = ApplicationProvider.getApplicationContext(); check(app.packageName.endsWith(".debug"))
         original = app.tuitionQuery
         WorkManager.getInstance(app).cancelAllWork().result.get()
+        app.getSharedPreferences("asset-display",Context.MODE_PRIVATE).edit().clear().commit()
         app.tuitionConnection.disconnect()
         app.tuitionQuery = TuitionQuery { error("Test must inject its query") }
         runBlocking { app.repository.restore(Backup(data=Ledger(assets=AssetBook(accounts=listOf(
@@ -38,6 +40,7 @@ class TuitionSyncDeviceTest {
     }
     @After fun cleanup() {
         app.tuitionQuery = original; app.tuitionConnection.disconnect()
+        app.getSharedPreferences("asset-display",Context.MODE_PRIVATE).edit().clear().commit()
         runBlocking { app.repository.restore(Backup(data=Ledger())) }
         WorkManager.getInstance(app).cancelAllWork().result.get()
     }
@@ -48,7 +51,9 @@ class TuitionSyncDeviceTest {
     }
     private fun open() {
         compose.onNodeWithText("资产",substring=false).performClick()
-        click("学费同步")
+        compose.onNodeWithContentDescription("资产管理菜单").performScrollTo().performClick()
+        compose.onNode(hasText("学费同步") and hasAnyAncestor(isPopup())).performClick()
+        compose.waitForIdle()
     }
     private fun waitFor(predicate: () -> Boolean) { compose.waitUntil(10000,predicate); compose.waitForIdle() }
     private fun screenshot(name: String) {
@@ -95,6 +100,36 @@ class TuitionSyncDeviceTest {
         click("刷新学费余额")
         compose.onNodeWithText("无法读取学费余额，请检查网络后重试").assertExists()
         assertEquals(before,read())
+    }
+
+    @Test fun viewingStudentsNeverDownloadsAndHomepageRefreshRunsOnce() {
+        app.tuitionConnection.save(connection)
+        runBlocking {app.repository.update {Assets.importTuition(it,snapshot(),setOf("student-a"),"2026-10-15T09:00:00Z")}}
+        val downloads=AtomicInteger()
+        app.tuitionQuery=TuitionQuery {
+            assertEquals(connection,it);downloads.incrementAndGet()
+            snapshot(170000L,"2026-10-16T08:00:00Z")
+        }
+        compose.onNodeWithText("资产",substring=false).performClick()
+        click("查看学生")
+        compose.onNodeWithText("示例学生",substring=false).assertExists()
+        assertEquals(0,downloads.get())
+        compose.activityRule.scenario.recreate();compose.waitForIdle()
+        waitFor {compose.onAllNodesWithText("示例学生",substring=false).fetchSemanticsNodes().isNotEmpty()}
+        assertEquals(0,downloads.get())
+        compose.onNodeWithContentDescription("返回").performClick();compose.waitForIdle()
+        click("刷新")
+        waitFor {read().assets.accounts.any {it.studentId=="student-a" && it.balance=="1700.00"}}
+        assertEquals(1,downloads.get())
+        assertEquals("5000",read().assets.accounts.first {it.id=="bank"}.balance)
+        // Saving another account and recreating must not replay the original refresh action.
+        runBlocking {app.repository.update {Assets.updateBalance(it,"bank","5100",java.time.LocalDate.now().toString(),false)}}
+        compose.waitForIdle();compose.activityRule.scenario.recreate();compose.waitForIdle()
+        waitFor {compose.onAllNodesWithText("示例学生",substring=false).fetchSemanticsNodes().isNotEmpty()}
+        assertEquals(1,downloads.get())
+        screenshot("tuition-student-accounts")
+        compose.onNodeWithContentDescription("返回").performClick();compose.waitForIdle()
+        click("查看学生");assertEquals(1,downloads.get())
     }
 
     @Test fun legacyStoredPayloadAndRestoreDoNotInventAssetHistory() = runBlocking {

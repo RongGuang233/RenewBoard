@@ -15,6 +15,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.semantics.contentDescription
@@ -27,8 +28,12 @@ import java.time.LocalDate
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
-private fun assetMoney(v:BigDecimal,currency:String="CNY")=(if(currency=="CNY") "¥" else "$currency ")+v.setScale(2,RoundingMode.HALF_UP).toPlainString()
-private fun assetIcon(category:AssetCategory)=when(category) {
+internal fun assetMoney(v:BigDecimal,currency:String="CNY"):String {
+    val format=java.text.DecimalFormat("#,##0.00",java.text.DecimalFormatSymbols(java.util.Locale.US))
+    format.roundingMode=RoundingMode.HALF_UP
+    return (if(currency=="CNY") "¥" else "$currency ")+format.format(v)
+}
+internal fun assetIcon(category:AssetCategory)=when(category) {
     AssetCategory.CASH->Icons.Outlined.AccountBalanceWallet
     AssetCategory.INVESTMENT->Icons.Outlined.TrendingUp
     AssetCategory.RECEIVABLE->Icons.Outlined.CallReceived
@@ -37,101 +42,154 @@ private fun assetIcon(category:AssetCategory)=when(category) {
     AssetCategory.TUITION->Icons.Outlined.School
 }
 
-// Intent: quick balance check after lessons. The blue net figure leads, white account groups carry detail.
-// Existing Material typography/tokens, 20dp page padding and 4dp spacing rhythm match RenewBoard.
+// A neutral, centered balance leads; compact white groups retain RenewBoard's blue actions.
+// 16dp gutters, 12dp card radii and 64dp minimum account rows keep the list readable and touchable.
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable internal fun AssetsScreen(
     ledger:Ledger,save:suspend ((Ledger)->Ledger)->Unit,openPlan:(String)->Unit,
-    tuitionContent:@Composable ()->Unit,
+    tuitionContent:@Composable (Boolean,()->Unit,@Composable ()->Unit)->Unit,
     onSubpageChange:(Boolean)->Unit={}
 ) {
     var page by rememberSaveable {mutableStateOf("home")}
+    var detailReturn by rememberSaveable {mutableStateOf("home")}
     var selected by rememberSaveable {mutableStateOf<String?>(null)}
     var hidden by rememberSaveable {mutableStateOf(false)}
-    var showArchived by rememberSaveable {mutableStateOf(false)}
+    var balanceOpen by rememberSaveable {mutableStateOf(false)}
+    var actionsId by rememberSaveable {mutableStateOf<String?>(null)}
+    var createCategory by rememberSaveable {mutableStateOf(AssetCategory.CASH.name)}
+    var createType by rememberSaveable {mutableStateOf("银行卡")}
+    var refreshTuition by rememberSaveable {mutableStateOf(false)}
+    var menu by remember {mutableStateOf(false)}
+    var error by remember {mutableStateOf<String?>(null)}
+    val context=LocalContext.current
+    val prefs=remember {context.getSharedPreferences("asset-display",android.content.Context.MODE_PRIVATE)}
+    var collapsed by remember {mutableStateOf(prefs.getStringSet("collapsed",emptySet())!!.toSet())}
+    var order by remember {mutableStateOf((prefs.getString("groups","")!!.split(",").mapNotNull {name->AssetCategory.entries.find {it.name==name}}+AssetCategory.entries).distinct())}
+    val scope=rememberCoroutineScope()
     val accounts=Assets.accounts(ledger)
     val account=accounts.find {it.id==selected}
     val sub=page!="home"
     LaunchedEffect(sub) {onSubpageChange(sub)}
     DisposableEffect(Unit) {onDispose {onSubpageChange(false)}}
-    fun back() { page=if(page in listOf("edit","balance") && account!=null) "detail" else "home" }
-    BackHandler(sub) {back()}
+    fun tuition(refresh:Boolean=false) {refreshTuition=refresh;page="tuition"}
+    fun detail(a:AssetAccount) {selected=a.id;detailReturn=page;page="detail"}
+    fun update(a:AssetAccount) {
+        selected=a.id
+        when {a.planId!=null->openPlan(a.planId);a.studentId!=null->tuition(true);else->balanceOpen=true}
+    }
+    fun back() {page=when {page=="edit" && account!=null->"detail";page=="edit"->"type";page=="detail"->detailReturn;else->"home"}}
+    BackHandler(sub && !balanceOpen) {back()}
     Column(Modifier.fillMaxSize().pageTransition(page)) {
-        if(sub) TopAppBar(title={Text(when(page) {"detail"->"账户详情";"edit"->if(selected==null) "添加账户" else "账户设置";"balance"->"更新余额";"trend"->"净资产变化";else->"学费同步"})},
+        if(sub) TopAppBar(title={Text(when(page) {"detail"->"账户详情";"edit"->if(selected==null) "添加账户" else "账户设置";"type"->"选择账户类型";"manage"->"账户管理";"trend"->"净资产变化";else->"家教学费"})},
             navigationIcon={PageBack(back=::back)},windowInsets=WindowInsets(0,0,0,0))
         when(page) {
-            "edit" -> key(selected) {AssetEditor(account,ledger,save,onSaved={selected=it;page="detail"},onTuition={page="tuition"})}
-            "balance" -> if(account!=null) AssetBalanceEditor(account,save) {page="detail"} else {page="home"}
-            "detail" -> if(account!=null) AssetDetail(ledger,account,hidden,onEdit={page="edit"},onBalance={page="balance"},openPlan=openPlan,onTuition={page="tuition"}) else {page="home"}
+            "type" -> AssetTypePicker {cat,type->
+                if(cat==AssetCategory.TUITION) tuition() else {createCategory=cat.name;createType=type;page="edit"}
+            }
+            "edit" -> key(selected,createCategory,createType) {
+                AssetEditor(account,ledger,save,onSaved={selected=it;page="detail"},onTuition={tuition()},initialCategory=AssetCategory.valueOf(createCategory),initialType=createType)
+            }
+            "detail" -> if(account!=null) AssetDetail(ledger,account,hidden,onEdit={page="edit"},onBalance={update(account)},openPlan=openPlan,onTuition={tuition(true)})
             "trend" -> AssetTrend(ledger.assets.history,hidden)
-            "tuition" -> Column(Modifier.fillMaxSize().padding(20.dp),verticalArrangement=Arrangement.spacedBy(12.dp)) {tuitionContent()}
-            else -> Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal=20.dp).padding(bottom=24.dp),verticalArrangement=Arrangement.spacedBy(16.dp)) {
-                Row(Modifier.fillMaxWidth().padding(top=12.dp),verticalAlignment=Alignment.CenterVertically) {
-                    Text("我的资产",fontSize=26.sp,fontWeight=FontWeight.Bold,modifier=Modifier.weight(1f))
-                    IconButton(onClick={hidden=!hidden}) {Icon(if(hidden) Icons.Outlined.VisibilityOff else Icons.Outlined.Visibility,if(hidden) "显示资产金额" else "隐藏资产金额")}
-                    FilledTonalIconButton(onClick={selected=null;page="edit"}) {Icon(Icons.Outlined.Add,"添加账户")}
+            "tuition" -> Column(Modifier.fillMaxSize().padding(horizontal=16.dp)) {
+                tuitionContent(refreshTuition,{refreshTuition=false}) {
+                    val students=accounts.filter {it.category==AssetCategory.TUITION && !it.archived}
+                    if(students.isNotEmpty()) AssetCard {
+                        Text("学生账户",fontWeight=FontWeight.SemiBold,modifier=Modifier.padding(16.dp))
+                        students.forEach {a->AssetAccountRow(ledger,a,hidden,onClick={detail(a)},onLongClick={actionsId=a.id})}
+                    }
+                }
+            }
+            "manage" -> Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),verticalArrangement=Arrangement.spacedBy(16.dp)) {
+                Text("分组顺序",fontWeight=FontWeight.SemiBold)
+                AssetCard {
+                    order.forEachIndexed {i,category->
+                        Row(Modifier.fillMaxWidth().padding(start=16.dp,end=4.dp),verticalAlignment=Alignment.CenterVertically) {
+                            Text(category.label,modifier=Modifier.weight(1f))
+                            fun move(to:Int) {val next=order.toMutableList();java.util.Collections.swap(next,i,to);order=next;prefs.edit().putString("groups",next.joinToString(",") {it.name}).apply()}
+                            IconButton(enabled=i>0,onClick={move(i-1)}) {Icon(Icons.Outlined.KeyboardArrowUp,"上移${category.label}")}
+                            IconButton(enabled=i<order.lastIndex,onClick={move(i+1)}) {Icon(Icons.Outlined.KeyboardArrowDown,"下移${category.label}")}
+                        }
+                    }
+                }
+                TextButton(onClick={tuition()}) {Icon(Icons.Outlined.Sync,null);Spacer(Modifier.width(8.dp));Text("学费同步")}
+                Text("归档账户",fontWeight=FontWeight.SemiBold)
+                Text("归档仅收起账户，仍按各账户设置统计。",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                val archived=accounts.filter {it.archived}
+                if(archived.isEmpty()) Text("暂无归档账户",color=MaterialTheme.colorScheme.onSurfaceVariant)
+                else AssetCard {archived.forEach {a->AssetAccountRow(ledger,a,hidden,onClick={detail(a)},onLongClick={actionsId=a.id})}}
+            }
+            else -> Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal=16.dp).padding(bottom=24.dp),verticalArrangement=Arrangement.spacedBy(12.dp)) {
+                Row(Modifier.fillMaxWidth().height(48.dp),verticalAlignment=Alignment.CenterVertically) {
+                    Text("资产",style=MaterialTheme.typography.titleMedium,fontWeight=FontWeight.SemiBold,modifier=Modifier.weight(1f))
+                    IconButton(onClick={selected=null;detailReturn="home";page="type"}) {Icon(Icons.Outlined.Add,"添加账户",tint=MaterialTheme.colorScheme.primary)}
+                    Box {
+                        IconButton(onClick={menu=true}) {Icon(Icons.Outlined.MoreVert,"资产管理菜单")}
+                        DropdownMenu(menu,onDismissRequest={menu=false}) {
+                            DropdownMenuItem(text={Text("账户管理")},onClick={menu=false;page="manage"})
+                            DropdownMenuItem(text={Text("学费同步")},onClick={menu=false;tuition()})
+                        }
+                    }
                 }
                 val totals=Assets.totals(ledger)
-                Card(colors=CardDefaults.cardColors(containerColor=MaterialTheme.colorScheme.primaryContainer),shape=RoundedCornerShape(20.dp)) {
-                    Column(Modifier.fillMaxWidth().padding(20.dp),verticalArrangement=Arrangement.spacedBy(12.dp)) {
-                        Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically) {
-                            Text(if(totals.pending>0) "已知净资产" else "净资产",modifier=Modifier.weight(1f),style=MaterialTheme.typography.labelLarge)
-                            TextButton(onClick={page="trend"}) {Text("查看变化");Icon(Icons.Outlined.ChevronRight,null,Modifier.size(18.dp))}
+                AssetCard {
+                    Column(Modifier.fillMaxWidth().padding(horizontal=20.dp,vertical=12.dp),horizontalAlignment=Alignment.CenterHorizontally) {
+                        Row(verticalAlignment=Alignment.CenterVertically) {
+                            Text(if(totals.pending>0) "已知净资产" else "净资产",color=MaterialTheme.colorScheme.onSurfaceVariant)
+                            IconButton(onClick={hidden=!hidden}) {Icon(if(hidden) Icons.Outlined.VisibilityOff else Icons.Outlined.Visibility,if(hidden) "显示资产金额" else "隐藏资产金额",Modifier.size(20.dp),tint=MaterialTheme.colorScheme.onSurfaceVariant)}
                         }
-                        Text(if(hidden) "••••••" else assetMoney(totals.net),fontSize=32.sp,fontWeight=FontWeight.Bold,color=MaterialTheme.colorScheme.primary)
-                        Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(32.dp)) {
-                            Column {Text("总资产",style=MaterialTheme.typography.labelMedium);Text(if(hidden) "••••" else assetMoney(totals.assets),fontWeight=FontWeight.SemiBold)}
-                            Column {Text("总负债",style=MaterialTheme.typography.labelMedium);Text(if(hidden) "••••" else assetMoney(totals.liabilities),fontWeight=FontWeight.SemiBold)}
+                        Text(if(hidden) "••••••" else assetMoney(totals.net),fontSize=32.sp,fontWeight=FontWeight.Bold)
+                        Spacer(Modifier.height(20.dp))
+                        Row(Modifier.fillMaxWidth()) {
+                            AssetSummaryAmount("总资产",totals.assets,hidden,Modifier.weight(1f))
+                            AssetSummaryAmount("总负债",totals.liabilities,hidden,Modifier.weight(1f))
                         }
-                        if(totals.pending>0) Text("${totals.pending} 个账户待折算或核实，暂未计入",style=MaterialTheme.typography.bodySmall)
+                        if(totals.pending>0) Text("${totals.pending} 个账户待折算或核实，暂未计入",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.error,modifier=Modifier.padding(top=8.dp))
+                        TextButton(onClick={page="trend"},modifier=Modifier.align(Alignment.End)) {Text("查看趋势");Icon(Icons.Outlined.ChevronRight,null,Modifier.size(16.dp))}
                     }
                 }
-                Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically) {
-                    Text("账户",fontSize=18.sp,fontWeight=FontWeight.SemiBold,modifier=Modifier.weight(1f))
-                    TextButton(onClick={page="tuition"}) {Icon(Icons.Outlined.Sync,null,Modifier.size(18.dp));Spacer(Modifier.width(4.dp));Text("学费同步")}
-                }
-                if(accounts.isEmpty()) Hint("添加银行、现金或投资账户，记录此刻的余额。以后只需更新余额。")
-                AssetCategory.entries.forEach {category->
-                    val group=accounts.filter {it.category==category && (showArchived || !it.archived)}
+                if(accounts.none {!it.archived}) Text(if(accounts.isEmpty()) "添加账户，记录当前余额。" else "账户已归档，可在右上角管理中查看。",color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.padding(16.dp))
+                order.forEach {category->
+                    val group=accounts.filter {it.category==category && !it.archived}
                     if(group.isNotEmpty()) {
-                        val subtotal=Assets.totals(ledger,group)
-                        Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween) {
-                            Text(category.label,color=MaterialTheme.colorScheme.onSurfaceVariant,style=MaterialTheme.typography.labelLarge)
-                            Text(if(hidden) "••••" else "计入净值 ${assetMoney(subtotal.net)}"+(if(subtotal.pending>0) " · 待核实" else ""),style=MaterialTheme.typography.labelMedium,color=MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                        Card(colors=CardDefaults.cardColors(containerColor=MaterialTheme.colorScheme.surface),shape=RoundedCornerShape(16.dp)) {
-                            group.forEachIndexed {index,a->
-                                Row(Modifier.fillMaxWidth().clickable {selected=a.id;page="detail"}.padding(16.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(12.dp)) {
-                                    Icon(assetIcon(a.category),null,tint=MaterialTheme.colorScheme.primary)
-                                    Column(Modifier.weight(1f)) {
-                                        Text(a.name,fontWeight=FontWeight.SemiBold)
-                                        Text(listOfNotNull(a.asOf,if(!a.included) "不计入" else null,if(a.archived) "已归档 · 仍按设置统计" else null).joinToString(" · "),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
-                                        Assets.value(ledger,a).pendingReason?.let {Text(it,style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.error)}
-                                    }
-                                    Column(horizontalAlignment=Alignment.End) {
-                                        Text(if(hidden) "••••" else assetMoney(if(a.category==AssetCategory.TUITION) BigDecimal(a.balance).abs() else BigDecimal(a.balance),a.currency),fontWeight=FontWeight.SemiBold)
-                                        if(a.category==AssetCategory.TUITION) Text(if(BigDecimal(a.balance).signum()>0) "待上课学费" else if(BigDecimal(a.balance).signum()<0) "待收学费" else "已结清",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
-                                    }
-                                }
-                                if(index<group.lastIndex) HorizontalDivider(Modifier.padding(horizontal=16.dp),color=MaterialTheme.colorScheme.surfaceVariant)
-                            }
-                        }
+                        if(category==AssetCategory.TUITION) TuitionOverview(ledger,group,hidden,onRefresh={tuition(true)},onStudents={tuition()})
+                        else AssetGroup(ledger,category,group,hidden,category.name in collapsed,onToggle={
+                            collapsed=if(category.name in collapsed) collapsed-category.name else collapsed+category.name
+                            prefs.edit().putStringSet("collapsed",collapsed).apply()
+                        },onAccount={detail(it)},onLongClick={actionsId=it.id})
                     }
                 }
-                if(accounts.any {it.archived}) TextButton(onClick={showArchived=!showArchived}) {Text(if(showArchived) "收起归档账户" else "显示归档账户（仍按设置计入）")}
             }
         }
     }
+    if(balanceOpen && account!=null) ModalBottomSheet(onDismissRequest={balanceOpen=false},sheetState=rememberModalBottomSheetState(skipPartiallyExpanded=true)) {
+        Text("更新余额",style=MaterialTheme.typography.titleLarge,modifier=Modifier.padding(horizontal=20.dp))
+        AssetBalanceEditor(account,save) {balanceOpen=false}
+    }
+    actionsId?.let {id->accounts.find {it.id==id}?.let {a->
+        ModalBottomSheet(onDismissRequest={actionsId=null;error=null}) {
+            Column(Modifier.fillMaxWidth().padding(horizontal=20.dp).padding(bottom=24.dp),verticalArrangement=Arrangement.spacedBy(8.dp)) {
+                Text(a.name,style=MaterialTheme.typography.titleLarge)
+                TextButton(onClick={actionsId=null;update(a)},modifier=Modifier.fillMaxWidth()) {Text(if(a.studentId!=null) "刷新学费" else if(a.planId!=null) "打开来源账户" else "更新余额")}
+                TextButton(onClick={actionsId=null;selected=a.id;detailReturn=page;page="edit"},modifier=Modifier.fillMaxWidth()) {Text("编辑账户")}
+                TextButton(onClick={scope.launch {
+                    try {save {current->val latest=Assets.accounts(current).first {it.id==a.id};Assets.put(current,latest.copy(archived=!latest.archived))};actionsId=null}
+                    catch(e:CancellationException) {throw e} catch(e:Exception) {error=e.message}
+                }},modifier=Modifier.fillMaxWidth()) {Text(if(a.archived) "取消归档" else "归档账户")}
+                error?.let {Text(it,color=MaterialTheme.colorScheme.error)}
+            }
+        }
+    }}
 }
 
 @Composable private fun AssetDetail(l:Ledger,a:AssetAccount,hidden:Boolean,onEdit:()->Unit,onBalance:()->Unit,openPlan:(String)->Unit,onTuition:()->Unit) {
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),verticalArrangement=Arrangement.spacedBy(16.dp)) {
-        Row(horizontalArrangement=Arrangement.spacedBy(12.dp),verticalAlignment=Alignment.CenterVertically) {Icon(assetIcon(a.category),null,tint=MaterialTheme.colorScheme.primary);Text(a.name,fontSize=24.sp,fontWeight=FontWeight.Bold)}
+        Row(horizontalArrangement=Arrangement.spacedBy(12.dp),verticalAlignment=Alignment.CenterVertically) {AssetAccountIcon(a.category,a.subtype,a.name);Text(a.name,fontSize=24.sp,fontWeight=FontWeight.Bold)}
         Text(a.category.label+(if(a.subtype.isNotBlank()) " · ${a.subtype}" else ""),color=MaterialTheme.colorScheme.onSurfaceVariant)
-        Text(if(hidden) "••••••" else assetMoney(BigDecimal(a.balance),a.currency),fontSize=32.sp,fontWeight=FontWeight.Bold,color=MaterialTheme.colorScheme.primary)
+        Text(if(hidden) "••••••" else assetMoney(if(a.category==AssetCategory.TUITION) BigDecimal(a.balance).abs() else BigDecimal(a.balance),a.currency),fontSize=32.sp,fontWeight=FontWeight.Bold,color=MaterialTheme.colorScheme.primary)
         Text("更新于 ${a.asOf} · "+(if(a.included) "计入净资产" else "不计入净资产"),style=MaterialTheme.typography.bodyMedium)
         Assets.value(l,a).pendingReason?.let {Hint(it)}
-        if(a.category==AssetCategory.TUITION) Hint("正余额是尚未上课的预收款，计入负债；负余额是已上课未收取的学费，计入应收款。银行余额需单独更新。")
+        if(a.category==AssetCategory.TUITION) Text(tuitionBalanceLabel(a.balance)+if(a.included) (if(BigDecimal(a.balance).signum()>0) " · 计入负债" else if(BigDecimal(a.balance).signum()<0) " · 计入资产" else "") else " · 不计入净资产")
         a.cnyRate?.let {Hint("折算依据：1 ${a.currency} = $it CNY")}
         if(a.note.isNotBlank()) Text(a.note)
         Row(horizontalArrangement=Arrangement.spacedBy(12.dp)) {
@@ -150,20 +208,19 @@ private fun assetIcon(category:AssetCategory)=when(category) {
     }
 }
 
-@Composable private fun AssetEditor(a:AssetAccount?,l:Ledger,save:suspend ((Ledger)->Ledger)->Unit,onSaved:(String)->Unit,onTuition:()->Unit) {
+@Composable private fun AssetEditor(a:AssetAccount?,l:Ledger,save:suspend ((Ledger)->Ledger)->Unit,onSaved:(String)->Unit,onTuition:()->Unit,initialCategory:AssetCategory=AssetCategory.CASH,initialType:String="银行卡") {
     var name by rememberSaveable {mutableStateOf(a?.name.orEmpty())}
-    var category by rememberSaveable {mutableStateOf(a?.category?.name ?: AssetCategory.CASH.name)}
-    var subtype by rememberSaveable {mutableStateOf(a?.subtype.orEmpty())}
+    var category by rememberSaveable {mutableStateOf(a?.category?.name ?: initialCategory.name)}
+    var subtype by rememberSaveable {mutableStateOf(a?.subtype ?: initialType)}
     var balance by rememberSaveable {mutableStateOf(a?.balance ?: "")}
     var currency by rememberSaveable {mutableStateOf(a?.currency ?: "CNY")}
     var asOf by rememberSaveable {mutableStateOf(a?.asOf ?: LocalDate.now().toString())}
-    var included by rememberSaveable {mutableStateOf(a?.included ?: true)}
+    var included by rememberSaveable {mutableStateOf(a?.included ?: Assets.defaultIncluded(initialCategory,initialType))}
     var archived by rememberSaveable {mutableStateOf(a?.archived ?: false)}
     var rate by rememberSaveable {mutableStateOf(a?.cnyRate.orEmpty())}
     var eligible by rememberSaveable {mutableStateOf(a?.eligibleAmount?.takeIf {a.eligibleBasisBalance==a.balance}.orEmpty())}
     var note by rememberSaveable {mutableStateOf(a?.note.orEmpty())}
     var notesOpen by rememberSaveable {mutableStateOf(false)}
-    var menu by remember {mutableStateOf(false)}
     var typeMenu by remember {mutableStateOf(false)}
     var busy by remember {mutableStateOf(false)}
     var error by remember {mutableStateOf<String?>(null)}
@@ -172,9 +229,8 @@ private fun assetIcon(category:AssetCategory)=when(category) {
     val api=a?.planId?.let {id->l.plans.find {it.id==id}?.usageBalance!=null}==true
     val knownPlatformAmount=a?.eligibleAmount?.takeIf {a.eligibleFromPlatform && a.eligibleBasisBalance==a.balance}
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),verticalArrangement=Arrangement.spacedBy(12.dp)) {
-        if(a==null) Box {
-            OutlinedButton(onClick={menu=true},modifier=Modifier.fillMaxWidth().semantics {contentDescription="选择账户分类"}) {Text(cat.label);Icon(Icons.Outlined.ExpandMore,null)}
-            DropdownMenu(menu,onDismissRequest={menu=false}) {AssetCategory.entries.forEach {c->DropdownMenuItem(text={Text(c.label)},onClick={category=c.name;subtype="";included=Assets.defaultIncluded(c);menu=false})}}
+        if(a==null) Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(12.dp)) {
+            AssetAccountIcon(cat,subtype,subtype);Text("${cat.label} · $subtype",fontWeight=FontWeight.SemiBold)
         }
         if(cat==AssetCategory.TUITION && a==null) {
             Hint("家教学费由 LessonManager 导入，学生标识用于后续自动更新，避免重复输入。")
@@ -187,7 +243,7 @@ private fun assetIcon(category:AssetCategory)=when(category) {
                 AssetCategory.DEBT->listOf("信用卡","花呗","贷款","借入款","其他")
                 else->emptyList()
             }
-            if(types.isNotEmpty()) Box {
+            if(a!=null && types.isNotEmpty()) Box {
                 OutlinedButton(onClick={typeMenu=true},modifier=Modifier.fillMaxWidth().semantics {contentDescription="选择账户类型"}) {Text(subtype.ifBlank {"账户类型（可选）"});Icon(Icons.Outlined.ExpandMore,null)}
                 DropdownMenu(typeMenu,onDismissRequest={typeMenu=false}) {types.forEach {type->DropdownMenuItem(text={Text(type)},onClick={subtype=type;typeMenu=false})}}
             }
@@ -242,14 +298,14 @@ private fun assetIcon(category:AssetCategory)=when(category) {
     var error by remember {mutableStateOf<String?>(null)}
     var busy by remember {mutableStateOf(false)}
     val scope=rememberCoroutineScope()
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),verticalArrangement=Arrangement.spacedBy(16.dp)) {
-        Text(a.name,fontSize=24.sp,fontWeight=FontWeight.Bold)
+    Column(Modifier.fillMaxWidth().imePadding().verticalScroll(rememberScrollState()).padding(20.dp),verticalArrangement=Arrangement.spacedBy(12.dp)) {
+        Text(a.name,fontSize=18.sp,fontWeight=FontWeight.Bold)
         Text("原余额 ${assetMoney(BigDecimal(a.balance),a.currency)}",color=MaterialTheme.colorScheme.onSurfaceVariant)
         MoneyField(if(a.category==AssetCategory.DEBT) "新的剩余欠款" else "新的当前余额",amount,{amount=it})
         Field("余额日期",date,{date=it},dateField=true)
         amount.toBigDecimalOrNull()?.let {Text("余额差额 ${assetMoney(it-BigDecimal(a.balance),a.currency)}")}
-        Row(verticalAlignment=Alignment.CenterVertically) {Checkbox(correction,onCheckedChange={correction=it});Text("校正上次录入错误")}
-        Hint(if(correction) "替换最近一条余额记录，净资产变化标注为校正。" else "保存本次余额观察，不生成日常收入或支出。")
+        TextButton(onClick={correction=!correction}) {Text(if(correction) "取消纠正上次录入" else "纠正上次录入")}
+        if(correction) Text("将替换最近一条余额记录",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
         error?.let {Text(it,color=MaterialTheme.colorScheme.error)}
         Button(enabled=!busy,onClick={busy=true;scope.launch {try {save {Assets.updateBalance(it,a.id,amount.trim(),date,correction)};onSaved()} catch(e:CancellationException) {throw e} catch(e:Exception) {error=e.message ?: "余额保存失败"} finally {busy=false}}},modifier=Modifier.fillMaxWidth()) {Text(if(busy) "正在保存…" else "保存余额")}
     }

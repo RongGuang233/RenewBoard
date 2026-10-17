@@ -289,7 +289,7 @@ private fun money(totals: Map<String,BigDecimal>) = if(totals.isEmpty()) "暂无
             1 -> pageStates.SaveableStateProvider("assets") {
                 Box(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding).imePadding()) {
                     AssetsScreen(ledger,save={repo.update(it)},openPlan=::openPlan,
-                        tuitionContent={TuitionSyncScreen(ledger)},onSubpageChange={subpage=it})
+                        tuitionContent={refresh,consumed,students->TuitionSyncScreen(ledger,refreshOnOpen=refresh,onRefreshConsumed=consumed,studentContent=students)},onSubpageChange={subpage=it})
                 }
             }
             2 -> pageStates.SaveableStateProvider("ledger") {
