@@ -80,7 +80,7 @@ class UsageBalancesTest {
         assertEquals(2,Book.decode(modern).version)
         assertEquals(mixed,Book.decode(modern).data)
         assertThrows(Exception::class.java) {Book.decode(modern.replace("\"version\":2","\"version\":1"))}
-        assertThrows(Exception::class.java) {Book.decode(modern.replace("\"version\":2","\"version\":3"))}
+        assertThrows(Exception::class.java) {Book.decode(modern.replace("\"version\":2","\"version\":99"))}
     }
 
     @Test fun invalidBalancesDatesAndConflictingAccountTypesAreRejected() {

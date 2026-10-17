@@ -22,7 +22,8 @@ object UsageBalances {
             balance=(balance(p)+value).toPlainString(),asOf=maxOf(date,LocalDate.parse(account.asOf)).toString())) else p
         val payment=Payment(planId=p.id,planName=p.name,amount=amount.trim(),currency=p.currency,date=date.toString(),
             note="平台充值",cnyAmount=if(p.currency=="CNY") null else cnyAmount?.trim())
-        return l.copy(plans=l.plans.map {if(it.id==id) updated else it},payments=l.payments+payment).also(Book::validate)
+        val next=l.copy(plans=l.plans.map {if(it.id==id) updated else it},payments=l.payments+payment)
+        return (if(affectBalance) Assets.invalidatePlatformAmount(next,id) else next).also(Book::validate)
     }
 
     /** A queried remaining credit already includes consumption; it creates no additional expense. */
@@ -32,6 +33,6 @@ object UsageBalances {
         require(date>=LocalDate.parse(account.asOf) && date<=LocalDate.now()) { "请校准最近余额日期至今天的余额" }
         require(BigDecimal(balance.trim()).signum()>=0) { "余额不能为负数" }
         val updated=p.copy(usageBalance=account.copy(balance=balance.trim(),asOf=date.toString()))
-        return l.copy(plans=l.plans.map {if(it.id==id) updated else it}).also(Book::validate)
+        return Assets.invalidatePlatformAmount(l.copy(plans=l.plans.map {if(it.id==id) updated else it}),id).also(Book::validate)
     }
 }

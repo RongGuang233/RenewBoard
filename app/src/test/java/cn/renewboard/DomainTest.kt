@@ -239,7 +239,7 @@ class DomainTest {
         rejects { Book.decode("not json") }
         rejects { Book.decode("""{"data":{}}""") }
         rejects { Book.decode(valid.replace("\"version\":1,", "")) }
-        rejects { Book.decode(valid.replace("\"version\":1", "\"version\":3")) }
+        rejects { Book.decode(valid.replace("\"version\":1", "\"version\":99")) }
         rejects { Book.decode(valid.dropLast(1) + ",\"unexpected\":true}") }
         rejects { Book.decode(valid.replace(Regex("\"createdAt\":\"[^\"]+\""), "\"createdAt\":\"yesterday\"")) }
         rejects { Book.decode(valid.replace("\"interval\":1", "\"interval\":0")) }

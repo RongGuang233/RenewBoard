@@ -1,0 +1,29 @@
+{
+  "description": "PUBLIC TEST KEY AND FIXED NONCE. Never use in production.",
+  "key": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+  "plaintext": {
+    "version": 1,
+    "publishedAt": "2026-10-17T06:00:00.000000Z",
+    "students": [
+      {
+        "id": "student-test-1",
+        "name": "测试学生",
+        "status": "active",
+        "balanceCents": 170000,
+        "verified": true
+      },
+      {
+        "id": "student-test-2",
+        "name": "欠费示例",
+        "status": "paused",
+        "balanceCents": -30000,
+        "verified": false
+      }
+    ]
+  },
+  "envelope": {
+    "version": 1,
+    "nonce": "AAECAwQFBgcICQoL",
+    "ciphertext": "PCCgfreWq3TjY626ncsIGOG67keYHjs9TEXfpy9ZMoQsIZ7RnvZGqEKeT92ytxgW3mlQvWrm+fgTtVltbYeQgIRP5ECIqgQIeHaQTJz7e4xd5L1PAgYgHNDMvOBantjgrtpjxEL0Q/Ixidsf7pK14JhLQNiXpFHvPt1t7+OFGmfNNyLqlrWqP2mPK8R+vyK2RdbZBAIho3q8c8oBn6CAiPry+jfTi74Lwh7xgf3p4pmn7LlW/s8W0hHytKICsZrBMWColGyws+sNdDVKGqltPQbaQpKDi5jdU+LupjU9/Nh5AaTOk1NmQXBrmmrUfR0/y/b6EPNE+octRlRDu6xyrTanl+L0vCFbE/1IYdZBSW+n6bdQeEIV+T48ogzXlD7hrJgl"
+  }
+}

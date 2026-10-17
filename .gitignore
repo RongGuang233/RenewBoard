@@ -6,5 +6,6 @@ local.properties
 *.keystore
 signing.properties
 .DS_Store
+__pycache__/
 artifacts/
 docs/android-environment.md

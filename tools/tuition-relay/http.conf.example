@@ -1,0 +1,7 @@
+# Include inside http {}. Replace these placeholders only in a private server file.
+map $request_method $tuition_expected_auth {
+    default "";
+    GET "Bearer REPLACE_READ_TOKEN";
+    PUT "Bearer REPLACE_UPLOAD_TOKEN";
+}
+log_format tuition '$time_iso8601 $request_method $status $body_bytes_sent';

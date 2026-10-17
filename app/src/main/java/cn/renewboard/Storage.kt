@@ -29,10 +29,13 @@ class Repository(val db: BookDatabase,
     private fun parse(row: BookRow?) = row?.let { Book.json.decodeFromString<Ledger>(it.payload) } ?: Ledger()
     suspend fun read() = parse(db.book().read())
     suspend fun update(transform: (Ledger) -> Ledger) = update(transform,onCommitted={})
-    internal suspend fun update(transform: (Ledger) -> Ledger,onCommitted:()->Unit) {
+    internal suspend fun update(transform: (Ledger) -> Ledger,onCommitted:()->Unit) = updateInternal(transform,true,onCommitted)
+    private suspend fun updateInternal(transform: (Ledger) -> Ledger,observeAssets:Boolean,onCommitted:()->Unit = {}) {
         val (before, after) = db.withTransaction {
             val before = read()
-            val next = transform(before); Book.validate(next)
+            val transformed = transform(before)
+            val next = if(observeAssets) Assets.observe(before,transformed) else transformed
+            Book.validate(next)
             db.book().put(BookRow(payload = Book.json.encodeToString(next)))
             before to next
         }
@@ -42,7 +45,7 @@ class Repository(val db: BookDatabase,
     }
     suspend fun recordMonthlyFees(today:java.time.LocalDate=java.time.LocalDate.now()) {
         val change=db.withTransaction {
-            val old=read();val next=Prepaid.accrue(old,today)
+            val old=read();val next=Assets.observe(old,Prepaid.accrue(old,today))
             if(next==old) null else {
                 Book.validate(next)
                 db.book().put(BookRow(payload=Book.json.encodeToString(next)));old to next
@@ -53,13 +56,15 @@ class Repository(val db: BookDatabase,
             changed()
         }
     }
-    suspend fun restore(backup: Backup) { Book.validate(backup.data); update { backup.data } }
+    suspend fun restore(backup: Backup) { Book.validate(backup.data); updateInternal({ backup.data },false) }
 }
 class RenewApp: Application() {
     lateinit var repository: Repository
     internal var platformBalanceQuery: PlatformBalanceQuery = DeepSeekBalanceQuery()
     internal val platformConnections by lazy {PlatformConnectionStore(this)}
     internal val platformBalances by lazy {PlatformBalanceService({repository},platformConnections,{platformBalanceQuery})}
+    internal var tuitionQuery: TuitionQuery = HttpTuitionQuery()
+    internal val tuitionConnection by lazy {TuitionConnectionStore(this)}
     override fun onCreate() {
         super.onCreate()
         repository = Repository(Room.databaseBuilder(this, BookDatabase::class.java, "renewboard.db").build(),

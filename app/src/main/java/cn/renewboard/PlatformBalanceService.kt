@@ -80,5 +80,5 @@ internal fun applyPlatformBalance(ledger: Ledger, initial: Plan, snapshot: DeepS
     if(current.archived || current.currency != initial.currency || current.usageBalance != initial.usageBalance)
         throw PlatformBalanceException("账户已修改，请重新刷新余额")
     val updated = updatedPlatformPlan(current, snapshot)
-    return ledger.copy(plans = ledger.plans.map { if(it.id == initial.id) updated else it })
+    return Assets.recordPlatformSnapshot(ledger.copy(plans = ledger.plans.map { if(it.id == initial.id) updated else it }),initial.id,snapshot)
 }

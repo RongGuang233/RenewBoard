@@ -48,7 +48,8 @@ data class ForecastCharge(val planId: String, val planName: String, val date: Lo
     val amount: BigDecimal, val currency: String, val cnyAmount: BigDecimal?)
 
 @Serializable data class Settings(val reminderDays: List<Int> = listOf(3, 0), val rates: Map<String, String> = emptyMap())
-@Serializable data class Ledger(val plans: List<Plan> = emptyList(), val benefits: List<Benefit> = emptyList(), val payments: List<Payment> = emptyList(), val settings: Settings = Settings(), val devices: List<Device> = emptyList())
+@OptIn(ExperimentalSerializationApi::class)
+@Serializable data class Ledger(val plans: List<Plan> = emptyList(), val benefits: List<Benefit> = emptyList(), val payments: List<Payment> = emptyList(), val settings: Settings = Settings(), val devices: List<Device> = emptyList(), @EncodeDefault(EncodeDefault.Mode.NEVER) val assets: AssetBook = AssetBook())
 @Serializable data class Backup(val version: Int = 1, val createdAt: String = Instant.now().toString(), val data: Ledger)
 
 object Book {
@@ -216,6 +217,7 @@ object Book {
         return l.copy(payments = l.payments + refund).also(::validate)
     }
     fun validate(l: Ledger) {
+        Assets.validate(l)
         require(l.plans.size <= 10000 && l.benefits.size <= 50000 && l.payments.size <= 100000) { "记录数量超过支持范围" }
         fun money(s: String) { require(s.matches(Regex("[0-9]{1,12}(\\.[0-9]{1,4})?"))) { "金额格式错误（最多4位小数）" } }
         fun date(s: String) { require(LocalDate.parse(s).year in 1900..2200) { "日期应在1900至2200年" } }
@@ -269,7 +271,7 @@ object Book {
         require(l.settings.reminderDays.distinct().size == l.settings.reminderDays.size && l.settings.reminderDays.all { it in 0..365 }) { "提醒天数应为0至365且不能重复" }
         l.settings.rates.forEach { (c, r) -> currency(c); money(r); require(BigDecimal(r) > BigDecimal.ZERO) }
     }
-    fun encode(l: Ledger): String { validate(l); return json.encodeToString(Backup(version=if(l.plans.any {it.usageBalance!=null}) 2 else 1,data = l)) }
+    fun encode(l: Ledger): String { validate(l); return json.encodeToString(Backup(version=if(l.assets!=AssetBook()) 3 else if(l.plans.any {it.usageBalance!=null}) 2 else 1,data = l)) }
     fun decode(s: String): Backup {
         require(s.toByteArray().size <= 16 * 1024 * 1024) { "备份超过16MB" }
         val root = json.parseToJsonElement(s).jsonObject
@@ -282,8 +284,24 @@ object Book {
         data.getValue("benefits").jsonArray.forEach { fields(it.jsonObject,"id,planId,name,anchor,renewals,giftDays") }
         data.getValue("payments").jsonArray.forEach { fields(it.jsonObject,"id,planId,planName,amount,currency,date,note,benefitIds") }
         return json.decodeFromString<Backup>(s).also {
-            require(it.version in 1..2) { "不支持的备份版本" }
+            require(it.version in 1..3) { "不支持的备份版本" }
             require(it.version!=1 || it.data.plans.none {p -> p.usageBalance!=null}) { "平台余额需使用新版备份格式" }
+            require(it.version>=3 || "assets" !in data) { "资产需使用新版备份格式" }
+            if(it.version==3) {
+                fields(data,"assets")
+                val assets=data.getValue("assets").jsonObject
+                fields(assets,"accounts,history")
+                if(it.data.assets.accounts.any {account -> account.studentId!=null}) {
+                    fields(assets,"tuitionPublishedAt,tuitionFetchedAt")
+                    require(it.data.assets.tuitionPublishedAt!=null && it.data.assets.tuitionFetchedAt!=null) { "学费来源时间缺失" }
+                }
+                assets.getValue("accounts").jsonArray.forEach { entry ->
+                    val account=entry.jsonObject
+                    fields(account,"id,name,category,balance,currency,asOf,included,archived,planId,studentId,history")
+                    account.getValue("history").jsonArray.forEach { record -> fields(record.jsonObject,"id,balance,date,kind") }
+                }
+                assets.getValue("history").jsonArray.forEach { point -> fields(point.jsonObject,"at,assets,liabilities,pending,reason") }
+            }
             Instant.parse(it.createdAt); validate(it.data)
         }
     }

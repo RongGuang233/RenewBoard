@@ -204,7 +204,7 @@ private fun money(totals: Map<String,BigDecimal>) = if(totals.isEmpty()) "暂无
             }
         }
     }, bottomBar={ if(!hasPreviousPage && !subpage && paymentPlanId==null && receiptId==null && !forecastOpen && accountHistoryId==null) NavigationBar(modifier=Modifier.imePadding(),containerColor=Paper) {
-        listOf("到期","账本","设备","设置").forEachIndexed { i,s -> NavigationBarItem(selected=tab==i,onClick={focusManager.clearFocus(force=true);keyboard?.hide();tab=i},icon={Icon(listOf(Icons.Outlined.Event,Icons.Outlined.ReceiptLong,Icons.Outlined.Devices,Icons.Outlined.Settings)[i],null)},label={Text(s)}) }
+        listOf("到期","资产","账本","设备","设置").forEachIndexed { i,s -> NavigationBarItem(selected=tab==i,onClick={focusManager.clearFocus(force=true);keyboard?.hide();tab=i},icon={Icon(listOf(Icons.Outlined.Event,Icons.Outlined.AccountBalanceWallet,Icons.Outlined.ReceiptLong,Icons.Outlined.Devices,Icons.Outlined.Settings)[i],null)},label={Text(s)}) }
     } }) { padding ->
         val receipt=ledger.payments.find {it.id==receiptId}
         val pageKey=when {
@@ -286,17 +286,23 @@ private fun money(totals: Map<String,BigDecimal>) = if(totals.isEmpty()) "暂无
                     Overview(ledger,onAdd={creating=true},openForecast={forecastOpen=true},open=::openPlan,refreshingBalances=refreshingBalances,refreshBalances=::refreshBalances)
                 }
             }
-            1 -> pageStates.SaveableStateProvider("ledger") {
+            1 -> pageStates.SaveableStateProvider("assets") {
+                Box(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding).imePadding()) {
+                    AssetsScreen(ledger,save={repo.update(it)},openPlan=::openPlan,
+                        tuitionContent={TuitionSyncScreen(ledger)},onSubpageChange={subpage=it})
+                }
+            }
+            2 -> pageStates.SaveableStateProvider("ledger") {
                 Box(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding).imePadding()) {
                     LedgerScreen(ledger,::change,openServices={servicesOpen=true}) {subpage=it}
                 }
             }
-            2 -> pageStates.SaveableStateProvider("devices") {
+            3 -> pageStates.SaveableStateProvider("devices") {
                 Box(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding).imePadding()) {
                     DevicesScreen(ledger,::change) {subpage=it}
                 }
             }
-            3 -> Box(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding).imePadding()) {
+            4 -> Box(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding).imePadding()) {
                 SettingsScreen(ledger,::message) {subpage=it}
             }
         }

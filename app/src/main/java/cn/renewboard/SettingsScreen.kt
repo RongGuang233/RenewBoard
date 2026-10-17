@@ -147,7 +147,7 @@ private enum class SettingsPage(val title: String) {
                 val text = Book.encode(c.repository().read())
                 c.contentResolver.openOutputStream(uri, "wt")?.use { it.write(text.toByteArray()) } ?: error("无法写入")
             }
-            message("已导出，不包含 WebDAV 密码")
+            message("已导出，不包含连接密码、令牌或密钥")
         }
     }
     val import = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -227,7 +227,7 @@ private enum class SettingsPage(val title: String) {
                     SettingsPage.BACKUP -> {
                         SettingsPanel {
                             Text("保存一份完整备份", style = MaterialTheme.typography.titleMedium)
-                            SettingsNote("包含订阅、付款、设备与设置，不包含 WebDAV 密码。")
+                            SettingsNote("包含订阅、付款、资产余额与历史、设备和设置。连接密码、令牌与加密密钥不包含在备份中。")
                             Button({ export.launch("订阅簿-${LocalDate.now()}.json") }, enabled = !busy, modifier = Modifier.fillMaxWidth()) { Text("导出 JSON") }
                         }
                         SettingsPanel {
@@ -320,7 +320,7 @@ private enum class SettingsPage(val title: String) {
     }
     preview?.let { backup ->
         AlertDialog(onDismissRequest = { preview = null }, title = { Text("确认替换本机数据？") }, text = {
-            Text("备份日期：${settingsDisplayTime(backup.createdAt)}\n${backup.data.plans.size} 个订阅 · ${backup.data.benefits.size} 项权益\n${backup.data.payments.size} 笔付款 · ${backup.data.devices.size} 台设备\n\n将整体替换本机账本、设备、提醒与汇率。WebDAV 凭据不变。可取消后先导出本机备份。")
+            Text("备份日期：${settingsDisplayTime(backup.createdAt)}\n${backup.data.plans.size} 个订阅 · ${backup.data.benefits.size} 项权益\n${backup.data.payments.size} 笔付款 · ${backup.data.devices.size} 台设备\n${Assets.accounts(backup.data).size} 个资产账户\n\n将整体替换本机账本、资产、设备、提醒与汇率。连接凭据不变。可取消后先导出本机备份。")
         }, confirmButton = {
             TextButton({ preview = null; operation { c.repository().restore(backup); message("恢复完成") } }, enabled = !busy) { Text("确认替换") }
         }, dismissButton = { TextButton({ preview = null }) { Text("取消") } })
