@@ -90,7 +90,7 @@ private data class ReceiptRange(val title:String,val from:LocalDate?,val until:L
         return
     }
     detail?.let { target -> ReceiptList(l,target,{detail=null},change);return }
-    Column(Modifier.fillMaxSize().verticalScroll(overviewScroll).padding(horizontal=20.dp).padding(bottom=24.dp)) {
+    Column(Modifier.fillMaxSize().pageTransition("overview").verticalScroll(overviewScroll).padding(horizontal=20.dp).padding(bottom=24.dp)) {
     Row(Modifier.fillMaxWidth().padding(top=14.dp,bottom=4.dp),verticalAlignment=Alignment.CenterVertically) {
         Text("支出概览",fontSize=28.sp,fontWeight=FontWeight.Bold,modifier=Modifier.weight(1f))
         TextButton(openServices,modifier=Modifier.semantics {contentDescription="打开服务管理"}) {Text("服务管理");Icon(Icons.Outlined.ChevronRight,null)}
@@ -156,7 +156,7 @@ private data class ReceiptRange(val title:String,val from:LocalDate?,val until:L
     Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.End) {
         TextButton({detail=selectedDetail ?: ReceiptRange("全部付款",null,null)}) {Text(if(selectedDetail!=null) "所选时段明细" else "全部明细");Icon(Icons.Outlined.ChevronRight,null)}
     }
-    Heading("钱花在哪里", "$rankPeriod · 按应用")
+    Heading("净支出分布", "$rankPeriod · 按应用")
     val ranking=rankedPayments.groupBy { it.planName }.map { (name,ps)->name to LedgerStats.summary(ps) }.sortedByDescending { it.second.known }
     Surface(color=Color.White,shape=RoundedCornerShape(22.dp),modifier=Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp)) {
@@ -305,7 +305,7 @@ private data class ReceiptRange(val title:String,val from:LocalDate?,val until:L
         else LaunchedEffect(selectedPayment.id) {payment=null}
         return
     }
-    Column(Modifier.fillMaxSize()) {
+    Column(Modifier.fillMaxSize().pageTransition("receipts")) {
         Scaffold(containerColor=MaterialTheme.colorScheme.background,topBar={TopAppBar(windowInsets=WindowInsets(0,0,0,0),title={Text(target.title,fontWeight=FontWeight.SemiBold)},navigationIcon={ReceiptBack(backDescription,close)},actions={
             TextButton({managing=!managing;selected=emptySet()}) {Text(if(managing) "完成" else "管理")}
         })},bottomBar={if(managing) Surface(shadowElevation=4.dp) {
@@ -316,8 +316,17 @@ private data class ReceiptRange(val title:String,val from:LocalDate?,val until:L
             }
         }}) { padding ->
             Column(Modifier.fillMaxSize().padding(padding).padding(horizontal=20.dp)) {
+                Surface(Modifier.fillMaxWidth().padding(top=12.dp,bottom=16.dp),shape=RoundedCornerShape(22.dp),color=MaterialTheme.colorScheme.primaryContainer) {
+                    Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(6.dp)) {
+                        Text(if(query.isNotBlank() || kind!="全部") "筛选结果" else "明细汇总",fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(if(target.missingOnly) "${visible.size} 笔待补录" else
+                            "${visible.size} 笔 · ${if(target.refundOf!=null) "退款 ${cash(sum.known.abs())}" else "${if(sum.missing>0) "已知净支出" else "净支出"} ${cash(sum.known)}"}"+if(sum.missing>0) " · ${sum.missing} 笔待补录" else "",
+                            fontSize=20.sp,lineHeight=28.sp,fontWeight=FontWeight.SemiBold,color=MaterialTheme.colorScheme.primary)
+                        if(topups.count>0) Text("充值 ${cash(topups.known)} · 不计支出"+if(topups.missing>0) " · ${topups.missing} 笔待补录" else "",fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
                 if(target.refundOf==null) {
-                    if(target.planId==null) OutlinedTextField(query,{query=it;selected=emptySet()},label={Text("搜索应用")},leadingIcon={Icon(Icons.Outlined.Search,null)},singleLine=true,modifier=Modifier.fillMaxWidth())
+                    if(target.planId==null) OutlinedTextField(query,{query=it;selected=emptySet()},label={Text("搜索应用")},leadingIcon={Icon(Icons.Outlined.Search,null)},singleLine=true,shape=RoundedCornerShape(16.dp),modifier=Modifier.fillMaxWidth())
                     if(!target.missingOnly) Box {
                         val options=if(target.planId!=null) {
                             if(l.plans.find {it.id==target.planId}?.balanceAccount!=null) listOf("全部","话费扣费","话费充值","退款")
@@ -336,12 +345,11 @@ private data class ReceiptRange(val title:String,val from:LocalDate?,val until:L
                         }
                     }
                 }
-                Column(Modifier.padding(vertical=12.dp),verticalArrangement=Arrangement.spacedBy(4.dp)) {
-                    Text(if(target.missingOnly) "${visible.size} 笔待补录" else
-                        "${visible.size} 笔 · ${if(target.refundOf!=null) "退款 ${cash(sum.known.abs())}" else "${if(sum.missing>0) "已知净支出" else "净支出"} ${cash(sum.known)}"}"+if(sum.missing>0) " · ${sum.missing} 笔待补录" else "",color=MaterialTheme.colorScheme.onSurfaceVariant)
-                    if(topups.count>0) Text("充值 ${cash(topups.known)} · 不计支出"+if(topups.missing>0) " · ${topups.missing} 笔待补录" else "",fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                Row(Modifier.fillMaxWidth().padding(top=8.dp,bottom=10.dp),verticalAlignment=Alignment.CenterVertically) {
+                    Text("记录明细",fontSize=17.sp,fontWeight=FontWeight.SemiBold,modifier=Modifier.weight(1f))
+                    Text("按日期倒序",fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                LazyColumn(Modifier.fillMaxSize(),state=listState) {
+                LazyColumn(Modifier.fillMaxSize().clip(RoundedCornerShape(22.dp)).background(Color.White).padding(horizontal=16.dp),state=listState,contentPadding=PaddingValues(bottom=20.dp)) {
                     if(visible.isEmpty()) item {Text(if(target.missingOnly && scoped.isEmpty()) "当前时段的人民币金额已全部补录" else "没有符合条件的付款",modifier=Modifier.padding(vertical=32.dp),color=MaterialTheme.colorScheme.onSurfaceVariant)}
                     visible.groupBy { it.date }.forEach { (date,payments) ->
                         item(key="date-$date") {ReceiptDate(date)}
@@ -421,7 +429,7 @@ private data class ReceiptRange(val title:String,val from:LocalDate?,val until:L
         if(deleting) DeletePaymentsDialog(l,setOf(p.id),{deleting=false}) {change {Book.deletePayments(it,setOf(p.id))};deleting=false;close()}
         return
     }
-    Scaffold(containerColor=MaterialTheme.colorScheme.background,topBar={
+    Scaffold(modifier=Modifier.pageTransition("payment:${p.id}"),containerColor=MaterialTheme.colorScheme.background,topBar={
         TopAppBar(windowInsets=WindowInsets(0,0,0,0),title={Text(if(p.refundOf!=null) "退款详情" else "付款详情",fontWeight=FontWeight.SemiBold)},navigationIcon={ReceiptBack(backDescription,close)},actions=receiptActions)
     }) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(24.dp),verticalArrangement=Arrangement.spacedBy(20.dp)) {

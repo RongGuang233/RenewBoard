@@ -38,6 +38,9 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.time.LocalDate
 import java.time.temporal.ChronoUnit
 import java.math.BigDecimal
@@ -139,6 +142,31 @@ private fun money(totals: Map<String,BigDecimal>) = if(totals.isEmpty()) "暂无
     val snack = remember { SnackbarHostState() }; val scope = rememberCoroutineScope()
     fun message(s: String) { scope.launch { snack.showSnackbar(s) } }
     fun change(f: (Ledger)->Ledger) { scope.launch { try { repo.update(f) } catch(e: Exception) { message(e.message ?: "未能保存，请检查输入") } } }
+    var refreshingBalances by remember { mutableStateOf(false) }
+    fun refreshBalances() {
+        if(refreshingBalances) return
+        val targets=ledger.plans.filter {it.usageBalance!=null && !it.archived}
+        val app=c.applicationContext as RenewApp
+        refreshingBalances=true
+        scope.launch {
+            var refreshed=0
+            val failed=mutableListOf<String>()
+            try {
+                for(plan in targets) {
+                    try {
+                        val connected=withContext(Dispatchers.IO) {app.platformConnections.connection(plan.id)!=null}
+                        if(connected) {app.platformBalances.refresh(plan.id);refreshed++}
+                    } catch(e:CancellationException) {throw e}
+                    catch(e:Exception) {failed+=plan.name}
+                }
+                message(when {
+                    failed.isNotEmpty() -> "已刷新 $refreshed 个账户；${failed.take(3).joinToString("、")}${if(failed.size>3) "等 ${failed.size} 个账户" else ""}未刷新，请进入详情重试"
+                    refreshed>0 -> "已刷新 $refreshed 个账户余额"
+                    else -> "暂无已连接的平台账户，可进入余额详情连接"
+                })
+            } finally {refreshingBalances=false}
+        }
+    }
     LaunchedEffect(incoming,received) {
         val intent=incoming ?: return@LaunchedEffect
         if(received==null) return@LaunchedEffect
@@ -179,6 +207,21 @@ private fun money(totals: Map<String,BigDecimal>) = if(totals.isEmpty()) "暂无
         listOf("到期","账本","设备","设置").forEachIndexed { i,s -> NavigationBarItem(selected=tab==i,onClick={focusManager.clearFocus(force=true);keyboard?.hide();tab=i},icon={Icon(listOf(Icons.Outlined.Event,Icons.Outlined.ReceiptLong,Icons.Outlined.Devices,Icons.Outlined.Settings)[i],null)},label={Text(s)}) }
     } }) { padding ->
         val receipt=ledger.payments.find {it.id==receiptId}
+        val pageKey=when {
+            received==null -> "loading"
+            creating || editId!=null -> "edit:${editId ?: "new"}"
+            platformConnectionOpen -> "connection:$detailId"
+            usageAction!=null -> "usage:$detailId:$usageAction"
+            balanceAction!=null -> "balance:$detailId:$balanceAction"
+            paymentPlanId!=null -> "payment:$paymentPlanId"
+            receiptId!=null -> "receipt:$receiptId"
+            accountHistoryId!=null -> "history:$accountHistoryId"
+            detailId!=null -> "detail:$detailId"
+            forecastOpen -> "forecast"
+            servicesOpen -> "services"
+            else -> "tab:$tab"
+        }
+        Box(Modifier.fillMaxSize().pageTransition(pageKey)) {
         if(received==null) {
             Box(Modifier.fillMaxSize().padding(padding),contentAlignment=Alignment.Center) {CircularProgressIndicator()}
         } else if(creating || editId!=null) {
@@ -240,7 +283,7 @@ private fun money(totals: Map<String,BigDecimal>) = if(totals.isEmpty()) "暂无
         } else when(tab) {
             0 -> pageStates.SaveableStateProvider("home") {
                 Column(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding).padding(horizontal=20.dp).imePadding().verticalScroll(rememberScrollState()).padding(bottom=24.dp)) {
-                    Overview(ledger,onAdd={creating=true},openForecast={forecastOpen=true},open=::openPlan)
+                    Overview(ledger,onAdd={creating=true},openForecast={forecastOpen=true},open=::openPlan,refreshingBalances=refreshingBalances,refreshBalances=::refreshBalances)
                 }
             }
             1 -> pageStates.SaveableStateProvider("ledger") {
@@ -258,9 +301,10 @@ private fun money(totals: Map<String,BigDecimal>) = if(totals.isEmpty()) "暂无
             }
         }
     }
+    }
 }
 
-@Composable private fun Overview(l: Ledger, onAdd:()->Unit, openForecast:()->Unit, open: (String)->Unit) {
+@Composable private fun Overview(l: Ledger, onAdd:()->Unit, openForecast:()->Unit, open: (String)->Unit, refreshingBalances:Boolean, refreshBalances:()->Unit) {
     val today=LocalDate.now()
     val upcoming=l.benefits.filter { b->l.plans.any { it.id==b.planId && !it.archived && it.balanceAccount==null && it.usageBalance==null } }.sortedBy { Book.expiry(it,l.plans.single { p->p.id==it.planId }) }
     var showExpired by rememberSaveable { mutableStateOf(false) }
@@ -318,7 +362,16 @@ private fun money(totals: Map<String,BigDecimal>) = if(totals.isEmpty()) "暂无
     }
     val healthyBalances=balances.filterNot {it in urgentBalances}
     if(healthyBalances.isNotEmpty() || platformBalances.isNotEmpty()) {
-        Section("余额")
+        Row(Modifier.fillMaxWidth().padding(top=12.dp,bottom=4.dp),verticalAlignment=Alignment.CenterVertically) {
+            Text("余额",fontSize=19.sp,fontWeight=FontWeight.SemiBold,modifier=Modifier.weight(1f))
+            if(platformBalances.isNotEmpty()) TextButton(refreshBalances,enabled=!refreshingBalances,
+                modifier=Modifier.semantics {contentDescription="刷新已连接余额"}) {
+                if(refreshingBalances) CircularProgressIndicator(Modifier.size(18.dp),strokeWidth=2.dp)
+                else Icon(Icons.Outlined.Refresh,null,Modifier.size(18.dp))
+                Spacer(Modifier.width(6.dp))
+                Text(if(refreshingBalances) "刷新中" else "刷新")
+            }
+        }
         healthyBalances.forEach {BalanceCard(it,compact=true) {open(it.id)}}
         platformBalances.forEach {UsageBalanceCard(it,compact=true) {open(it.id)}}
     }

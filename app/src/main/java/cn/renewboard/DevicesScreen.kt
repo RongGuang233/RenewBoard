@@ -73,19 +73,24 @@ private fun deviceMoney(value: String) = "¥" + BigDecimal(value).setScale(2, Ro
     DisposableEffect(Unit) { onDispose { onSubpageChange(false) } }
     fun back() { if(editing) editing=false else selectedId=null }
     BackHandler(enabled=subpage && !editing && !purchasing) { back() }
+    val pageMotion=Modifier.fillMaxSize().pageTransition(listOf(selectedId,editing,purchasing))
     if(purchasing && device!=null) {
+        Box(pageMotion) {
         key(device.id) { DevicePurchaseEditor(device,onClose={purchasing=false},onSaved={saved->
             selectedId=saved.id;purchasing=false
         }) }
+        }
         return
     }
     if(editing) {
+        Box(pageMotion) {
         key(selectedId) { DeviceEditor(device,onClose={editing=false},onSaved={saved->
             selectedId=saved.id;editing=false
         }) }
+        }
         return
     }
-    Column(Modifier.fillMaxSize()) {
+    Column(pageMotion) {
         if(subpage) TopAppBar(title={ Text(if(editing) if(selectedId==null) "添加设备" else "编辑设备" else "设备详情") },
             navigationIcon={ PageBack(description="返回",back=::back) },
             actions={ if(!editing && device!=null) Box {

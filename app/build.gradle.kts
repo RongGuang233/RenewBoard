@@ -16,8 +16,8 @@ android {
         applicationId = "cn.renewboard"
         minSdk = 26
         targetSdk = 35
-        versionCode = 22
-        versionName = "1.13.1"
+        versionCode = 23
+        versionName = "1.13.2"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     signingConfigs { if (signingFile != null) create("localRelease") {

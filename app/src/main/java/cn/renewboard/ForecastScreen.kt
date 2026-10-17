@@ -11,6 +11,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -36,26 +37,33 @@ private fun forecastYuan(value:BigDecimal)="¥${value.setScale(2,RoundingMode.HA
     }) { padding ->
         LazyColumn(Modifier.fillMaxSize().padding(padding),contentPadding=PaddingValues(start=20.dp,end=20.dp,bottom=24.dp)) {
             item {
-                Column(Modifier.padding(top=12.dp,bottom=20.dp),verticalArrangement=Arrangement.spacedBy(6.dp)) {
-                    Text(forecastYuan(known),fontSize=34.sp,fontWeight=FontWeight.Bold,color=MaterialTheme.colorScheme.primary)
-                    Text("预计扣款 ${charges.size} 笔 · ${today.format(DateTimeFormatter.ofPattern("M月d日"))}—${until.minusDays(1).format(DateTimeFormatter.ofPattern("M月d日"))}",
-                        fontSize=14.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
-                    if(missing>0) Text("已知金额，另有 $missing 笔待补录人民币金额",fontSize=13.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                Surface(Modifier.fillMaxWidth().padding(top=12.dp,bottom=20.dp),shape=RoundedCornerShape(22.dp),color=MaterialTheme.colorScheme.primaryContainer) {
+                    Column(Modifier.padding(20.dp),verticalArrangement=Arrangement.spacedBy(8.dp)) {
+                        Text(if(missing>0) "已知预计扣款" else "预计扣款合计",fontSize=13.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(forecastYuan(known),fontSize=34.sp,fontWeight=FontWeight.Bold,color=MaterialTheme.colorScheme.primary)
+                        Text("预计扣款 ${charges.size} 笔 · ${today.format(DateTimeFormatter.ofPattern("M月d日"))}—${until.minusDays(1).format(DateTimeFormatter.ofPattern("M月d日"))}",
+                            fontSize=13.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                        if(missing>0) Text("另有 $missing 笔待补录人民币金额",fontSize=13.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
                 }
+                Text("扣款安排",fontSize=18.sp,fontWeight=FontWeight.SemiBold)
+                Text("按当前续费计划预计，尚未计入实际支出",fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.padding(top=4.dp,bottom=4.dp))
             }
             if(charges.isEmpty()) item {
                 Text("未来30天暂无预计扣款",modifier=Modifier.padding(vertical=24.dp),color=MaterialTheme.colorScheme.onSurfaceVariant)
             }
             charges.groupBy {it.date}.forEach { (date,dayCharges) ->
                 item(key="date-$date") {
-                    Text(if(date==today) "今天 · $date" else date.toString(),fontSize=13.sp,fontWeight=FontWeight.SemiBold,
-                        color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.padding(top=12.dp,bottom=6.dp))
+                    Row(Modifier.fillMaxWidth().padding(top=16.dp,bottom=8.dp),verticalAlignment=Alignment.CenterVertically) {
+                        Text(if(date==today) "今天 · $date" else date.toString(),fontSize=14.sp,fontWeight=FontWeight.SemiBold,modifier=Modifier.weight(1f))
+                        Text("${dayCharges.size} 笔",fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
                 }
                 items(dayCharges,key={"${it.planId}:${it.date}"}) { charge ->
                     Card(onClick={openPlan(charge.planId)},modifier=Modifier.fillMaxWidth().padding(bottom=6.dp),
-                        shape=RoundedCornerShape(16.dp),colors=CardDefaults.cardColors(containerColor=MaterialTheme.colorScheme.surface)) {
-                        Row(Modifier.fillMaxWidth().padding(12.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(12.dp)) {
-                            ServiceIcon(charge.planName,size=32.dp)
+                        shape=RoundedCornerShape(16.dp),colors=CardDefaults.cardColors(containerColor=Color.White)) {
+                        Row(Modifier.fillMaxWidth().padding(16.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(12.dp)) {
+                            ServiceIcon(charge.planName,size=36.dp)
                             Text(charge.planName,modifier=Modifier.weight(1f),fontSize=16.sp,fontWeight=FontWeight.Medium,maxLines=2,overflow=TextOverflow.Ellipsis)
                             Column(horizontalAlignment=Alignment.End,verticalArrangement=Arrangement.spacedBy(2.dp)) {
                                 Text(charge.cnyAmount?.let(::forecastYuan) ?: "${charge.currency} ${charge.amount.stripTrailingZeros().toPlainString()}",fontWeight=FontWeight.SemiBold)

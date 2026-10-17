@@ -30,6 +30,10 @@ class OverviewHistoryDeviceTest {
         val expected=Book.forecastCharges(runBlocking {app.repository.read()},today,today.plusDays(30))
         compose.onNodeWithText("预计扣款 ${expected.size} 笔").assertExists()
         compose.onNodeWithText("未来 30 天预计扣款").performClick()
+        compose.waitForIdle()
+        val bitmap=androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot() ?: error("截图失败")
+        java.io.File(app.cacheDir,"forecast-v1.13.2.png").outputStream().use {bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG,100,it)}
+        bitmap.recycle()
         compose.onAllNodesWithText("每周会员").onFirst().performScrollTo().performClick()
         compose.onNodeWithContentDescription("订阅更多操作").assertExists()
         back()

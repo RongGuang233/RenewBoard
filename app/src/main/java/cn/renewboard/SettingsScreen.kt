@@ -168,7 +168,7 @@ private enum class SettingsPage(val title: String) {
         }
     }
 
-    Column(Modifier.fillMaxSize().padding(horizontal = 20.dp)) {
+    Column(Modifier.fillMaxSize().pageTransition(page).padding(horizontal = 20.dp)) {
         Row(Modifier.fillMaxWidth().padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
             if (page != SettingsPage.HOME) {
                 PageBack(back={back()})

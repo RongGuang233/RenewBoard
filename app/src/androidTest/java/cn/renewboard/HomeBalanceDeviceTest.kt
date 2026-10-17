@@ -8,6 +8,8 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.work.WorkManager
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.CompletableDeferred
+import java.util.concurrent.atomic.AtomicInteger
 import org.junit.*
 import org.junit.Assert.*
 import org.junit.runner.RunWith
@@ -64,7 +66,7 @@ class HomeBalanceDeviceTest {
         assertEquals(1,queries)
         compose.onNodeWithText("余额",substring=false).performScrollTo()
         val bitmap=InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot() ?: error("截图失败")
-        java.io.File(app.cacheDir,"home-balances-v1.13.1.png").outputStream().use {bitmap.compress(Bitmap.CompressFormat.PNG,100,it)}
+        java.io.File(app.cacheDir,"home-balances-v1.13.2.png").outputStream().use {bitmap.compress(Bitmap.CompressFormat.PNG,100,it)}
         bitmap.recycle()
     }
     @Test fun apiOnlyHomeShowsZeroAndForeignBalancesExcludesArchivedAndDoesNotForecastThem() {
@@ -82,4 +84,57 @@ class HomeBalanceDeviceTest {
         compose.onNodeWithText("余额",substring=false).assertExists()
         assertEquals(l,runBlocking {app.repository.read()})
     }
+    @Test fun homeRefreshSkipsManualAndArchivedAccountsKeepsFailuresAndNeverBooksSpending() {
+        val phone=Plan(id="refresh-phone",name="中国移动",amount="30",billingAnchor=today,
+            balanceAccount=BalanceAccount("200",today))
+        val original=Ledger(plans=listOf(wallet("refresh-fail","查询失败账户","80"),
+            wallet("refresh-ok","DeepSeek API","100"),wallet("refresh-manual","MiMo API","20","USD"),
+            wallet("refresh-archived","归档连接","60",archived=true),phone),
+            payments=listOf(Payment(planId="refresh-ok",planName="DeepSeek API",amount="100",currency="CNY",date=today,note="平台充值")))
+        seed(original)
+        val oldSnapshot=DeepSeekBalanceSnapshot("CNY","80","0","80",Instant.now().minusSeconds(60))
+        app.platformConnections.save("refresh-fail","fixture-fail",oldSnapshot)
+        app.platformConnections.save("refresh-ok","fixture-ok",oldSnapshot.copy(totalBalance="100",toppedUpBalance="100"))
+        app.platformConnections.save("refresh-archived","fixture-archived",oldSnapshot.copy(totalBalance="60",toppedUpBalance="60"))
+        val queries=AtomicInteger(0)
+        val release=CompletableDeferred<Unit>()
+        app.platformBalanceQuery=PlatformBalanceQuery {key,currency->
+            queries.incrementAndGet()
+            release.await()
+            if(key=="fixture-fail") throw PlatformBalanceException("查询失败，请重试")
+            check(key=="fixture-ok")
+            DeepSeekBalanceSnapshot(currency,"92","2","90",Instant.now())
+        }
+        val refresh=compose.onNodeWithContentDescription("刷新已连接余额")
+        refresh.performScrollTo().performClick()
+        compose.waitUntil(10000) {queries.get()==1}
+        refresh.assertIsNotEnabled().performClick()
+        compose.onNode(hasText("账本",substring=false) and hasClickAction()).performClick()
+        compose.onNode(hasText("到期",substring=false) and hasClickAction()).performClick()
+        refresh.performScrollTo().assertIsNotEnabled()
+        assertEquals(1,queries.get())
+        release.complete(Unit)
+        compose.waitUntil(10000) {runBlocking {app.repository.read()}.plans.single {it.id=="refresh-ok"}.usageBalance!!.balance=="92"}
+        compose.waitUntil(10000) {compose.onAllNodesWithText("刷新中",substring=false).fetchSemanticsNodes().isEmpty()}
+        refresh.assertIsEnabled()
+        assertEquals(2,queries.get())
+        val expected=original.copy(plans=original.plans.map {if(it.id=="refresh-ok") it.copy(usageBalance=UsageBalance("92",today)) else it})
+        assertEquals(expected,runBlocking {app.repository.read()})
+        assertEquals(oldSnapshot,app.platformConnections.connection("refresh-fail")!!.snapshot)
+        assertEquals(Book.forecastSummary(original,LocalDate.now(),LocalDate.now().plusDays(30)),
+            Book.forecastSummary(expected,LocalDate.now(),LocalDate.now().plusDays(30)))
+        compose.onNodeWithText("¥92.00",substring=false).performScrollTo().assertIsDisplayed()
+    }
+
+    @Test fun manualOnlyRefreshMakesNoRequestsAndPreservesLedger() {
+        val original=Ledger(plans=listOf(wallet("home-ai","DeepSeek API","50")))
+        seed(original)
+        val queries=AtomicInteger(0)
+        app.platformBalanceQuery=PlatformBalanceQuery {_,_->queries.incrementAndGet();error("Manual account must not query")}
+        compose.onNodeWithContentDescription("刷新已连接余额").performScrollTo().performClick()
+        compose.waitUntil(10000) {compose.onAllNodesWithText("暂无已连接的平台账户，可进入余额详情连接").fetchSemanticsNodes().isNotEmpty()}
+        assertEquals(0,queries.get())
+        assertEquals(original,runBlocking {app.repository.read()})
+    }
+
 }

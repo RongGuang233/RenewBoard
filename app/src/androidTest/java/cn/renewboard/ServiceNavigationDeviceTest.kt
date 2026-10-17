@@ -107,4 +107,28 @@ class ServiceNavigationDeviceTest {
         compose.onNodeWithText("搜索服务",substring=false).assertDoesNotExist()
         assertEquals(baseline,runBlocking {app.repository.read()})
     }
+    @Test fun navigationRespondsBeforeFadeFinishesWithoutKeepingOldPages() {
+        compose.mainClock.autoAdvance=false
+        try {
+            repeat(3) {
+                tab("账本").performClick()
+                compose.mainClock.advanceTimeByFrame()
+                tab("账本").assertIsSelected()
+                compose.onNodeWithText("支出概览",substring=false).assertExists()
+                compose.onNodeWithText("订阅簿",substring=false).assertDoesNotExist()
+                compose.onNodeWithContentDescription("打开服务管理").performScrollTo().performClick()
+                compose.mainClock.advanceTimeByFrame()
+                compose.onNodeWithContentDescription("返回账本").assertExists()
+                systemBack()
+                compose.mainClock.advanceTimeByFrame()
+                tab("账本").assertIsSelected()
+                tab("到期").performClick()
+                compose.mainClock.advanceTimeByFrame()
+                tab("到期").assertIsSelected()
+                compose.onNodeWithText("支出概览",substring=false).assertDoesNotExist()
+            }
+            assertEquals(baseline,runBlocking {app.repository.read()})
+        } finally {compose.mainClock.autoAdvance=true}
+    }
+
 }
