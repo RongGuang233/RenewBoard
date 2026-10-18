@@ -131,15 +131,15 @@ import java.time.Instant
                             Column(horizontalAlignment = Alignment.End) {
                                 Text(displayMoney("CNY", java.math.BigDecimal.valueOf(student.balanceCents, 2).abs().toPlainString()))
                                 Text(when {
-                                    student.balanceCents > 0 -> "待上课预收款"
-                                    student.balanceCents < 0 -> "已上课待收款"
+                                    student.balanceCents > 0 -> "待上课"
+                                    student.balanceCents < 0 -> "待收款"
                                     else -> "已结清"
                                 }, style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         }
                     }
-                    Text("待上课预收款计入负债；已上课待收款计入资产。")
+                    Text("待上课计入负债；待收款计入资产。")
                     Button(onClick = { operation { apply(snapshot, selected) } }, enabled = !busy,
                         modifier = Modifier.fillMaxWidth()) { Text("确认导入并更新") }
                     TextButton(onClick = { pending = null }, enabled = !busy) { Text("取消") }

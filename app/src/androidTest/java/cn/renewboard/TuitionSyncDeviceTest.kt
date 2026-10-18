@@ -111,6 +111,8 @@ class TuitionSyncDeviceTest {
             snapshot(170000L,"2026-10-16T08:00:00Z")
         }
         compose.onNodeWithText("资产",substring=false).performClick()
+        compose.onNodeWithText("待上课",substring=false).assertExists()
+        compose.onAllNodesWithText("待收款",substring=true).assertCountEquals(0)
         click("查看学生")
         compose.onNodeWithText("示例学生",substring=false).assertExists()
         assertEquals(0,downloads.get())

@@ -1,0 +1,7 @@
+资产账户图标来自各银行、微信的官方 App Store 条目、cellier/bank-icon-cn 收录的农业银行基础矢量和 Simple Icons 的支付宝基础矢量，用于识别用户管理的对应账户。图标及商标归各权利人所有，不适用本项目 MIT 授权，也不表示本项目与这些品牌有关联。
+
+来源及发布者清单：源码 preview/icons/asset-sources.md。
+
+支付宝矢量路径来源 Simple Icons（CC0-1.0）：https://github.com/simple-icons/simple-icons/blob/develop/icons/alipay.svg 。商标权仍属于支付宝。
+
+农业银行基础矢量来源：https://github.com/cellier/bank-icon-cn ，商标及标志归中国农业银行所有。仅作账户识别。

@@ -65,8 +65,12 @@ internal fun assetIcon(category:AssetCategory)=when(category) {
     val prefs=remember {context.getSharedPreferences("asset-display",android.content.Context.MODE_PRIVATE)}
     var collapsed by remember {mutableStateOf(prefs.getStringSet("collapsed",emptySet())!!.toSet())}
     var order by remember {mutableStateOf((prefs.getString("groups","")!!.split(",").mapNotNull {name->AssetCategory.entries.find {it.name==name}}+AssetCategory.entries).distinct())}
+    var accountOrder by remember {mutableStateOf(runCatching {
+        val ids=org.json.JSONArray(prefs.getString("accounts","[]"))
+        (0 until ids.length()).map {ids.getString(it)}
+    }.getOrDefault(emptyList()))}
     val scope=rememberCoroutineScope()
-    val accounts=Assets.accounts(ledger)
+    val accounts=Assets.accounts(ledger).sortedBy {accountOrder.indexOf(it.id).takeIf {index->index>=0} ?: Int.MAX_VALUE}
     val account=accounts.find {it.id==selected}
     val sub=page!="home"
     LaunchedEffect(sub) {onSubpageChange(sub)}
@@ -77,15 +81,21 @@ internal fun assetIcon(category:AssetCategory)=when(category) {
         selected=a.id
         when {a.planId!=null->openPlan(a.planId);a.studentId!=null->tuition(true);else->balanceOpen=true}
     }
-    fun back() {page=when {page=="edit" && account!=null->"detail";page=="edit"->"type";page=="detail"->detailReturn;else->"home"}}
+    fun selectType(category:AssetCategory,type:String) {
+        val existing=accounts.firstOrNull {it.planId==null && it.studentId==null && it.category==category && canonicalAssetType(it.subtype,it.name)==canonicalAssetType(type,type)}
+        if(existing!=null) {selected=existing.id;detailReturn="home";page="detail"}
+        else {selected=null;createCategory=category.name;createType=type;page="edit"}
+    }
+    fun back() {page=when {page=="edit" && account!=null->"detail";page=="edit"->if(createType in commonAssetBanks) "bank" else "type";page=="bank"->"type";page=="detail"->detailReturn;else->"home"}}
     BackHandler(sub && !balanceOpen) {back()}
     Column(Modifier.fillMaxSize().pageTransition(page)) {
-        if(sub) TopAppBar(title={Text(when(page) {"detail"->"账户详情";"edit"->if(selected==null) "添加账户" else "账户设置";"type"->"选择账户类型";"manage"->"账户管理";"trend"->"净资产变化";else->"家教学费"})},
+        if(sub) TopAppBar(title={Text(when(page) {"detail"->"账户详情";"edit"->if(selected==null) "添加账户" else "账户设置";"type"->"选择账户类型";"manage"->"账户管理";"order"->"账户排序";"bank"->"选择银行";"trend"->"净资产变化";else->"学费"})},
             navigationIcon={PageBack(back=::back)},windowInsets=WindowInsets(0,0,0,0))
         when(page) {
             "type" -> AssetTypePicker {cat,type->
-                if(cat==AssetCategory.TUITION) tuition() else {createCategory=cat.name;createType=type;page="edit"}
+                when {cat==AssetCategory.TUITION->tuition();cat==AssetCategory.CASH && type=="银行卡"->page="bank";else->selectType(cat,type)}
             }
+            "bank" -> AssetBankPicker(onSelect={selectType(AssetCategory.CASH,it)})
             "edit" -> key(selected,createCategory,createType) {
                 AssetEditor(account,ledger,save,onSaved={selected=it;page="detail"},onTuition={tuition()},initialCategory=AssetCategory.valueOf(createCategory),initialType=createType)
             }
@@ -100,7 +110,7 @@ internal fun assetIcon(category:AssetCategory)=when(category) {
                     }
                 }
             }
-            "manage" -> Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),verticalArrangement=Arrangement.spacedBy(16.dp)) {
+            "order" -> Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),verticalArrangement=Arrangement.spacedBy(16.dp)) {
                 Text("分组顺序",fontWeight=FontWeight.SemiBold)
                 AssetCard {
                     order.forEachIndexed {i,category->
@@ -112,6 +122,31 @@ internal fun assetIcon(category:AssetCategory)=when(category) {
                         }
                     }
                 }
+                order.forEach {category->
+                    val group=accounts.filter {it.category==category && !it.archived}
+                    if(group.isNotEmpty()) {
+                        Text("${category.label} · 账户顺序",fontWeight=FontWeight.SemiBold)
+                        AssetCard {
+                            group.forEachIndexed {i,a->
+                                Row(Modifier.fillMaxWidth().padding(start=16.dp,end=4.dp),verticalAlignment=Alignment.CenterVertically) {
+                                    AssetAccountIcon(a.category,a.subtype,a.name)
+                                    Spacer(Modifier.width(12.dp))
+                                    Text(a.name,modifier=Modifier.weight(1f))
+                                    fun move(to:Int) {
+                                        val next=accounts.map {it.id}.toMutableList()
+                                        java.util.Collections.swap(next,next.indexOf(a.id),next.indexOf(group[to].id))
+                                        accountOrder=next
+                                        prefs.edit().putString("accounts",org.json.JSONArray(next).toString()).apply()
+                                    }
+                                    IconButton(enabled=i>0,onClick={move(i-1)}) {Icon(Icons.Outlined.KeyboardArrowUp,"上移账户${a.name}")}
+                                    IconButton(enabled=i<group.lastIndex,onClick={move(i+1)}) {Icon(Icons.Outlined.KeyboardArrowDown,"下移账户${a.name}")}
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            "manage" -> Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),verticalArrangement=Arrangement.spacedBy(16.dp)) {
                 TextButton(onClick={tuition()}) {Icon(Icons.Outlined.Sync,null);Spacer(Modifier.width(8.dp));Text("学费同步")}
                 Text("归档账户",fontWeight=FontWeight.SemiBold)
                 Text("归档仅收起账户，仍按各账户设置统计。",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
@@ -122,6 +157,7 @@ internal fun assetIcon(category:AssetCategory)=when(category) {
             else -> Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal=16.dp).padding(bottom=24.dp),verticalArrangement=Arrangement.spacedBy(12.dp)) {
                 Row(Modifier.fillMaxWidth().height(48.dp),verticalAlignment=Alignment.CenterVertically) {
                     Text("资产",style=MaterialTheme.typography.titleMedium,fontWeight=FontWeight.SemiBold,modifier=Modifier.weight(1f))
+                    TextButton(onClick={page="order"}) {Text("排序")}
                     IconButton(onClick={selected=null;detailReturn="home";page="type"}) {Icon(Icons.Outlined.Add,"添加账户",tint=MaterialTheme.colorScheme.primary)}
                     Box {
                         IconButton(onClick={menu=true}) {Icon(Icons.Outlined.MoreVert,"资产管理菜单")}
@@ -209,9 +245,9 @@ internal fun assetIcon(category:AssetCategory)=when(category) {
 }
 
 @Composable private fun AssetEditor(a:AssetAccount?,l:Ledger,save:suspend ((Ledger)->Ledger)->Unit,onSaved:(String)->Unit,onTuition:()->Unit,initialCategory:AssetCategory=AssetCategory.CASH,initialType:String="银行卡") {
-    var name by rememberSaveable {mutableStateOf(a?.name.orEmpty())}
-    var category by rememberSaveable {mutableStateOf(a?.category?.name ?: initialCategory.name)}
-    var subtype by rememberSaveable {mutableStateOf(a?.subtype ?: initialType)}
+    val name=a?.name ?: initialType.takeUnless {it=="其他" || it.isBlank()} ?: initialCategory.label
+    val category=a?.category?.name ?: initialCategory.name
+    val subtype=a?.subtype ?: initialType
     var balance by rememberSaveable {mutableStateOf(a?.balance ?: "")}
     var currency by rememberSaveable {mutableStateOf(a?.currency ?: "CNY")}
     var asOf by rememberSaveable {mutableStateOf(a?.asOf ?: LocalDate.now().toString())}
@@ -221,7 +257,6 @@ internal fun assetIcon(category:AssetCategory)=when(category) {
     var eligible by rememberSaveable {mutableStateOf(a?.eligibleAmount?.takeIf {a.eligibleBasisBalance==a.balance}.orEmpty())}
     var note by rememberSaveable {mutableStateOf(a?.note.orEmpty())}
     var notesOpen by rememberSaveable {mutableStateOf(false)}
-    var typeMenu by remember {mutableStateOf(false)}
     var busy by remember {mutableStateOf(false)}
     var error by remember {mutableStateOf<String?>(null)}
     val scope=rememberCoroutineScope()
@@ -229,29 +264,13 @@ internal fun assetIcon(category:AssetCategory)=when(category) {
     val api=a?.planId?.let {id->l.plans.find {it.id==id}?.usageBalance!=null}==true
     val knownPlatformAmount=a?.eligibleAmount?.takeIf {a.eligibleFromPlatform && a.eligibleBasisBalance==a.balance}
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),verticalArrangement=Arrangement.spacedBy(12.dp)) {
-        if(a==null) Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(12.dp)) {
-            AssetAccountIcon(cat,subtype,subtype);Text("${cat.label} · $subtype",fontWeight=FontWeight.SemiBold)
+        Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(12.dp)) {
+            AssetAccountIcon(cat,subtype,name);Text(name,fontWeight=FontWeight.SemiBold)
         }
         if(cat==AssetCategory.TUITION && a==null) {
-            Hint("家教学费由 LessonManager 导入，学生标识用于后续自动更新，避免重复输入。")
+            Hint("学费由 LessonManager 导入，学生标识用于后续自动更新，避免重复输入。")
             Button(onClick=onTuition) {Text("连接并导入学费")}
         } else {
-            val types=when(cat) {
-                AssetCategory.CASH->listOf("银行卡","现金","微信","支付宝","其他")
-                AssetCategory.INVESTMENT->listOf("余额宝","基金","股票","其他")
-                AssetCategory.RECEIVABLE->listOf("借出款","可退押金","其他")
-                AssetCategory.DEBT->listOf("信用卡","花呗","贷款","借入款","其他")
-                else->emptyList()
-            }
-            if(a!=null && types.isNotEmpty()) Box {
-                OutlinedButton(onClick={typeMenu=true},modifier=Modifier.fillMaxWidth().semantics {contentDescription="选择账户类型"}) {Text(subtype.ifBlank {"账户类型（可选）"});Icon(Icons.Outlined.ExpandMore,null)}
-                DropdownMenu(typeMenu,onDismissRequest={typeMenu=false}) {types.forEach {type->DropdownMenuItem(text={Text(type)},onClick={subtype=type;typeMenu=false})}}
-            }
-            if(cat==AssetCategory.PREPAID && a?.planId==null) {
-                Row(verticalAlignment=Alignment.CenterVertically) {Checkbox(subtype=="饭卡",onCheckedChange={subtype=if(it) "饭卡" else "";included=Assets.defaultIncluded(cat,subtype)});Text("这是饭卡（默认计入净资产）")}
-                Hint("已有话费和 API 余额会自动出现在账户列表，请在原账户设置中选择是否计入。")
-            }
-            Field("账户名称",name,{name=it})
             if(a==null) {MoneyField(if(cat==AssetCategory.DEBT) "剩余欠款" else "当前余额",balance,{balance=it});CurrencyPicker(currency) {currency=it};Field("余额日期",asOf,{asOf=it},dateField=true)}
             Row(verticalAlignment=Alignment.CenterVertically,modifier=Modifier.fillMaxWidth()) {Text("计入净资产",modifier=Modifier.weight(1f));Switch(included,{included=it},modifier=Modifier.semantics {contentDescription="计入净资产开关"})}
             if(currency!="CNY") MoneyField("折算汇率（1 $currency = ? CNY）",rate,{rate=it},supportingText="留空保留原币余额，列为待折算账户")
@@ -272,7 +291,14 @@ internal fun assetIcon(category:AssetCategory)=when(category) {
                             eligibleAmount=if(api) knownPlatformAmount ?: eligible.trim().ifBlank {null} else a?.eligibleAmount,
                             eligibleBasisBalance=if(api && (knownPlatformAmount!=null || eligible.isNotBlank())) a?.balance else null,eligibleFromPlatform=knownPlatformAmount!=null,
                             history=a?.history ?: listOf(AssetBalanceRecord(balance=balance.trim(),date=asOf,kind="初始余额")))
+                        var savedId=draft.id
                         save {current->
+                            if(a==null) {
+                                val existing=Assets.accounts(current).firstOrNull {
+                                    it.planId==null && it.studentId==null && it.category==cat && canonicalAssetType(it.subtype,it.name)==canonicalAssetType(subtype,name)
+                                }
+                                if(existing!=null) {savedId=existing.id;return@save current}
+                            }
                             val latest=if(a==null) null else Assets.accounts(current).find {it.id==a.id}
                             val merged=if(latest==null) draft else draft.copy(
                                 balance=latest.balance,currency=latest.currency,asOf=latest.asOf,history=latest.history,
@@ -283,7 +309,7 @@ internal fun assetIcon(category:AssetCategory)=when(category) {
                                 eligibleFromPlatform=latest.eligibleFromPlatform)
                             Assets.put(current,merged)
                         }
-                        onSaved(draft.id)
+                        onSaved(savedId)
                     } catch(e:CancellationException) {throw e} catch(e:Exception) {error=e.message ?: "账户保存失败"} finally {busy=false}
                 }
             },modifier=Modifier.fillMaxWidth()) {Text(if(busy) "正在保存…" else "保存账户")}

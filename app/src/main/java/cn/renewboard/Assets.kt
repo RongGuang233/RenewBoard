@@ -7,7 +7,7 @@ import java.time.LocalDate
 import java.util.Currency
 
 @Serializable enum class AssetCategory(val label:String) {
-    CASH("资金账户"), INVESTMENT("投资理财"), RECEIVABLE("待收款"), DEBT("负债账户"), PREPAID("预付余额"), TUITION("家教学费")
+    CASH("资金账户"), INVESTMENT("投资理财"), RECEIVABLE("待收款"), DEBT("负债账户"), PREPAID("充值"), TUITION("学费")
 }
 @Serializable data class AssetBalanceRecord(val id:String=newId(),val balance:String,val date:String,val kind:String="余额更新")
 @Serializable data class AssetAccount(
