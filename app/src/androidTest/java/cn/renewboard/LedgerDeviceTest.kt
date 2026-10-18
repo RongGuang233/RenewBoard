@@ -521,6 +521,54 @@ class LedgerDeviceTest {
         compose.onNodeWithText("付款详情",substring=false).assertExists()
     }
 
+    @Test fun donutKeepsLegendCompactAndSmallAmountsClickable() {
+        val entries=listOf("服务器" to "900","健身" to "30","网易云音乐" to "25","机场 VPN" to "20","域名" to "15","iCloud" to "10")
+        seed(Ledger(payments=entries.map {(name,amount)->Payment(planId=name,planName=name,amount=amount,currency="CNY",date=LocalDate.now().toString())}))
+        compose.onNodeWithText("账本",substring=false).performClick()
+        compose.onNodeWithTag("ledger-spending-legend").performScrollTo().assertExists()
+        entries.forEach {(name,amount)->
+            compose.onNode(hasContentDescription("$name，支出¥$amount.00",substring=true)).performScrollTo().assertIsDisplayed().assertHasClickAction()
+        }
+        compose.onNodeWithText("90.0%",substring=false).assertDoesNotExist()
+        compose.onNodeWithText("1.0%",substring=false).assertDoesNotExist()
+        compose.onNodeWithTag("ledger-spending-pie").performScrollTo().performTouchInput {click(center.copy(x=center.x+width*.4f))}
+        compose.onNodeWithText("90.0%",substring=false).assertExists()
+        shot("ledger-donut-selected")
+        compose.onNodeWithTag("ledger-spending-pie").performTouchInput {click(center.copy(x=center.x+width*.4f))}
+        compose.onNodeWithText("90.0%",substring=false).assertDoesNotExist()
+        compose.onNodeWithText("本月明细").performScrollTo()
+        shot("ledger-donut-compact")
+        compose.onNode(hasContentDescription("iCloud，支出¥10.00",substring=true)).performScrollTo().performClick()
+        compose.onNodeWithText("1 笔 · 净支出 ¥10.00",substring=false).assertExists()
+        compose.onNodeWithText("iCloud",substring=false).performClick()
+        compose.onNodeWithText("付款详情").assertExists()
+    }
+
+    @Test fun trendStacksAppsProportionallyAndSeparatesNetRefunds() {
+        val today=LocalDate.now()
+        val a=Payment(id="stack-a",planId="a",planName="音乐会员",amount="100",currency="CNY",date=today.toString())
+        val refund=a.copy(id="stack-a-refund",amount="20",refundOf=a.id)
+        val b=a.copy(id="stack-b",planId="b",planName="视频会员",amount="40")
+        val old=a.copy(id="stack-old",planId="c",planName="退款会员",amount="100",date=today.minusMonths(8).toString())
+        val returned=old.copy(id="stack-returned",amount="30",date=today.toString(),refundOf=old.id)
+        seed(Ledger(payments=listOf(a,refund,b,old,returned)))
+        compose.onNodeWithText("账本",substring=false).performClick()
+        val bucket=today.withDayOfMonth(1)
+        val music=compose.onNodeWithTag("trend-segment:$bucket:音乐会员",useUnmergedTree=true)
+        val video=compose.onNodeWithTag("trend-segment:$bucket:视频会员",useUnmergedTree=true)
+        val negative=compose.onNodeWithTag("trend-segment:$bucket:退款会员",useUnmergedTree=true)
+        music.assertContentDescriptionEquals("音乐会员，净支出¥80.00")
+        video.assertContentDescriptionEquals("视频会员，净支出¥40.00")
+        negative.assertContentDescriptionEquals("退款会员，净退款¥30.00")
+        val m=music.fetchSemanticsNode().boundsInRoot;val v=video.fetchSemanticsNode().boundsInRoot
+        assertTrue(kotlin.math.abs(m.height-v.height*2)<3f)
+        assertTrue(maxOf(m.bottom,v.bottom)<=negative.fetchSemanticsNode().boundsInRoot.top+1f)
+        shot("ledger-stacked-refund-trend")
+        compose.onNode(hasContentDescription("${today.year}/${today.monthValue}，支出¥90.00",substring=true)).performClick()
+        compose.onNodeWithText("所选时段明细").performScrollTo().performClick()
+        compose.onNodeWithText("4 笔 · 净支出 ¥90.00",substring=false).assertExists()
+    }
+
     @Test fun spendingPieUsesNetAmountsAndKeepsRefundsAndUnsettledCurrencyOutOfSlices() {
         val today=LocalDate.now().toString()
         val paid=Payment(id="pie-paid",planId="pie",planName="饼图应用",amount="100",currency="CNY",date=today)
@@ -533,7 +581,7 @@ class LedgerDeviceTest {
         compose.onNodeWithText("账本",substring=false).performClick()
         compose.onNodeWithText("近6个月 · 合计").assertDoesNotExist()
         compose.onNodeWithText("近6个月 · 按应用").assertDoesNotExist()
-        compose.onNodeWithTag("ledger-spending-pie").performScrollTo().assertContentDescriptionEquals("净支出饼图，2项，已知正向净支出¥90.00")
+        compose.onNodeWithTag("ledger-spending-pie").performScrollTo().assertContentDescriptionEquals("净支出圆环图，2项，已知正向净支出¥90.00")
         compose.onNodeWithText("仅显示已知人民币金额；净退款单列，不计入饼图").assertExists()
         compose.onNode(hasContentDescription("净退款应用，支出¥-15.00，净支出",substring=true)).assertExists()
         compose.onNode(hasContentDescription("待补应用，支出¥0.00，净支出，待补录1笔",substring=true)).assertExists()
@@ -541,12 +589,15 @@ class LedgerDeviceTest {
         compose.onNodeWithText("2 笔 · 净支出 ¥60.00",substring=false).assertExists()
         compose.onNodeWithContentDescription("返回概览").performClick()
         seed(Ledger(payments=listOf(paid,refund,other)))
-        compose.onNodeWithTag("ledger-spending-pie").performScrollTo().assertContentDescriptionEquals("净支出饼图，2项，已知正向净支出¥90.00")
+        compose.onNodeWithTag("ledger-spending-pie").performScrollTo().assertContentDescriptionEquals("净支出圆环图，2项，已知正向净支出¥90.00")
         compose.onNode(hasContentDescription("饼图应用，支出¥60.00，占比66.7%",substring=true)).assertExists()
         compose.onNode(hasContentDescription("另一应用，支出¥30.00，占比33.3%",substring=true)).assertExists()
         compose.onNodeWithText("仅显示已知人民币金额",substring=true).assertDoesNotExist()
         shot("ledger-spending-pie")
-        compose.onNodeWithTag("ledger-spending-pie").performTouchInput {click(center.copy(x=center.x+width*.1f))}
+        compose.onNodeWithTag("ledger-spending-legend").assertExists()
+        compose.onNodeWithTag("ledger-spending-pie").performTouchInput {click(center.copy(x=center.x+width*.4f))}
+        compose.onNodeWithText("66.7%",substring=false).assertExists()
+        compose.onNodeWithContentDescription("查看饼图应用明细").performClick()
         compose.onNodeWithText("2 笔 · 净支出 ¥60.00",substring=false).assertExists()
     }
 

@@ -11,6 +11,25 @@ class LedgerStatsTest {
         Payment(planId = "music", planName = "音乐会员", amount = amount, currency = currency, date = date, cnyAmount = cny)
     private fun money(expected: String, actual: BigDecimal) = assertEquals(0, BigDecimal(expected).compareTo(actual))
 
+    @Test fun stacksGroupAppsOffsetTheirRefundsAndKeepOppositeSignsSeparate() {
+        val today=d("2026-09-07")
+        val a=payment(today.toString(),"100")
+        val extra=a.copy(id="extra",amount="40")
+        val refund=a.copy(id="refund",amount="30",refundOf=a.id)
+        val b=a.copy(id="b",planId="b",planName="视频会员",amount="25")
+        val returned=b.copy(id="returned",planName="已退会员",amount="110",refundOf="old")
+        val unknown=a.copy(id="unknown",planName="未折算",currency="USD",cnyAmount=null)
+        val buckets=LedgerStats.buckets(listOf(a,extra,refund,b,returned,unknown),TrendRange.MONTH,today)
+        val bucket=buckets.last()
+        money("110",bucket.byApp.getValue("音乐会员"));money("25",bucket.byApp.getValue("视频会员"))
+        money("-110",bucket.byApp.getValue("已退会员"));assertFalse("未折算" in bucket.byApp)
+        money("135",bucket.positive);money("110",bucket.negative);money("25",bucket.summary.known)
+        money(bucket.summary.known.toPlainString(),bucket.positive-bucket.negative)
+        assertEquals(1,bucket.summary.missing);assertTrue(buckets.dropLast(1).all {it.byApp.isEmpty()})
+        val cancelled=LedgerStats.buckets(listOf(a,a.copy(id="full-refund",refundOf=a.id)),TrendRange.MONTH,today).last()
+        assertTrue(cancelled.byApp.isEmpty());money("0",cancelled.summary.known)
+    }
+
     @Test fun summariesKeepFrozenSettlementsAndDistinguishMissingFromZero() {
         val payments = listOf(
             payment("2026-09-01", "10.12"),

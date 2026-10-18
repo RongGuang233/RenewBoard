@@ -30,6 +30,20 @@ class UpdateRetryDeviceTest {
     }
     @After fun clean() {finishCheck.countDown();UpdateDownload(context).cancel()}
 
+    @Test fun openingUpdatePageChecksOnceWithoutDownloading() {
+        UpdateDownload(context).cancel()
+        val calls=AtomicInteger()
+        compose.setContent {MaterialTheme {Column {UpdateSection(checkOnOpen=true) {
+            calls.incrementAndGet()
+            AppUpdate(BuildConfig.VERSION_NAME,"",false)
+        }}}}
+        compose.waitUntil(5000) {compose.onAllNodesWithText("当前已是最新版本").fetchSemanticsNodes().isNotEmpty()}
+        assertEquals(1,calls.get())
+        assertNull(UpdateDownload(context).current())
+        compose.onNodeWithText("知道了").performClick()
+        assertEquals(1,calls.get())
+    }
+
     @Test fun failedDownloadRetryImmediatelyChecksOnceAndShowsResult() {
         val calls=AtomicInteger()
         compose.setContent {MaterialTheme {Column {UpdateSection {

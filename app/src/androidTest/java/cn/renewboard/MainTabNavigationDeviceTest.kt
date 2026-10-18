@@ -28,16 +28,18 @@ class MainTabNavigationDeviceTest {
         compose.waitForIdle()
     }
     @After fun clean() {runBlocking {app.repository.update {Ledger()}};compose.waitForIdle()}
-    private fun tab(name:String) {compose.onNodeWithText(name,substring=false).performClick();compose.waitForIdle()}
+    private fun tab(name:String) {compose.onNode(hasText(name,substring=false) and hasClickAction()).performClick();compose.waitForIdle()}
 
     @Test fun devicesRetainStatusQuerySortAndScrollAcrossDetailTabsAndRecreation() {
         tab("设备")
-        compose.onNodeWithText("服役中",substring=false).assertExists()
+        compose.onNodeWithContentDescription("筛选设备状态 服役中").assertIsSelected()
         compose.onNodeWithText("服役设备").assertExists()
-        compose.onNodeWithContentDescription("筛选设备状态").performClick()
-        compose.onNode(hasText("已卖出") and hasAnyAncestor(isPopup())).performClick()
+        compose.onNodeWithContentDescription("筛选设备状态 已卖出").performClick()
+        compose.onNodeWithContentDescription("设备列表更多操作").performClick()
         compose.onNodeWithContentDescription("设备排序").performClick()
         compose.onNodeWithText("净花费 · 最高").performClick()
+        compose.onNodeWithContentDescription("设备列表更多操作").performClick()
+        compose.onNodeWithContentDescription("展开设备搜索").performClick()
         compose.onNode(hasText("搜索设备") and hasSetTextAction()).performTextReplacement("卖出设备")
         compose.activityRule.scenario.onActivity {activity->
             activity.currentFocus?.clearFocus()
@@ -74,7 +76,7 @@ class MainTabNavigationDeviceTest {
         val description="${day.monthValue}/${day.dayOfMonth}，支出¥20.00，1笔，待补录0笔"
         compose.onNodeWithContentDescription(description).performScrollTo().performClick()
         compose.onNodeWithText("所选时段明细").assertExists()
-        compose.onNodeWithText(LocalDate.now().minusDays(2).toString(),substring=false).performScrollTo()
+        compose.onNodeWithText("本月明细",substring=false).performScrollTo()
         fun offset()=compose.onNode(hasScrollAction() and hasAnyDescendant(hasText("支出概览"))).fetchSemanticsNode()
             .config[SemanticsProperties.VerticalScrollAxisRange].value()
         val before=offset();assertTrue(before>0)

@@ -28,7 +28,7 @@ class DeviceDraftDeviceTest {
         app.getSharedPreferences("form-drafts",0).edit().clear().commit()
         runBlocking {app.repository.update {Ledger()}}
         compose.waitForIdle()
-        compose.onNodeWithText("设备",substring=false).performClick()
+        compose.onNode(hasText("设备",substring=false) and hasClickAction()).performClick()
     }
 
     @After fun clean() {
@@ -74,7 +74,7 @@ class DeviceDraftDeviceTest {
         // Dispatch the activity's system-back path, not the form's own button.
         compose.activityRule.scenario.onActivity {it.onBackPressedDispatcher.onBackPressed()}
         click("保留草稿")
-        compose.onNodeWithText("我的设备").assertExists()
+        compose.onNodeWithTag("devices-heading").assertExists()
         assertTrue(runBlocking {app.repository.read()}.devices.isEmpty())
         assertNotNull(DraftStore(app).read("device:new"))
         compose.activityRule.scenario.recreate()
@@ -90,7 +90,7 @@ class DeviceDraftDeviceTest {
         assertEquals("",field("设备名称").fetchSemanticsNode().config[SemanticsProperties.EditableText].text)
         field("购入金额（元）").assertExists()
         compose.onNodeWithContentDescription("返回").performClick()
-        compose.onNodeWithText("我的设备").assertExists()
+        compose.onNodeWithTag("devices-heading").assertExists()
         compose.onNodeWithText("保留设备草稿？").assertDoesNotExist()
         assertNull(DraftStore(app).read("device:new"))
     }
@@ -135,8 +135,7 @@ class DeviceDraftDeviceTest {
         val original=Device(id="retired-draft",name="退役电脑",purchaseAmount="3000",
             status=DeviceStatus.RETIRED,startDate=today.minusYears(1).toString(),endDate=stopped)
         runBlocking {app.repository.update {it.copy(devices=listOf(original))}}
-        compose.onNodeWithContentDescription("筛选设备状态").performClick()
-        compose.onNode(hasText("已退役") and hasAnyAncestor(isPopup())).performClick()
+        compose.onNodeWithContentDescription("筛选设备状态 已退役").performClick()
         compose.waitUntil(10000) {compose.onAllNodesWithText("退役电脑").fetchSemanticsNodes().isNotEmpty()}
         click("退役电脑");click("编辑设备");awaitEditor()
         selectStatus("已卖出")

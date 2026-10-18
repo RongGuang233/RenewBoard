@@ -52,9 +52,9 @@ class ServiceNavigationDeviceTest {
             compose.onNodeWithText("支出概览",substring=false).assertDoesNotExist()
         }
         tab("设备").performClick().assertIsSelected()
-        compose.onNodeWithText("我的设备",substring=false).assertExists()
+        compose.onNodeWithTag("devices-heading").assertExists()
         tab("设置").performClick().assertIsSelected()
-        compose.onNodeWithText("更新与关于",substring=false).assertExists()
+        compose.onNodeWithText("关于订阅簿",substring=false).assertExists()
         tab("到期").performClick().assertIsSelected()
         compose.onNodeWithText("订阅簿",substring=false).assertExists()
         assertEquals(baseline,runBlocking {app.repository.read()})

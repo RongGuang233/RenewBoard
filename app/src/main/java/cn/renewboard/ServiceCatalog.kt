@@ -7,10 +7,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.Flight
 import androidx.compose.material.icons.rounded.AccountBalanceWallet
-import androidx.compose.material.icons.rounded.Dns
-import androidx.compose.material.icons.rounded.Storage
 import androidx.compose.material.icons.rounded.SportsEsports
 import androidx.compose.material.icons.rounded.Subscriptions
 import androidx.compose.material3.Icon
@@ -73,8 +70,8 @@ val servicePresets = listOf(
     ServicePreset("阿里云百炼", "AI 平台余额", "CNY", listOf("百炼", "dashscope", "通义千问api", "qwen api"), R.drawable.service_bailian, usageBalance = true),
     ServicePreset("火山方舟", "AI 平台余额", "CNY", listOf("方舟", "volcengine ark", "豆包api", "doubao api"), usageBalance = true),
     ServicePreset("硅基流动", "AI 平台余额", "CNY", listOf("siliconflow", "硅基流动api"), usageBalance = true),
-    ServicePreset("服务器", "云服务", "CNY", listOf("云服务器", "server", "vps", "ecs")),
-    ServicePreset("域名", "云服务", "CNY", listOf("domain", "域名续费"), defaultCycle = Cycle.YEAR),
+    ServicePreset("服务器", "云服务", "CNY", listOf("云服务器", "server", "vps", "ecs"), R.drawable.service_server),
+    ServicePreset("域名", "云服务", "CNY", listOf("domain", "域名续费"), R.drawable.service_domain, defaultCycle = Cycle.YEAR),
     ServicePreset("UU加速器", "游戏加速", "CNY", listOf("网易UU", "uu加速", "uu"), R.drawable.service_uu),
     ServicePreset("UU主机加速器", "游戏加速", "CNY", listOf("uuconsole"), R.drawable.service_uuconsole),
     ServicePreset("小黑盒加速器", "游戏加速", "CNY", listOf("小黑盒", "黑盒", "heybox", "heihe"), R.drawable.service_heihe),
@@ -108,7 +105,8 @@ val servicePresets = listOf(
     ServicePreset("哈啰单车", "出行通信", "CNY", listOf("哈啰", "哈罗", "hellobike", "hello"), R.drawable.service_hello),
     ServicePreset("中国电信", "出行通信", "CNY", listOf("电信", "天翼", "telecom"), R.drawable.service_telecom),
     ServicePreset("中国移动", "出行通信", "CNY", listOf("移动", "咪咕", "mobile"), R.drawable.service_mobile),
-    ServicePreset("机场 VPN", "其他", "CNY", listOf("机场", "vpn", "梯子", "代理")),
+    ServicePreset("健身", "运动健身", "CNY", listOf("健身房", "健身卡", "gym", "fitness"), R.drawable.service_fitness),
+    ServicePreset("机场 VPN", "其他", "CNY", listOf("机场", "vpn", "梯子", "代理"), R.drawable.service_vpn),
     ServicePreset("游戏加速器（自定义）", "其他", "CNY", listOf("游戏加速器", "加速器")),
 )
 
@@ -129,10 +127,7 @@ fun ServiceIcon(name: String, modifier: Modifier = Modifier, size: Dp = 48.dp) {
     val preset = servicePresetFor(name)
     val iconRes = preset?.iconRes
     val generic = when (preset?.name) {
-        "机场 VPN" -> Icons.Rounded.Flight
         "游戏加速器（自定义）" -> Icons.Rounded.SportsEsports
-        "服务器" -> Icons.Rounded.Storage
-        "域名" -> Icons.Rounded.Dns
         else -> if (preset?.usageBalance == true) Icons.Rounded.AccountBalanceWallet else Icons.Rounded.Subscriptions
     }
     Box(

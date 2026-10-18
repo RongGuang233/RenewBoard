@@ -27,6 +27,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
@@ -45,10 +46,11 @@ internal fun reminderNotificationSettingsIntent(context: Context): Intent =
     }
 
 private enum class SettingsPage(val title: String) {
-    HOME("设置"), REMINDERS("到期提醒"), BACKUP("本地备份"), WEBDAV("坚果云 · WebDAV"),
-    CONNECTION("连接设置"), REMOTE("云端备份"), ABOUT("更新与关于"), LICENSES("开源许可证")
+    HOME("设置"), REMINDERS("到期提醒"), BACKUP("本地备份"), WEBDAV("云端备份"),
+    CONNECTION("连接设置"), REMOTE("备份记录"), TUITION("学费同步"), UPDATES("版本更新"), ABOUT("关于订阅簿"), LICENSES("开源许可证")
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable internal fun SettingsScreen(
     l: Ledger,
     message: (String) -> Unit,
@@ -81,6 +83,8 @@ private enum class SettingsPage(val title: String) {
         if (!savingReminder) reminderDays = l.settings.reminderDays.toSet()
     }
     var customDay by rememberSaveable { mutableStateOf("") }
+    var showCustomDay by rememberSaveable { mutableStateOf(false) }
+    var reminderHelp by rememberSaveable { mutableStateOf(false) }
     var reminderError by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
     var configured by remember { mutableStateOf(config.configured) }
@@ -133,7 +137,7 @@ private enum class SettingsPage(val title: String) {
             try {
                 c.repository().update { it.copy(settings = it.settings.copy(reminderDays = days.sorted())) }
                 reminderDays = days
-                if (clearCustom) customDay = ""
+                if (clearCustom) { customDay = ""; showCustomDay = false }
                 message(if (days.isEmpty()) "已关闭到期提醒" else "提醒已保存")
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
@@ -178,31 +182,53 @@ private enum class SettingsPage(val title: String) {
         }
         if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
         key(page) {
-            Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            if(page == SettingsPage.TUITION) Box(Modifier.weight(1f)) { TuitionSyncScreen(l, title="LessonManager") }
+            else Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                 when (page) {
                     SettingsPage.HOME -> {
-                        SettingsGroup("偏好") {
-                            SettingsLink("到期提醒", when { !notificationsEnabled -> "到期提醒未开启"; l.settings.reminderDays.isEmpty() -> "已关闭"; else -> "${l.settings.reminderDays.size} 个提醒时间" }, Icons.Outlined.Notifications) { navigate(SettingsPage.REMINDERS) }
+                        SettingsGroup("通用") {
+                            SettingsLink("到期提醒", when {
+                                !notificationsEnabled -> "通知未允许"
+                                l.settings.reminderDays.isEmpty() -> "已关闭"
+                                else -> l.settings.reminderDays.sorted().joinToString("、") {if(it==0) "当天" else "提前 $it 天"}
+                            }, Icons.Outlined.Notifications, warning=!notificationsEnabled) { navigate(SettingsPage.REMINDERS) }
                         }
                         SettingsGroup("数据") {
-                            SettingsLink("本地备份", "导出与恢复", Icons.Outlined.SaveAlt) { navigate(SettingsPage.BACKUP) }
-                            SettingsLink("坚果云 · WebDAV", when { status=="备份成功" -> "最近成功 ${settingsDisplayTime(success)}";status.isBlank() || status=="尚未备份" -> "尚未备份";else -> "最近备份失败" }, Icons.Outlined.CloudUpload) { navigate(SettingsPage.WEBDAV) }
+                            SettingsLink("本地备份", "", Icons.Outlined.SaveAlt) { navigate(SettingsPage.BACKUP) }
+                            SettingsDivider()
+                            SettingsLink("云端备份", when {
+                                !configured -> "未配置"
+                                status=="备份成功" && success.isNotBlank() -> settingsSummaryTime(success)
+                                status.isBlank() || status=="尚未备份" -> "尚未备份"
+                                else -> "备份失败"
+                            }, Icons.Outlined.CloudUpload, warning=configured && status.isNotBlank() && status !in setOf("备份成功","尚未备份")) { navigate(SettingsPage.WEBDAV) }
+                            SettingsDivider()
+                            SettingsLink("学费同步", if(!(c.applicationContext as RenewApp).tuitionConnection.configured) "未连接"
+                                else l.assets.tuitionFetchedAt?.let {settingsSummaryTime(it)} ?: "尚未同步", Icons.Outlined.School) { navigate(SettingsPage.TUITION) }
                         }
                         SettingsGroup("应用") {
-                            SettingsLink("更新与关于", "${BuildConfig.VERSION_NAME}", Icons.Outlined.Info) { navigate(SettingsPage.ABOUT) }
+                            SettingsLink("检查更新", BuildConfig.VERSION_NAME, Icons.Outlined.SystemUpdate) { navigate(SettingsPage.UPDATES) }
+                            SettingsDivider()
+                            SettingsLink("关于订阅簿", "", Icons.Outlined.Info) { navigate(SettingsPage.ABOUT) }
                         }
                     }
                     SettingsPage.REMINDERS -> {
                         SettingsPanel {
                             Text("提醒时间",style=MaterialTheme.typography.titleMedium)
-                            listOf(listOf(0,1),listOf(3,7)).forEach { row ->
-                                Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)) {
-                                    row.forEach { day -> FilterChip(selected=day in reminderDays,
-                                        onClick={saveReminderDays(if(day in reminderDays) reminderDays-day else reminderDays+day)}, enabled=!savingReminder,
-                                        label={Text(if(day==0) "当天" else "提前 $day 天")},modifier=Modifier.weight(1f)) }
+                            FlowRow(horizontalArrangement=Arrangement.spacedBy(6.dp)) {
+                                listOf(0,1,3,7).forEach { day -> FilterChip(selected=day in reminderDays,
+                                    onClick={saveReminderDays(if(day in reminderDays) reminderDays-day else reminderDays+day)}, enabled=!savingReminder,
+                                    label={Text(if(day==0) "当天" else "$day 天前",fontSize=13.sp)}) }
+                                reminderDays.filter { it !in setOf(0,1,3,7) }.sorted().forEach { day ->
+                                    InputChip(selected=true,onClick={saveReminderDays(reminderDays-day)},enabled=!savingReminder,label={Text("提前 $day 天",fontSize=13.sp)},
+                                        trailingIcon={Icon(Icons.Outlined.Close,contentDescription="移除提前 $day 天",modifier=Modifier.size(16.dp))})
                                 }
                             }
-                            Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+                            TextButton(onClick={showCustomDay=!showCustomDay},enabled=!savingReminder,contentPadding=PaddingValues(0.dp)) {
+                                Icon(if(showCustomDay) Icons.Outlined.ExpandLess else Icons.Outlined.Add,null,Modifier.size(18.dp))
+                                Spacer(Modifier.width(4.dp)); Text(if(showCustomDay) "收起自定义" else "自定义")
+                            }
+                            if(showCustomDay) Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(8.dp)) {
                                 Field("自定义提前天数",customDay,{customDay=it;reminderError=null},modifier=Modifier.weight(1f),keyboardType=KeyboardType.Number)
                                 OutlinedButton({
                                     val day=customDay.toIntOrNull()
@@ -210,35 +236,36 @@ private enum class SettingsPage(val title: String) {
                                     else saveReminderDays(reminderDays+day, clearCustom=true)
                                 }, enabled=!savingReminder) { Text("添加") }
                             }
-                            reminderDays.filter { it !in setOf(0,1,3,7) }.sorted().forEach { day ->
-                                InputChip(selected=true,onClick={saveReminderDays(reminderDays-day)},enabled=!savingReminder,label={Text("提前 $day 天")},
-                                    trailingIcon={Icon(Icons.Outlined.Close,contentDescription="移除提前 $day 天")})
-                            }
                             reminderError?.let { Text(it,color=MaterialTheme.colorScheme.error) }
                             if (savingReminder) LinearProgressIndicator(Modifier.fillMaxWidth())
-                            SettingsNote(if(reminderDays.isEmpty()) "到期提醒已关闭。" else "系统省电可能延迟通知。")
-                            Text(if(notificationsEnabled) "到期提醒通知：已开启" else "到期提醒未开启",fontWeight=FontWeight.Medium)
-                            OutlinedButton(onClick = {
+                            if(reminderDays.isEmpty()) SettingsNote("到期提醒已关闭。")
+                        }
+                        Surface(shape=RoundedCornerShape(14.dp),color=Color.White) {
+                            SettingsLink("系统通知",if(notificationsEnabled) "已允许" else "去开启",Icons.Outlined.NotificationsActive,warning=!notificationsEnabled) {
                                 c.startActivity(reminderNotificationSettingsIntent(c))
-                            }, modifier = Modifier.fillMaxWidth()) { Text(if(notificationsEnabled) "管理通知设置" else "前往开启通知") }
-
+                            }
+                        }
+                        TextButton(onClick={reminderHelp=!reminderHelp}) {Text("收不到提醒？")}
+                        if(reminderHelp) SettingsPanel {
+                            SettingsNote("请确认已选择提醒时间，并在系统设置中允许订阅簿发送到期通知。系统省电可能延迟通知，可检查应用的后台运行与电池限制。")
                         }
                     }
                     SettingsPage.BACKUP -> {
                         SettingsPanel {
                             Text("保存一份完整备份", style = MaterialTheme.typography.titleMedium)
                             SettingsNote("包含订阅、付款、资产余额与历史、设备和设置。连接密码、令牌与加密密钥不包含在备份中。")
-                            Button({ export.launch("订阅簿-${LocalDate.now()}.json") }, enabled = !busy, modifier = Modifier.fillMaxWidth()) { Text("导出 JSON") }
+                            Button({ export.launch("订阅簿-${LocalDate.now()}.json") }, enabled = !busy, modifier = Modifier.fillMaxWidth()) { Text("导出备份") }
                         }
                         SettingsPanel {
                             Text("从备份恢复", style = MaterialTheme.typography.titleMedium)
                             SettingsNote("选择文件后先预览，确认后替换本机数据。")
-                            OutlinedButton({ import.launch(arrayOf("application/json", "text/plain", "application/octet-stream")) }, enabled = !busy, modifier = Modifier.fillMaxWidth()) { Text("从文件恢复") }
+                            OutlinedButton({ import.launch(arrayOf("application/json", "text/plain", "application/octet-stream")) }, enabled = !busy, modifier = Modifier.fillMaxWidth()) { Text("恢复备份") }
                         }
                     }
                     SettingsPage.WEBDAV, SettingsPage.CONNECTION -> {
                         if (page == SettingsPage.CONNECTION || !configured) {
                             SettingsPanel {
+                                Text("坚果云 · WebDAV",style=MaterialTheme.typography.titleMedium)
                                 Field("WebDAV 地址", url, { url = it })
                                 Field("坚果云账号", user, { user = it })
                                 Field(if (configured) "应用密码（留空保留）" else "专用应用密码", password, { password = it }, secret = true)
@@ -256,9 +283,9 @@ private enum class SettingsPage(val title: String) {
                             }
                         } else {
                             SettingsPanel {
-                                Text("备份状态", style = MaterialTheme.typography.titleMedium)
-                                SettingsNote("最后成功：${settingsDisplayTime(success)}")
-                                if (status.isNotBlank()) SettingsNote(status)
+                                Text("坚果云 · WebDAV", style = MaterialTheme.typography.titleMedium)
+                                Text(if(success.isBlank()) "尚未备份" else "最后成功：${settingsDisplayTime(success)}",fontWeight=FontWeight.Medium)
+                                if (status.isNotBlank() && status!="尚未备份") Text(status,color=if(status=="备份成功") MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error,fontSize=13.sp)
                                 Button({ operation {
                                     withContext(Dispatchers.IO) {
                                         try { config.client().upload(c.repository().read(), false); config.result() }
@@ -267,21 +294,24 @@ private enum class SettingsPage(val title: String) {
                                     message("手动备份成功，已下载核验")
                                 } }, enabled = !busy, modifier = Modifier.fillMaxWidth()) { Text("立即备份") }
                                 SettingsNote("手动备份长期保留。")
-                                OutlinedButton({
+                            }
+                            Surface(shape=RoundedCornerShape(14.dp),color=Color.White) {
+                                Column {
+                                SettingsLink("备份记录", "", Icons.Outlined.History,enabled=!busy) {
                                     navigate(SettingsPage.REMOTE)
                                     operation { remote = withContext(Dispatchers.IO) { config.client().list() } }
-                                }, enabled = !busy, modifier = Modifier.fillMaxWidth()) { Text("云端备份") }
-                            }
-                            SettingsGroup("连接") {
-                                SettingsLink("连接设置", "账号与应用密码", Icons.Outlined.Settings) {
+                                }
+                                SettingsDivider()
+                                SettingsLink("连接设置", "", Icons.Outlined.Settings,enabled=!busy) {
                                     url = config.url; user = config.user; password = ""
                                     navigate(SettingsPage.CONNECTION)
+                                }
                                 }
                             }
                         }
                     }
                     SettingsPage.REMOTE -> {
-                        SettingsNote("按时间由新到旧排列。时间优先使用云端修改时间，缺失时使用自动备份的文件日期。选择备份后可预览并确认恢复。")
+                        SettingsNote("选择备份后预览，确认后恢复。")
                         if (remote.isNullOrEmpty() && !busy) {
                             SettingsPanel {
                                 Text(if (remote == null) "尚未读取云端备份" else "专用目录中没有备份")
@@ -299,15 +329,17 @@ private enum class SettingsPage(val title: String) {
                             }
                         }
                     }
+                    SettingsPage.TUITION -> Unit
+                    SettingsPage.UPDATES -> SettingsPanel { UpdateSection(checkOnOpen=true) }
                     SettingsPage.ABOUT -> {
                         SettingsPanel {
                             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                 Text("订阅簿", fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
                                 SettingsNote("作者 RongGuang233")
                             }
-                            UpdateSection()
+                            SettingsNote("版本 ${BuildConfig.VERSION_NAME}")
                         }
-                        SettingsGroup("关于订阅簿") {
+                        SettingsGroup("开源") {
                             SettingsLink("开源许可证", "MIT", Icons.Outlined.Description) { navigate(SettingsPage.LICENSES) }
                         }
                     }
@@ -336,27 +368,31 @@ private enum class SettingsPage(val title: String) {
 }
 
 @Composable private fun SettingsGroup(title: String, content: @Composable ColumnScope.() -> Unit) {
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(title, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 14.sp, modifier = Modifier.padding(start = 4.dp, top = 8.dp))
-        Surface(shape = RoundedCornerShape(20.dp), color = Color.White) {
-            Column(content = content)
-        }
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(title, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp, modifier = Modifier.padding(start = 12.dp, top = 4.dp))
+        Surface(shape = RoundedCornerShape(14.dp), color = Color.White) { Column(content = content) }
     }
 }
 
-@Composable private fun SettingsLink(title: String, detail: String, icon: ImageVector, click: () -> Unit) {
-    Row(Modifier.fillMaxWidth().clickable(onClick = click).padding(horizontal = 16.dp, vertical = 20.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(22.dp))
-        Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(4.dp)) {
-            Text(title, fontWeight = FontWeight.Medium)
-            Text(detail, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+@Composable private fun SettingsDivider() {
+    HorizontalDivider(Modifier.padding(start=58.dp,end=14.dp),color=MaterialTheme.colorScheme.outlineVariant.copy(alpha=.25f))
+}
+
+@Composable private fun SettingsLink(title: String, detail: String, icon: ImageVector, warning:Boolean=false, enabled:Boolean=true, click: () -> Unit) {
+    Row(Modifier.fillMaxWidth().clickable(enabled=enabled,onClick=click).heightIn(min=60.dp).padding(horizontal=14.dp,vertical=10.dp),
+        verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(10.dp)) {
+        Surface(shape=RoundedCornerShape(9.dp),color=MaterialTheme.colorScheme.primary.copy(alpha=.06f)) {
+            Box(Modifier.size(32.dp),contentAlignment=Alignment.Center) {Icon(icon,null,tint=MaterialTheme.colorScheme.primary,modifier=Modifier.size(20.dp))}
         }
-        Icon(Icons.Outlined.ChevronRight, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(18.dp))
+        Text(title,fontSize=15.sp,fontWeight=FontWeight.Medium,modifier=Modifier.weight(1f))
+        if(detail.isNotBlank()) Text(detail,fontSize=12.sp,color=if(warning) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines=1,overflow=TextOverflow.Ellipsis,modifier=Modifier.widthIn(max=150.dp))
+        Icon(Icons.Outlined.ChevronRight,null,tint=MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha=.65f),modifier=Modifier.size(16.dp))
     }
 }
 
 @Composable private fun SettingsPanel(content: @Composable ColumnScope.() -> Unit) {
-    Surface(shape = RoundedCornerShape(20.dp), color = Color.White) {
+    Surface(shape = RoundedCornerShape(14.dp), color = Color.White) {
         Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp), content = content)
     }
 }
@@ -375,3 +411,13 @@ private fun java.io.InputStream.readBackupBytesLimited(): ByteArray {
     while (true) { val n = read(buffer); if (n < 0) break; result.write(buffer, 0, n); require(result.size() <= 16 * 1024 * 1024) }
     return result.toByteArray()
 }
+
+private fun settingsSummaryTime(value:String):String = runCatching {
+    val date=java.time.Instant.parse(value).atZone(java.time.ZoneId.systemDefault())
+    val pattern=when(date.toLocalDate()) {
+        LocalDate.now() -> "今天 HH:mm"
+        LocalDate.now().minusDays(1) -> "昨天 HH:mm"
+        else -> if(date.year==LocalDate.now().year) "M月d日 HH:mm" else "yyyy年M月d日"
+    }
+    date.format(java.time.format.DateTimeFormatter.ofPattern(pattern))
+}.getOrDefault("时间未知")

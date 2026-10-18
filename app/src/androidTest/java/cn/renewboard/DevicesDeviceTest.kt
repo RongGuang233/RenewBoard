@@ -24,7 +24,7 @@ class DevicesDeviceTest {
         app.getSharedPreferences("form-drafts",0).edit().clear().commit()
         runBlocking {app.repository.update {Ledger()}}
         compose.waitForIdle()
-        compose.onNodeWithText("设备",substring=false).performClick()
+        compose.onNode(hasText("设备",substring=false) and hasClickAction()).performClick()
     }
     @After fun clean() {if(::app.isInitialized && app.packageName.endsWith(".debug")) {
         runBlocking {app.repository.update {Ledger()}}
@@ -33,9 +33,11 @@ class DevicesDeviceTest {
     private fun fill(label: String,value: String) {compose.onNode(hasText(label) and hasSetTextAction()).performScrollTo().performTextReplacement(value)}
     private fun click(text: String) {
         if(text=="保存设备") compose.onNodeWithText(text,substring=false).performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.OnClick) {it()}
+        else if(text=="编辑设备") compose.onNodeWithText(text,substring=false).performClick()
         else compose.onNodeWithText(text,substring=false).performScrollTo().performClick()
     }
     private fun select(description: String,value: String) {
+        if(description=="筛选设备状态") {compose.onNodeWithContentDescription("筛选设备状态 $value").performScrollTo().performClick();return}
         compose.onNodeWithContentDescription(description).performScrollTo().performClick()
         compose.onNode(hasText(value) and hasAnyAncestor(isPopup())).performClick()
     }
@@ -82,7 +84,7 @@ class DevicesDeviceTest {
         fill("退役日期","2026-09-03")
         click("保存设备")
         awaitDevice {it.devices.singleOrNull()?.status==DeviceStatus.RETIRED}
-        compose.onNodeWithText("已服役 3 天").assertExists()
+        compose.onNodeWithText("使用 3 天").assertExists()
         back()
         select("筛选设备状态","已退役")
         click("测试手机")
@@ -105,8 +107,14 @@ class DevicesDeviceTest {
         assertEquals("2026-09-04",sold.devices.single().saleDate)
         compose.onNodeWithText("卖出日期",substring=false).assertExists()
         compose.onNodeWithText("停止服役日期",substring=false).assertExists()
-        compose.onNodeWithText("已服役 3 天").assertExists()
+        compose.onNodeWithText("使用 3 天").assertExists()
         compose.onAllNodes(hasText("日均 =",substring=true)).assertCountEquals(0)
+        compose.onNodeWithText("日均净成本",substring=false).assertExists()
+        compose.onNodeWithText("¥333.33/天",substring=false).assertExists()
+        compose.onNodeWithText("（购入金额 − 卖出金额）÷ 使用天数。",substring=true).assertDoesNotExist()
+        compose.onNodeWithContentDescription("查看日均净成本说明").performClick()
+        compose.onNodeWithText("（购入金额 − 卖出金额）÷ 使用天数。",substring=true).assertExists()
+        compose.onNodeWithText("知道了").performClick()
         compose.onNodeWithText("净花费",substring=false).assertExists()
         compose.onNodeWithText("¥1000.00",substring=false).assertExists()
         shot("device-sold-detail")
@@ -118,7 +126,7 @@ class DevicesDeviceTest {
         compose.onNodeWithText("删除设备",substring=false).performClick()
         compose.onNodeWithText("删除",substring=false).performClick()
         awaitDevice {it.devices.isEmpty()}
-        compose.onNodeWithText("我的设备").assertExists()
+        compose.onNodeWithTag("devices-heading").assertExists()
     }
     @Test fun invalidInputCanBeCorrectedAndWishlistHasNoServiceStats() {
         compose.onNodeWithContentDescription("添加设备").performClick()
@@ -141,7 +149,6 @@ class DevicesDeviceTest {
         assertEquals(DeviceCategory.EREADER,saved.devices.single().category)
         assertNull(saved.devices.single().startDate)
         compose.onAllNodes(hasText("已服役",substring=true)).assertCountEquals(0)
-        compose.onNodeWithContentDescription("设备更多操作").performClick()
         click("编辑设备")
         fill("设备名称","不会保存的名字")
         back()
@@ -164,14 +171,18 @@ class DevicesDeviceTest {
         )) } }
         awaitDevice {it.devices.size==3}
         compose.onNodeWithText("待购手表").assertDoesNotExist()
-        compose.onNodeWithContentDescription("设备排序").performScrollTo().performClick()
+        compose.onNodeWithContentDescription("设备列表更多操作").performScrollTo().performClick()
+        compose.onNodeWithContentDescription("设备排序").performClick()
         compose.onNodeWithText("购入金额 · 最高").performClick()
         val newer=compose.onNodeWithText("新手机").fetchSemanticsNode().boundsInRoot.top
         val older=compose.onNodeWithText("旧手机").fetchSemanticsNode().boundsInRoot.top
         assertTrue(newer<older)
-        compose.onNodeWithContentDescription("设备排序").performScrollTo().performClick()
+        compose.onNodeWithContentDescription("设备列表更多操作").performScrollTo().performClick()
+        compose.onNodeWithContentDescription("设备排序").performClick()
         compose.onNodeWithText("服役时长 · 最长").performClick()
         assertTrue(compose.onNodeWithText("旧手机").fetchSemanticsNode().boundsInRoot.top < compose.onNodeWithText("新手机").fetchSemanticsNode().boundsInRoot.top)
+        compose.onNodeWithContentDescription("设备列表更多操作").performClick()
+        compose.onNodeWithContentDescription("展开设备搜索").performClick()
         fill("搜索设备","不存在")
         compose.onNodeWithText("没有匹配的设备").assertExists()
         fill("搜索设备","新手机")
@@ -180,6 +191,10 @@ class DevicesDeviceTest {
         back()
         compose.onNode(hasText("搜索设备") and hasSetTextAction()).assertTextContains("新手机")
         shot("devices-search-sort")
+        compose.onNodeWithContentDescription("收起设备搜索").performClick()
+        compose.onNode(hasText("搜索设备") and hasSetTextAction()).assertDoesNotExist()
+        compose.onNodeWithText("旧手机").assertExists()
+        compose.onNodeWithContentDescription("筛选设备状态 服役中").assertIsSelected()
     }
 
     @Test fun soldSortingMatchesNetAmountsAndWishlistOnlyOffersApplicableSorts() {
@@ -190,24 +205,29 @@ class DevicesDeviceTest {
         )) } }
         awaitDevice {it.devices.size==3}
         select("筛选设备状态","已卖出")
-        compose.onNodeWithContentDescription("设备排序").performScrollTo().performClick()
+        compose.onNodeWithContentDescription("设备列表更多操作").performScrollTo().performClick()
+        compose.onNodeWithContentDescription("设备排序").performClick()
         compose.onNodeWithText("净花费 · 最高").performClick()
-        compose.onNodeWithText("¥100.00").assertExists()
-        compose.onNodeWithText("¥3199.00").assertExists()
+        compose.onNodeWithText("¥10000.00").assertExists()
+        compose.onNodeWithText("¥3999.00").assertExists()
         assertTrue(compose.onNodeWithText("卖出手机").fetchSemanticsNode().positionInRoot.y < compose.onNodeWithText("卖出电脑").fetchSemanticsNode().positionInRoot.y)
-        compose.onNodeWithContentDescription("设备排序").performScrollTo().performClick()
+        compose.onNodeWithContentDescription("设备列表更多操作").performScrollTo().performClick()
+        compose.onNodeWithContentDescription("设备排序").performClick()
         compose.onNodeWithText("卖出日期 · 最近").performClick()
         assertTrue(compose.onNodeWithText("卖出电脑").fetchSemanticsNode().positionInRoot.y < compose.onNodeWithText("卖出手机").fetchSemanticsNode().positionInRoot.y)
-        compose.onNodeWithContentDescription("设备排序").performScrollTo().performClick()
+        compose.onNodeWithContentDescription("设备列表更多操作").performScrollTo().performClick()
+        compose.onNodeWithContentDescription("设备排序").performClick()
         compose.onNodeWithText("服役时长 · 最长").performClick()
         select("筛选设备状态","待购买")
-        compose.onNodeWithContentDescription("设备排序").performScrollTo().performClick()
+        compose.onNodeWithContentDescription("设备列表更多操作").performScrollTo().performClick()
+        compose.onNodeWithContentDescription("设备排序").performClick()
         compose.onNodeWithText("服役时长 · 最长").assertDoesNotExist()
         compose.onNodeWithText("预算 · 最高").assertExists()
         compose.onNodeWithText("计划日期 · 最近").performClick()
         compose.onNodeWithText("待购手表").assertExists()
         select("筛选设备状态","已退役")
-        compose.onNodeWithContentDescription("设备排序").performScrollTo().performClick()
+        compose.onNodeWithContentDescription("设备列表更多操作").performScrollTo().performClick()
+        compose.onNodeWithContentDescription("设备排序").performClick()
         compose.onNodeWithText("退役日期 · 最近").assertExists()
         compose.onNodeWithText("购入金额 · 最高").performClick()
     }

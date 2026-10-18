@@ -31,6 +31,7 @@ import java.time.Instant
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable internal fun TuitionSyncScreen(
     ledger: Ledger,
+    title: String = "学费同步",
     refreshOnOpen: Boolean = false,
     onRefreshConsumed: () -> Unit = {},
     studentContent: @Composable () -> Unit = {},
@@ -101,7 +102,7 @@ import java.time.Instant
         AssetCard {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Text("学费同步", modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleMedium,
+                    Text(title, modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold)
                     TextButton(onClick = { editing = true }, enabled = !busy) { Text("连接设置") }
                 }

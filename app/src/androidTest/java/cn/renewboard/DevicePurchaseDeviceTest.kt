@@ -34,8 +34,7 @@ class DevicePurchaseDeviceTest {
         runBlocking {app.repository.update {Ledger(devices=listOf(original,other))}}
         compose.waitForIdle()
         click("设备")
-        compose.onNodeWithContentDescription("筛选设备状态").performClick()
-        compose.onNode(hasText("待购买") and hasAnyAncestor(isPopup())).performClick()
+        compose.onNodeWithContentDescription("筛选设备状态 待购买").performClick()
         click(original.name)
     }
 
@@ -46,14 +45,14 @@ class DevicePurchaseDeviceTest {
         }
     }
 
-    private fun click(text:String) {compose.onNodeWithText(text,substring=false).performClick()}
+    private fun click(text:String) {compose.onNode(hasText(text,substring=false) and hasClickAction()).performClick()}
     private fun field(label:String)=compose.onNode(hasText(label) and hasSetTextAction())
     private fun fill(label:String,value:String) {field(label).performScrollTo().performTextReplacement(value)}
     private fun back() {compose.onNodeWithContentDescription("返回").performClick()}
     private fun saved()=runBlocking {app.repository.read()}.devices.single {it.id==original.id}
     private fun purchase() {click("记为已购买");field("实际购入金额（元）").assertExists()}
     private fun confirm() {compose.onNodeWithText("确认已购买").performSemanticsAction(SemanticsActions.OnClick) {it()}}
-    private fun edit() {compose.onNodeWithContentDescription("设备更多操作").performClick();click("编辑设备")}
+    private fun edit() {click("编辑设备")}
     private fun selectStatus(label:String) {
         compose.onNodeWithContentDescription("选择设备状态").performScrollTo().performClick()
         compose.onNode(hasText(label) and hasAnyAncestor(isPopup())).performClick()
@@ -61,7 +60,7 @@ class DevicePurchaseDeviceTest {
     private fun saveEdit() {compose.onNodeWithText("保存设备").performSemanticsAction(SemanticsActions.OnClick) {it()}}
 
     @Test fun cancelThenConfirmUsesActualValuesAndPreservesDeviceAndLedger() {
-        compose.onNodeWithText("编辑设备").assertDoesNotExist()
+        compose.onNodeWithText("编辑设备").assertExists()
         purchase()
         compose.onAllNodes(hasSetTextAction()).assertCountEquals(2)
         field("实际购入金额（元）").assertTextContains("8000")
@@ -90,7 +89,7 @@ class DevicePurchaseDeviceTest {
         assertNull(DraftStore(app).read(purchaseKey))
         compose.onNodeWithText("编辑设备").assertExists()
         compose.onNodeWithText("记为已购买").assertDoesNotExist()
-        compose.onNodeWithText("已服役 3 天").assertExists()
+        compose.onNodeWithText("已用 3 天").assertExists()
     }
 
     @Test fun purchasePreservesUnfinishedEditsWithoutRestoringOldBudgetOrStatus() {

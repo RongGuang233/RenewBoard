@@ -65,20 +65,20 @@ class SettingsNavigationDeviceTest {
             compose.onNodeWithText("到期提醒", substring = false).performClick()
             setExpiryChannelEnabled(false)
             assertTrue(appNotificationsAllowed(compose.activity))
-            compose.onNodeWithText("到期提醒未开启").performScrollTo().assertIsDisplayed()
-            compose.onNodeWithText("到期提醒通知：已开启").assertDoesNotExist()
+            compose.onNodeWithText("去开启").performScrollTo().assertIsDisplayed()
+            compose.onNodeWithText("已允许").assertDoesNotExist()
             val settingsIntent = reminderNotificationSettingsIntent(compose.activity)
             assertEquals(android.provider.Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS, settingsIntent.action)
             assertEquals(EXPIRY_CHANNEL_ID, settingsIntent.getStringExtra(android.provider.Settings.EXTRA_CHANNEL_ID))
-            compose.onNodeWithText("前往开启通知").performScrollTo().performClick()
+            compose.onNodeWithText("去开启").performScrollTo().performClick()
             compose.waitUntil(10_000) {
                 InstrumentationRegistry.getInstrumentation().uiAutomation.rootInActiveWindow?.packageName?.toString() == "com.android.settings"
             }
             InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
             compose.waitForIdle()
             setExpiryChannelEnabled(true)
-            compose.onNodeWithText("到期提醒通知：已开启").performScrollTo().assertIsDisplayed()
-            compose.onNodeWithText("管理通知设置").assertExists()
+            compose.onNodeWithText("已允许").performScrollTo().assertIsDisplayed()
+            compose.onNodeWithText("系统通知").assertExists()
         } finally {
             setExpiryChannelEnabled(wasEnabled)
             assertEquals(wasEnabled, manager.getNotificationChannel(EXPIRY_CHANNEL_ID).importance != android.app.NotificationManager.IMPORTANCE_NONE)
@@ -104,10 +104,10 @@ class SettingsNavigationDeviceTest {
             compose.onNodeWithText("设置", substring = false).performClick()
             compose.onNodeWithText("尚未备份", substring = false).assertExists()
             backgroundResult("自动备份失败，请检查网络")
-            compose.waitUntil(10_000) { compose.onAllNodesWithText("最近备份失败").fetchSemanticsNodes().isNotEmpty() }
+            compose.waitUntil(10_000) { compose.onAllNodesWithText("备份失败").fetchSemanticsNodes().isNotEmpty() }
             backgroundResult()
-            compose.waitUntil(10_000) { compose.onAllNodesWithText("最近成功", substring = true).fetchSemanticsNodes().isNotEmpty() }
-            compose.onNodeWithText("坚果云 · WebDAV", substring = false).performClick()
+            compose.waitUntil(10_000) { compose.onAllNodesWithText("今天", substring = true).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithText("云端备份", substring = false).performClick()
             compose.onNodeWithText("备份成功", substring = false).assertExists()
             compose.onNodeWithText(successText(config.lastSuccess), substring = false).assertExists()
             backgroundResult("自动备份失败，请检查网络")
@@ -138,9 +138,9 @@ class SettingsNavigationDeviceTest {
         bitmap.recycle()
         compose.onNodeWithText("WebDAV 地址").assertDoesNotExist()
         compose.onNodeWithText("保存提醒").assertDoesNotExist()
-        compose.onNodeWithText("导出 JSON").assertDoesNotExist()
+        compose.onNodeWithText("导出备份").assertDoesNotExist()
 
-        compose.onNodeWithText("坚果云 · WebDAV").performScrollTo().performClick()
+        compose.onNodeWithText("云端备份").performScrollTo().performClick()
         compose.onNode(hasText("WebDAV 地址") and hasSetTextAction()).assertExists()
         compose.onNodeWithText("返回", substring = false).assertIsDisplayed()
         listOf("到期","账本","设备","设置").forEach {compose.onNode(hasText(it,substring=false) and hasClickAction()).assertDoesNotExist()}
@@ -150,15 +150,17 @@ class SettingsNavigationDeviceTest {
         compose.onNodeWithText("订阅",substring=false).assertDoesNotExist()
 
         compose.onNodeWithText("本地备份", substring = false).performScrollTo().performClick()
-        compose.onNodeWithText("从文件恢复", substring = false).performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("恢复备份", substring = false).performScrollTo().assertIsDisplayed()
         compose.activityRule.scenario.recreate()
         compose.waitForIdle()
         compose.onNodeWithText("本地备份", substring = false).assertExists()
         compose.onNodeWithText("返回", substring = false).performClick()
 
-        compose.onNodeWithText("更新与关于").performScrollTo().performClick()
+        compose.onNodeWithText("检查更新",substring=false).assertExists()
+        compose.onNodeWithText("学费同步",substring=false).assertExists()
+        compose.onNodeWithText("关于订阅簿").performScrollTo().performClick()
         compose.onNodeWithText("作者 RongGuang233", substring = false).assertIsDisplayed()
-        compose.onNodeWithText("当前版本 ${BuildConfig.VERSION_NAME}").assertIsDisplayed()
+        compose.onNodeWithText("版本 ${BuildConfig.VERSION_NAME}").assertIsDisplayed()
         compose.waitForIdle()
         val aboutBitmap = InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()
         java.io.File(compose.activity.filesDir, "settings-about.png").outputStream().use {
@@ -167,10 +169,9 @@ class SettingsNavigationDeviceTest {
         aboutBitmap.recycle()
         compose.onNodeWithText("开源许可证").performScrollTo().performClick()
         back()
-        compose.onNodeWithText("更新与关于").assertExists()
+        compose.onNodeWithText("关于订阅簿").assertExists()
         compose.onNodeWithText("作者 RongGuang233", substring = false).assertIsDisplayed()
-        try {compose.onNodeWithText("检查更新", substring = false).assertExists()}
-        catch(e:AssertionError) {throw AssertionError(compose.onRoot(useUnmergedTree=true).printToString(),e)}
+        compose.onNodeWithText("检查更新", substring = false).assertDoesNotExist()
         back()
         compose.onNodeWithText("本地备份", substring = false).assertExists()
     }
@@ -184,11 +185,13 @@ class SettingsNavigationDeviceTest {
             compose.onNodeWithText("设置",substring=false).performClick()
             compose.onNodeWithText("到期提醒",substring=false).performClick()
             compose.onNodeWithText("当天",substring=false).assertIsSelected()
-            compose.onNodeWithText("提前 1 天").performClick()
+            compose.onNodeWithText("1 天前").performClick()
             compose.waitUntil(10000) {kotlinx.coroutines.runBlocking {repository.read()}.settings.reminderDays==listOf(0,1,3)}
             back()
             compose.onNodeWithText("到期提醒",substring=false).performClick()
-            compose.onNodeWithText("提前 1 天").assertIsSelected()
+            compose.onNodeWithText("1 天前").assertIsSelected()
+            compose.onNode(hasText("自定义提前天数") and hasSetTextAction()).assertDoesNotExist()
+            compose.onNodeWithText("自定义",substring=false).performClick()
             compose.onNode(hasText("自定义提前天数") and hasSetTextAction()).performScrollTo().performTextReplacement("14")
             compose.onNodeWithText("添加",substring=false).performScrollTo().performClick()
             compose.onNodeWithText("保存提醒").assertDoesNotExist()
@@ -206,34 +209,32 @@ class SettingsNavigationDeviceTest {
             val notificationIntent=reminderNotificationSettingsIntent(compose.activity)
             assertEquals(if(appNotificationsAllowed(compose.activity)) android.provider.Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS
                 else android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS,notificationIntent.action)
-            compose.onNodeWithText(if(allowed) "到期提醒通知：已开启" else "到期提醒未开启").performScrollTo().assertIsDisplayed()
-            compose.onNodeWithText(if(allowed) "管理通知设置" else "前往开启通知").assertExists()
+            compose.onNodeWithText(if(allowed) "已允许" else "去开启").performScrollTo().assertIsDisplayed()
+            compose.onNodeWithText(if(allowed) "系统通知" else "去开启").assertExists()
             compose.waitForIdle(); android.os.SystemClock.sleep(400)
         val bitmap=InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()
             java.io.File(compose.activity.filesDir,"settings-reminders.png").outputStream().use {bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG,100,it)}
             bitmap.recycle()
             back()
-            compose.onNodeWithText(if(allowed) "3 个提醒时间" else "到期提醒未开启").assertExists()
+            compose.onNodeWithText(if(allowed) "当天、提前 1 天、提前 3 天" else "通知未允许").assertExists()
         } finally {kotlinx.coroutines.runBlocking {repository.update {it.copy(settings=original.settings)}}}
     }
 
-    @Test fun webdavSummaryRefreshesAfterReturningFromBackground() {
+    @Test fun unconfiguredWebdavDoesNotShowStaleBackupStatus() {
         check(compose.activity.packageName.endsWith(".debug"))
         val prefs=compose.activity.getSharedPreferences("webdav",android.content.Context.MODE_PRIVATE)
+        check(!CredentialsStore(compose.activity).configured)
         val oldStatus=prefs.getString("status",null);val oldSuccess=prefs.getString("success",null)
         try {
-            prefs.edit().putString("status","尚未备份").apply()
+            prefs.edit().putString("status","备份成功").putString("success","2026-09-07T00:00:00Z").apply()
             compose.onNodeWithText("设置",substring=false).performClick()
-            compose.onNodeWithText("尚未备份",substring=false).assertExists()
+            compose.onNodeWithText("未配置",substring=false).assertExists()
             compose.activityRule.scenario.moveToState(androidx.lifecycle.Lifecycle.State.CREATED)
-            prefs.edit().putString("status","WebDAV 返回 HTTP 401，请检查地址、应用密码与网络").apply()
+            prefs.edit().putString("status","WebDAV 返回 HTTP 401").apply()
             compose.activityRule.scenario.moveToState(androidx.lifecycle.Lifecycle.State.RESUMED)
             compose.waitForIdle()
-            compose.onNodeWithText("最近备份失败").assertExists()
-            compose.onNodeWithText("本地备份",substring=false).performClick()
-            prefs.edit().putString("status","备份成功").putString("success","2026-09-07T00:00:00Z").apply()
-            compose.onNodeWithText("返回",substring=false).performClick()
-            compose.onNodeWithText("最近成功",substring=true).assertExists()
+            compose.onNodeWithText("未配置",substring=false).assertExists()
+            compose.onNodeWithText("备份失败",substring=false).assertDoesNotExist()
         } finally {prefs.edit().putString("status",oldStatus).putString("success",oldSuccess).apply()}
     }
 
@@ -249,9 +250,9 @@ class SettingsNavigationDeviceTest {
                 .putString("secret","layout-only").putString("status","备份成功")
                 .putString("success","2026-09-08T00:00:00Z").commit()
             compose.onNodeWithText("设置",substring=false).performClick()
-            compose.onNodeWithText("坚果云 · WebDAV",substring=false).performClick()
+            compose.onNodeWithText("云端备份",substring=false).performClick()
             compose.onNodeWithText("立即备份",substring=false).assertIsDisplayed()
-            compose.onNodeWithText("云端备份",substring=false).assertIsDisplayed()
+            compose.onNodeWithText("备份记录",substring=false).assertIsDisplayed()
             compose.onNodeWithText("WebDAV 地址").assertDoesNotExist()
             compose.onNodeWithText("断开 WebDAV").assertDoesNotExist()
             compose.onNodeWithText("连接设置",substring=false).performScrollTo().performClick()

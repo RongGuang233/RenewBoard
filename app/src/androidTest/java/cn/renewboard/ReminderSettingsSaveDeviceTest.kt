@@ -45,10 +45,10 @@ class ReminderSettingsSaveDeviceTest {
             compose.onNodeWithText("到期提醒",substring=false).performClick()
             // Room can reopen a closed database; reject the actual write inside SQLite instead.
             failedDatabase.openHelper.writableDatabase.execSQL("CREATE TRIGGER reject_reminder BEFORE INSERT ON BookRow BEGIN SELECT RAISE(ABORT, 'test write failure'); END")
-            compose.onNodeWithText("提前 7 天").performClick()
+            compose.onNodeWithText("7 天前").performClick()
             compose.waitUntil(10000) {compose.onAllNodesWithText("提醒保存失败，请重试").fetchSemanticsNodes().isNotEmpty()}
             compose.onNodeWithText("提醒保存失败，请重试").assertExists()
-            compose.onNodeWithText("提前 7 天").assertIsNotSelected()
+            compose.onNodeWithText("7 天前").assertIsNotSelected()
             assertTrue(messages.isEmpty())
 
             app.repository=observed
@@ -57,8 +57,8 @@ class ReminderSettingsSaveDeviceTest {
                 database.withTransaction { started.complete(Unit);commit.await() }
             }
             started.await()
-            compose.onNodeWithText("提前 7 天").performClick()
-            compose.onNodeWithText("提前 7 天").assertIsNotSelected().assertIsNotEnabled()
+            compose.onNodeWithText("7 天前").performClick()
+            compose.onNodeWithText("7 天前").assertIsNotSelected().assertIsNotEnabled()
             compose.onNodeWithText("返回",substring=false).performClick()
             compose.onNodeWithText("提醒时间",substring=false).assertExists()
             assertTrue(messages.isEmpty())
@@ -66,7 +66,7 @@ class ReminderSettingsSaveDeviceTest {
             held.join()
             compose.waitUntil(10000) {messages.contains("提醒已保存")}
             assertEquals(listOf(0,3,7),app.repository.read().settings.reminderDays)
-            compose.onNodeWithText("提前 7 天").assertIsSelected().assertIsEnabled()
+            compose.onNodeWithText("7 天前").assertIsSelected().assertIsEnabled()
         } finally {
             commit.complete(Unit);held?.join()
             app.repository=original

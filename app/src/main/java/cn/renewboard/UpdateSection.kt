@@ -23,7 +23,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-@Composable fun UpdateSection(checkForUpdate: () -> AppUpdate = { Updates.check(BuildConfig.VERSION_NAME) }) {
+@Composable fun UpdateSection(checkOnOpen:Boolean=false, checkForUpdate: () -> AppUpdate = { Updates.check(BuildConfig.VERSION_NAME) }) {
     val context = LocalContext.current
     val downloads = remember { UpdateDownload(context.applicationContext) }
     val scope = rememberCoroutineScope()
@@ -72,6 +72,7 @@ import kotlinx.coroutines.withContext
             } finally { checking = false }
         }
     }
+    LaunchedEffect(Unit) { if(checkOnOpen && state==null) checkUpdate() }
     Text("当前版本 ${BuildConfig.VERSION_NAME}")
     OutlinedButton(onClick = ::checkUpdate, enabled = !checking && state == null) {
         if (checking) { CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp); Spacer(Modifier.width(8.dp)) }

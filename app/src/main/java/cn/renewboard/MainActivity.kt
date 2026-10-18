@@ -75,20 +75,10 @@ class MainActivity: ComponentActivity() {
 @Composable private fun Section(text: String) { Text(text,fontSize=19.sp,fontWeight=FontWeight.SemiBold,modifier=Modifier.padding(top=20.dp,bottom=8.dp)) }
 @Composable internal fun Field(label: String, value: String, change: (String)->Unit, modifier: Modifier = Modifier, secret: Boolean=false, dateField: Boolean=false, keyboardType: KeyboardType=KeyboardType.Text, supportingText:String?=null) {
     if(secret) OutlinedTextField(value,change,label={Text(label)},modifier=modifier.fillMaxWidth(),singleLine=true,visualTransformation=PasswordVisualTransformation())
-    else {
-        var choosingDate by remember { mutableStateOf(false) }
-        val focus = androidx.compose.ui.platform.LocalFocusManager.current
-        val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
-        OutlinedTextField(value,change,label={Text(label)},modifier=modifier.fillMaxWidth(),singleLine=true,
-            supportingText=if(supportingText!=null) {{Text(supportingText)}} else null,
-            keyboardOptions=KeyboardOptions(keyboardType=keyboardType),
-            trailingIcon=if(dateField) {{ IconButton(onClick={
-                focus.clearFocus(); keyboard?.hide(); choosingDate=true
-            }) { Icon(Icons.Outlined.CalendarMonth,contentDescription="选择日期") } }} else null)
-        if(choosingDate) CalendarDateDialog(label,value,{choosingDate=false}) {
-            change(it); choosingDate=false
-        }
-    }
+    else if(dateField) DateField(label,value,change,modifier,keyboardType,supportingText)
+    else OutlinedTextField(value,change,label={Text(label)},modifier=modifier.fillMaxWidth(),singleLine=true,
+        supportingText=if(supportingText!=null) {{Text(supportingText)}} else null,
+        keyboardOptions=KeyboardOptions(keyboardType=keyboardType))
 }
 @Composable internal fun MoneyField(label:String,value:String,change:(String)->Unit,modifier:Modifier=Modifier,supportingText:String?=null) = Field(label,value,change,modifier,keyboardType=KeyboardType.Decimal,supportingText=supportingText)
 @Composable internal fun PageBack(description:String="返回",back:()->Unit) {

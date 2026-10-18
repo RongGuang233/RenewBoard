@@ -133,6 +133,16 @@ class UsageBalanceDeviceTest {
         compose.onNodeWithText("保存订阅",substring=false).performClick()
         waitFor {it.plans.size==2}
         assertEquals(Cycle.MONTH,read().plans.single {it.name=="服务器"}.cycle)
+        compose.onNodeWithContentDescription("记一笔订阅").performClick()
+        field("搜索会员").performTextReplacement("健身房");click("健身")
+        field("套餐价格").performTextReplacement("199")
+        compose.onNodeWithText("保存订阅",substring=false).performClick()
+        waitFor {it.plans.size==3}
+        val gym=read().plans.single {it.name=="健身"}
+        assertEquals(Cycle.MONTH,gym.cycle);assertNull(gym.usageBalance);assertNull(gym.balanceAccount)
+        assertTrue(read().benefits.any {it.planId==gym.id})
+        assertEquals("199",read().payments.single {it.planId==gym.id}.amount)
+        compose.onNodeWithContentDescription("健身图标",useUnmergedTree=true).assertExists()
     }
     @Test fun serviceManagementReturnsWithKeyboardAndRetainsQueryAcrossTabsAndRecreation() {
         openServices()

@@ -63,6 +63,28 @@ class TuitionSyncDeviceTest {
         bitmap.recycle()
     }
 
+    @Test fun settingsEntryUsesExistingConnectionAndOnlyRefreshesOnRequest() {
+        val calls=AtomicInteger()
+        app.tuitionConnection.save(connection)
+        app.tuitionQuery=TuitionQuery { calls.incrementAndGet(); snapshot() }
+        compose.onNode(hasText("设置",substring=false) and hasClickAction()).performClick()
+        click("学费同步")
+        compose.onNodeWithText("LessonManager",substring=false).assertExists()
+        compose.onNodeWithText("刷新学费余额",substring=false).assertIsDisplayed()
+        assertEquals(0,calls.get())
+        compose.activityRule.scenario.recreate()
+        compose.waitForIdle()
+        assertEquals(0,calls.get())
+        click("刷新学费余额")
+        waitFor {calls.get()==1}
+        compose.onNodeWithText("选择要导入的学生").assertExists()
+        click("取消")
+        compose.onNodeWithText("返回",substring=false).performClick()
+        compose.onNodeWithText("本地备份",substring=false).assertIsDisplayed()
+        assertEquals(1,calls.get())
+        assertEquals(1,read().assets.accounts.size)
+    }
+
     @Test fun encryptedConnectionIsNotInBusinessBackupAndDisconnectPreservesAccounts() {
         app.tuitionConnection.save(connection)
         assertEquals(connection,app.tuitionConnection.read())

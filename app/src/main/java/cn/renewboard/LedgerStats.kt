@@ -10,7 +10,10 @@ enum class TrendRange(val label: String) {
 
 data class CashSummary(val known: BigDecimal, val missing: Int, val count: Int)
 data class CashBreakdown(val payments: CashSummary, val refunds: CashSummary)
-data class CashBucket(val label: String, val from: LocalDate, val until: LocalDate, val summary: CashSummary)
+data class CashBucket(val label: String, val from: LocalDate, val until: LocalDate, val summary: CashSummary, val byApp: Map<String, BigDecimal>) {
+    val positive: BigDecimal get() = byApp.values.filter {it.signum()>0}.fold(BigDecimal.ZERO,BigDecimal::add)
+    val negative: BigDecimal get() = byApp.values.filter {it.signum()<0}.fold(BigDecimal.ZERO,BigDecimal::add).abs()
+}
 
 object LedgerStats {
     /** Expense components use frozen receipts; top-ups only add balance and are excluded. */
@@ -72,7 +75,9 @@ object LedgerStats {
         val grouped = dated.filter { it.first >= from && it.first < until }
             .groupBy({ grain.start(it.first) }, { it.second })
         return generateSequence(from) { grain.next(it) }.takeWhile { it < until }.map { start ->
-            CashBucket(grain.label(start), start, minOf(grain.next(start), until), summary(grouped[start].orEmpty()))
+            val records=grouped[start].orEmpty()
+            val byApp=records.groupBy {it.planName}.mapValues {summary(it.value).known}.filterValues {it.signum()!=0}
+            CashBucket(grain.label(start), start, minOf(grain.next(start), until), summary(records),byApp)
         }.toList()
     }
 }

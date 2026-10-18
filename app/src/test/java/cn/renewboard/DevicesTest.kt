@@ -14,14 +14,15 @@ class DevicesTest {
         assertEquals(7L,Devices.serviceDays(d,today))
         assertEquals(BigDecimal("428.57"),Devices.dailyCost(d,today))
     }
-    @Test fun retiredAndSoldServiceDaysFreezeAtEndRegardlessOfSaleProceeds() {
+    @Test fun retiredAndSoldServiceDaysFreezeAtEndWithTheirRespectiveCostBasis() {
         val retired=device().copy(status=DeviceStatus.RETIRED,endDate="2026-09-03")
         val sold=retired.copy(status=DeviceStatus.SOLD,saleAmount="2000")
         listOf(retired,sold).forEach { d ->
             Devices.validate(d,today)
             assertEquals(3L,Devices.serviceDays(d,today.plusYears(1)))
-            assertEquals(BigDecimal("1000.00"),Devices.dailyCost(d,today.plusYears(1)))
         }
+        assertEquals(BigDecimal("1000.00"),Devices.dailyCost(retired,today.plusYears(1)))
+        assertEquals(BigDecimal("333.33"),Devices.dailyCost(sold,today.plusYears(1)))
     }
     @Test fun wishlistAllowsNoDateAndNeverContributesServiceStatistics() {
         val d=device().copy(status=DeviceStatus.WISHLIST,startDate=null)
@@ -81,11 +82,13 @@ class DevicesTest {
         assertEquals(listOf("older","newer"),Devices.list(all,DeviceStatus.ACTIVE,"",DeviceSort.SERVICE,today).map {it.id})
         assertTrue(Devices.list(all,DeviceStatus.ACTIVE,"不存在",DeviceSort.DATE,today).isEmpty())
     }
-    @Test fun soldNetCostKeepsPurchaseDailyCostAndCanRepresentProfit() {
+    @Test fun soldDailyCostUsesNetSpendingAndCanRepresentProfitOrBreakEven() {
         val sold=device().copy(status=DeviceStatus.SOLD,endDate="2026-09-03",saleAmount="2000")
         assertEquals(BigDecimal("1000"),Devices.netCost(sold))
-        assertEquals(BigDecimal("1000.00"),Devices.dailyCost(sold,today))
+        assertEquals(BigDecimal("333.33"),Devices.dailyCost(sold,today))
         assertEquals(BigDecimal("-1000"),Devices.netCost(sold.copy(saleAmount="4000")))
+        assertEquals(BigDecimal("-333.33"),Devices.dailyCost(sold.copy(saleAmount="4000"),today))
+        assertEquals(BigDecimal("0.00"),Devices.dailyCost(sold.copy(saleAmount="3000"),today))
         assertEquals("音箱",DeviceCategory.AUDIO.label)
         assertEquals("游戏主机",DeviceCategory.GAMING.label)
     }
@@ -123,8 +126,9 @@ class DevicesTest {
         val sold=retired.copy(status=DeviceStatus.SOLD,saleAmount="2000",saleDate="2026-09-07")
         Devices.validate(sold,today)
         assertEquals(181L,Devices.serviceDays(sold,today.plusYears(1)))
-        assertEquals(Devices.dailyCost(retired,today),Devices.dailyCost(sold,today))
-        assertEquals(BigDecimal("16.57"),Devices.dailyCost(sold,today))
+        assertEquals(BigDecimal("16.57"),Devices.dailyCost(retired,today))
+        assertEquals(BigDecimal("5.52"),Devices.dailyCost(sold,today))
+        assertEquals(BigDecimal("5.52"),Devices.dailyCost(sold.copy(saleDate="2026-06-30"),today))
         assertEquals(BigDecimal("1000"),Devices.netCost(sold))
         assertEquals("2026-09-07",Devices.saleDate(sold))
         val restored=Book.decode(Book.encode(Ledger(devices=listOf(sold)))).data.devices.single()
@@ -138,6 +142,7 @@ class DevicesTest {
         assertNull(legacy.saleDate)
         assertEquals("2026-09-03",Devices.saleDate(legacy))
         assertEquals(3L,Devices.serviceDays(legacy,today))
+        assertEquals(BigDecimal("333.33"),Devices.dailyCost(legacy,today))
         val restored=Book.decode(Book.encode(Ledger(devices=listOf(legacy)))).data.devices.single()
         assertEquals(legacy,restored)
         assertNull(restored.saleDate)

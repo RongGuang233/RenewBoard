@@ -14,6 +14,34 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class CalendarDateDeviceTest {
     @get:Rule val compose=createComposeRule()
+    @Test fun readableDateKeepsIsoValueAndSupportsManualCorrections() {
+        var saved by mutableStateOf("2026-10-18")
+        compose.setContent { MaterialTheme {
+            val focus=androidx.compose.ui.platform.LocalFocusManager.current
+            androidx.compose.foundation.layout.Column {
+                Field("购入日期",saved,{saved=it},dateField=true)
+                androidx.compose.material3.Button(onClick={focus.clearFocus()}) {androidx.compose.material3.Text("完成输入")}
+            }
+        } }
+        val field=compose.onNode(hasText("购入日期") and hasSetTextAction())
+        fun displayed():String {
+            val layouts=mutableListOf<androidx.compose.ui.text.TextLayoutResult>()
+            field.performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.GetTextLayoutResult) {it(layouts)}
+            return layouts.single().layoutInput.text.text
+        }
+        assertEquals("2026年10月18日",displayed())
+        field.performClick()
+        assertEquals("2026-10-18",displayed())
+        field.performTextReplacement("2024-02-29")
+        compose.onNodeWithText("完成输入").performClick()
+        assertEquals("2024-02-29",saved)
+        assertEquals("2024年02月29日",displayed())
+        field.performTextReplacement("2024-02-")
+        compose.onNodeWithText("完成输入").performClick()
+        assertEquals("2024-02-",displayed())
+        field.performTextClearance()
+        assertEquals("",saved)
+    }
     @Test fun yearMonthAndLeapDayCanBeSelectedAndOnlyConfirmationApplies() {
         var saved="2026-01-31"
         compose.setContent { MaterialTheme { Field("扣款日期",saved,{saved=it},dateField=true) } }

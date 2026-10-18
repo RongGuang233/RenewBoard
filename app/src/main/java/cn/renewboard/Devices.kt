@@ -90,5 +90,5 @@ object Devices {
         return (ChronoUnit.DAYS.between(start, end) + 1).takeIf { it > 0 }
     }
     fun dailyCost(device: Device, today: LocalDate = LocalDate.now()): BigDecimal? =
-        serviceDays(device, today)?.let { BigDecimal(device.purchaseAmount).divide(BigDecimal(it), 2, RoundingMode.HALF_UP) }
+        serviceDays(device, today)?.let { netCost(device).divide(BigDecimal(it), 2, RoundingMode.HALF_UP) }
 }
