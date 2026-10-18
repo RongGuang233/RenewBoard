@@ -97,10 +97,11 @@ class LedgerDeviceTest {
         selectRange(TrendRange.THREE)
         compose.onNode(hasContentDescription("${today.year}/${today.monthValue}，支出",substring=true)).performScrollTo().performClick()
         compose.onAllNodes(isDialog()).assertCountEquals(0)
-        compose.onNodeWithText("${today.year}年${today.monthValue}月 · 按应用").assertExists()
+        compose.onNodeWithText("${today.year}年${today.monthValue}月 · 按应用").assertDoesNotExist()
+        compose.onNodeWithTag("ledger-spending-pie").assertExists()
         compose.onNodeWithContentDescription("返回概览").assertDoesNotExist()
-        click("展开全部 7 项")
-        click("最近付款")
+        compose.onNodeWithTag("ledger-spending-pie").performScrollTo()
+        compose.onNodeWithText("最近付款").assertDoesNotExist()
         shot("ledger-ranking")
         click("所选时段明细")
         shot("ledger-receipts")
@@ -164,7 +165,7 @@ class LedgerDeviceTest {
         val previousYearAmount=if(today.dayOfYear==1) "60.00" else "40.00"
         compose.onNode(hasContentDescription("ChatGPT，支出¥$previousYearAmount",substring=true)).assertExists()
         selectRange(TrendRange.ALL)
-        compose.onNodeWithText("全部 · 按应用").assertExists()
+        compose.onNodeWithText("全部 · 按应用").assertDoesNotExist()
         compose.onNode(hasContentDescription("ChatGPT，支出¥70.00",substring=true)).assertExists()
     }
     @Test fun dailyTrendStartsAtLatestSupportsWideTouchAndKeepsPositionAfterDetails() {
@@ -182,7 +183,7 @@ class LedgerDeviceTest {
         todayBar.performTouchInput {click(androidx.compose.ui.geometry.Offset(width-2f,height/2f))}
         todayBar.assertIsSelected()
         compose.onNodeWithTag("selected-trend-summary").assertTextEquals("${today.monthValue}/${today.dayOfMonth} · 净支出 ¥12.00 · 1 笔")
-        compose.onNodeWithText("近30天 · 合计",substring=false).assertExists()
+        compose.onNodeWithText("近30天 · 合计",substring=false).assertDoesNotExist()
         compose.onNodeWithText("净支出 ¥19.00",substring=false).assertExists()
         compose.onNode(hasContentDescription("每日测试，支出¥12.00",substring=true)).assertExists()
         compose.onNodeWithContentDescription("返回概览").assertDoesNotExist()
@@ -499,6 +500,54 @@ class LedgerDeviceTest {
         compose.onNodeWithContentDescription("收起支出构成").performClick()
         compose.onNodeWithText("付款 ¥130.00",substring=false).assertDoesNotExist()
         compose.onNodeWithText("净支出 ¥90.00",substring=false).assertExists()
+    }
+
+    @Test fun recentReceiptsLiveOnlyInCurrentMonthDetails() {
+        val today=LocalDate.now()
+        val current=Payment(planId="current",planName="本月应用",amount="10",currency="CNY",date=today.toString())
+        val older=current.copy(id="older",planId="old",planName="上月应用",amount="20",date=today.withDayOfMonth(1).minusDays(1).toString())
+        seed(Ledger(payments=listOf(current,older)))
+        compose.onNodeWithText("账本",substring=false).performClick()
+        compose.onNodeWithText("最近付款").assertDoesNotExist()
+        compose.onNodeWithText(today.toString(),substring=false).assertDoesNotExist()
+        selectRange(TrendRange.THREE)
+        val previous=today.minusMonths(1)
+        compose.onNode(hasContentDescription("${previous.year}/${previous.monthValue}，支出",substring=true)).performScrollTo().performClick()
+        click("本月明细")
+        compose.onNodeWithText("本月应用",substring=false).assertExists()
+        compose.onNodeWithText("上月应用",substring=false).assertDoesNotExist()
+        compose.onNodeWithText(today.toString(),substring=false).assertExists()
+        compose.onNodeWithText("本月应用",substring=false).performClick()
+        compose.onNodeWithText("付款详情",substring=false).assertExists()
+    }
+
+    @Test fun spendingPieUsesNetAmountsAndKeepsRefundsAndUnsettledCurrencyOutOfSlices() {
+        val today=LocalDate.now().toString()
+        val paid=Payment(id="pie-paid",planId="pie",planName="饼图应用",amount="100",currency="CNY",date=today)
+        val refund=paid.copy(id="pie-refund",amount="40",refundOf=paid.id)
+        val other=paid.copy(id="pie-other",planId="other",planName="另一应用",amount="30")
+        val netRefund=paid.copy(id="pie-net-refund",planId="returned",planName="净退款应用",amount="15",refundOf="older-payment")
+        val oldPayment=netRefund.copy(id="older-payment",amount="100",date=LocalDate.now().minusMonths(8).toString(),refundOf=null)
+        val missing=paid.copy(id="pie-missing",planId="foreign",planName="待补应用",amount="20",currency="USD")
+        seed(Ledger(payments=listOf(oldPayment,paid,refund,other,netRefund,missing)))
+        compose.onNodeWithText("账本",substring=false).performClick()
+        compose.onNodeWithText("近6个月 · 合计").assertDoesNotExist()
+        compose.onNodeWithText("近6个月 · 按应用").assertDoesNotExist()
+        compose.onNodeWithTag("ledger-spending-pie").performScrollTo().assertContentDescriptionEquals("净支出饼图，2项，已知正向净支出¥90.00")
+        compose.onNodeWithText("仅显示已知人民币金额；净退款单列，不计入饼图").assertExists()
+        compose.onNode(hasContentDescription("净退款应用，支出¥-15.00，净支出",substring=true)).assertExists()
+        compose.onNode(hasContentDescription("待补应用，支出¥0.00，净支出，待补录1笔",substring=true)).assertExists()
+        compose.onNode(hasContentDescription("饼图应用，支出¥60.00，净支出",substring=true)).performScrollTo().performClick()
+        compose.onNodeWithText("2 笔 · 净支出 ¥60.00",substring=false).assertExists()
+        compose.onNodeWithContentDescription("返回概览").performClick()
+        seed(Ledger(payments=listOf(paid,refund,other)))
+        compose.onNodeWithTag("ledger-spending-pie").performScrollTo().assertContentDescriptionEquals("净支出饼图，2项，已知正向净支出¥90.00")
+        compose.onNode(hasContentDescription("饼图应用，支出¥60.00，占比66.7%",substring=true)).assertExists()
+        compose.onNode(hasContentDescription("另一应用，支出¥30.00，占比33.3%",substring=true)).assertExists()
+        compose.onNodeWithText("仅显示已知人民币金额",substring=true).assertDoesNotExist()
+        shot("ledger-spending-pie")
+        compose.onNodeWithTag("ledger-spending-pie").performTouchInput {click(center.copy(x=center.x+width*.1f))}
+        compose.onNodeWithText("2 笔 · 净支出 ¥60.00",substring=false).assertExists()
     }
 
     @Test fun linkedRefundsOpenOriginalAndReturnThroughEachPageKeepingLedgerSearch() {

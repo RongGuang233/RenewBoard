@@ -1,6 +1,7 @@
 package cn.renewboard
 
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
@@ -33,6 +34,7 @@ import java.time.Instant
     refreshOnOpen: Boolean = false,
     onRefreshConsumed: () -> Unit = {},
     studentContent: @Composable () -> Unit = {},
+    scrollState: ScrollState = rememberScrollState(),
 ) {
     val app = LocalContext.current.applicationContext as RenewApp
     val store = remember { app.tuitionConnection }
@@ -94,7 +96,7 @@ import java.time.Instant
         } catch(e: CancellationException) { throw e }
         catch(e: Exception) { message = e.message; editing = true }
     }
-    Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(bottom = 24.dp),
+    Column(Modifier.fillMaxWidth().verticalScroll(scrollState).padding(bottom = 24.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)) {
         AssetCard {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {

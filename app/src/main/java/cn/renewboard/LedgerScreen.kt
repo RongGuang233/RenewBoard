@@ -1,6 +1,16 @@
 package cn.renewboard
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.style.TextAlign
+import kotlin.math.*
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -54,12 +64,10 @@ private data class ReceiptRange(val title:String,val from:LocalDate?,val until:L
     var rangeMenuOpen by remember { mutableStateOf(false) }
     var year by rememberSaveable { mutableIntStateOf(today.year) }
     val trendScroll=rememberSaveable(range,year,saver=ScrollState.Saver) { ScrollState(Int.MAX_VALUE) }
-    var expandedRank by rememberSaveable { mutableStateOf(false) }
     var expandedCash by rememberSaveable { mutableStateOf(false) }
     var detail by remember { mutableStateOf<ReceiptRange?>(null) }
     var payment by remember { mutableStateOf<Payment?>(null) }
     val expenses=Prepaid.expenses(l)
-    val monthly=expenses.filter { within(it,month.atDay(1),minOf(month.plusMonths(1).atDay(1),today.plusDays(1))) }
     val buckets=LedgerStats.buckets(expenses,range,today,year)
     val rangePayments=if(buckets.isEmpty()) emptyList() else expenses.filter { within(it,buckets.first().from,buckets.last().until) }
     val rangeSum=LedgerStats.summary(rangePayments)
@@ -95,7 +103,7 @@ private data class ReceiptRange(val title:String,val from:LocalDate?,val until:L
         Text("支出概览",fontSize=28.sp,fontWeight=FontWeight.Bold,modifier=Modifier.weight(1f))
         TextButton(openServices,modifier=Modifier.semantics {contentDescription="打开服务管理"}) {Text("服务管理");Icon(Icons.Outlined.ChevronRight,null)}
     }
-    Heading("支出趋势", "截至 ${today.monthValue}月${today.dayOfMonth}日")
+    Heading("支出趋势")
     Box {
         OutlinedButton(onClick={rangeMenuOpen=true},modifier=Modifier.semantics {contentDescription="选择趋势范围"}) {
             Text(range.label)
@@ -105,7 +113,7 @@ private data class ReceiptRange(val title:String,val from:LocalDate?,val until:L
             TrendRange.entries.forEach { item ->
                 DropdownMenuItem(
                     text={Text(item.label)},
-                    onClick={range=item;selectedFrom=null;expandedRank=false;rangeMenuOpen=false},
+                    onClick={range=item;selectedFrom=null;rangeMenuOpen=false},
                     trailingIcon={if(range==item) Icon(Icons.Outlined.Check,null)},
                     modifier=Modifier.semantics {contentDescription="趋势范围 ${item.label}";selected=range==item}
                 )
@@ -119,7 +127,6 @@ private data class ReceiptRange(val title:String,val from:LocalDate?,val until:L
     }
     Surface(color=Color.White,shape=RoundedCornerShape(22.dp),modifier=Modifier.fillMaxWidth().padding(top=8.dp)) {
         Column(Modifier.padding(16.dp)) {
-            Text("$rangePeriod · 合计",fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
             Row(Modifier.fillMaxWidth().heightIn(min=48.dp).clickable {expandedCash=!expandedCash}.semantics {
                 contentDescription=if(expandedCash) "收起支出构成" else "展开支出构成"
             },verticalAlignment=Alignment.CenterVertically) {
@@ -144,7 +151,6 @@ private data class ReceiptRange(val title:String,val from:LocalDate?,val until:L
             if(buckets.isEmpty()) Text("记录第一笔付款后，这里会显示趋势。",modifier=Modifier.padding(vertical=30.dp),color=MaterialTheme.colorScheme.onSurfaceVariant)
             else TrendBars(buckets,selectedBucket?.from,trendScroll) { bucket ->
                 selectedFrom=if(selectedFrom==bucket.from.toString()) null else bucket.from.toString()
-                expandedRank=false
             }
             selectedBucket?.let { bucket ->
                 Text("${bucket.label} · ${if(bucket.summary.missing>0) "已知净支出" else "净支出"} ${cash(bucket.summary.known)} · ${bucket.summary.count} 笔",
@@ -156,53 +162,42 @@ private data class ReceiptRange(val title:String,val from:LocalDate?,val until:L
     Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.End) {
         TextButton({detail=selectedDetail ?: ReceiptRange("全部付款",null,null)}) {Text(if(selectedDetail!=null) "所选时段明细" else "全部明细");Icon(Icons.Outlined.ChevronRight,null)}
     }
-    Heading("净支出分布", "$rankPeriod · 按应用")
+    Heading("净支出分布")
     val ranking=rankedPayments.groupBy { it.planName }.map { (name,ps)->name to LedgerStats.summary(ps) }.sortedByDescending { it.second.known }
+    fun openDistribution(name:String) {
+        detail=ReceiptRange("$name · $rankPeriod",selectedBucket?.from ?: buckets.firstOrNull()?.from,
+            selectedBucket?.until ?: buckets.lastOrNull()?.until,name)
+    }
     Surface(color=Color.White,shape=RoundedCornerShape(22.dp),modifier=Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp)) {
             if(ranking.isEmpty()) Text("这个时段还没有付款",color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.padding(vertical=12.dp))
-            val largest=ranking.maxOfOrNull { it.second.known.abs() }?.max(BigDecimal.ONE) ?: BigDecimal.ONE
+            val positiveTotal=ranking.filter {it.second.known.signum()>0}.fold(BigDecimal.ZERO) {sum,item -> sum+item.second.known}
             val hasNegative=ranking.any { it.second.known.signum()<0 }
-            val showShares=!hasNegative && rankSum.missing==0 && rankSum.known.signum()>0
-            ranking.take(if(expandedRank) ranking.size else 5).forEachIndexed { i,(name,spending) ->
-                val fraction=spending.known.abs().divide(largest,6,RoundingMode.HALF_UP).toFloat()
-                val share=if(showShares) spending.known.multiply(BigDecimal(100)).divide(rankSum.known,1,RoundingMode.HALF_UP).toPlainString() else null
-                Row(Modifier.fillMaxWidth().clickable {
-                    detail=ReceiptRange("$name · $rankPeriod",selectedBucket?.from ?: buckets.firstOrNull()?.from,
-                        selectedBucket?.until ?: buckets.lastOrNull()?.until,name)
-                }.padding(vertical=7.dp).semantics {
-                    contentDescription="$name，支出${cash(spending.known)}"+(share?.let { "，占比$it%" } ?: "，净支出")+"，待补录${spending.missing}笔"
-                },verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(10.dp)) {
-                    ServiceIcon(name,size=24.dp)
-                    Column(Modifier.weight(1f)) {
-                        Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween) {
-                            Text(name+when { spending.missing>0 -> " · 待补录 ${spending.missing} 笔"; share!=null -> " · $share%"; spending.known.signum()<0 -> " · 净退款"; else -> "" },
-                                fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,maxLines=1,overflow=TextOverflow.Ellipsis,modifier=Modifier.weight(1f))
-                            Text(cash(spending.known),fontSize=13.sp,fontWeight=FontWeight.SemiBold)
-                        }
-                        BoxWithConstraints(Modifier.fillMaxWidth().height(22.dp).padding(top=5.dp)) {
-                            val zero=if(hasNegative) maxWidth/2 else 0.dp
-                            val barWidth=(if(hasNegative) maxWidth/2 else maxWidth)*fraction
-                            Box(Modifier.offset(x=zero).width(1.dp).fillMaxHeight().background(MaterialTheme.colorScheme.outlineVariant))
-                            if(fraction>0f) Box(Modifier.offset(x=if(spending.known.signum()<0) zero-barWidth else zero).width(barWidth).fillMaxHeight().clip(RoundedCornerShape(4.dp))
-                                .background(if(spending.known.signum()<0) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.primary.copy(alpha=(1f-i*.07f).coerceAtLeast(.55f))))
-                        }
-                    }
-                    Icon(Icons.Outlined.ChevronRight,null,modifier=Modifier.size(18.dp))
+            if(positiveTotal.signum()>0) {
+                SpendingPie(ranking,positiveTotal,!hasNegative && rankSum.missing==0,onOpen=::openDistribution)
+                if(hasNegative || rankSum.missing>0) Text(
+                    listOfNotNull(if(rankSum.missing>0) "仅显示已知人民币金额" else null,if(hasNegative) "净退款单列，不计入饼图" else null).joinToString("；"),
+                    fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.padding(bottom=10.dp))
+            } else if(ranking.isNotEmpty()) Text(
+                if(rankSum.missing>0) "补录人民币金额后显示饼图" else "这个时段没有正向净支出",
+                color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.padding(vertical=12.dp))
+            // Refunds and unsettled-only amounts have no positive wedge; keep them reachable here.
+            ranking.filter {it.second.known.signum()<=0}.forEach {(name,spending)->
+                TextButton(onClick={openDistribution(name)},modifier=Modifier.fillMaxWidth().semantics {
+                    contentDescription="$name，支出${cash(spending.known)}，净支出，待补录${spending.missing}笔"
+                }) {
+                    ServiceIcon(name,size=20.dp,modifier=Modifier.padding(end=6.dp))
+                    Text(name,modifier=Modifier.weight(1f),maxLines=1,overflow=TextOverflow.Ellipsis)
+                    Text(if(spending.missing>0) "待补录 ${spending.missing} 笔" else cash(spending.known))
+                    Icon(Icons.Outlined.ChevronRight,null,Modifier.size(18.dp))
                 }
             }
-            if(ranking.size>5) TextButton({expandedRank=!expandedRank},Modifier.align(Alignment.CenterHorizontally)) {Text(if(expandedRank) "收起" else "展开全部 ${ranking.size} 项")}
         }
     }
-    Row(Modifier.fillMaxWidth().padding(top=20.dp),verticalAlignment=Alignment.CenterVertically) {
-        Text("最近付款",fontSize=20.sp,fontWeight=FontWeight.SemiBold,modifier=Modifier.weight(1f))
-        TextButton({detail=selectedDetail ?: ReceiptRange("${month.monthValue} 月付款",month.atDay(1),month.plusMonths(1).atDay(1))}) {Text(if(selectedDetail!=null) "查看所选时段" else "查看本月明细")}
+    TextButton(onClick={detail=ReceiptRange("本月明细",month.atDay(1),month.plusMonths(1).atDay(1))},
+        modifier=Modifier.align(Alignment.End).padding(top=12.dp)) {
+        Text("本月明细");Icon(Icons.Outlined.ChevronRight,null)
     }
-    monthly.sortedByDescending { it.date }.take(3).groupBy {it.date}.forEach { (date,rows) ->
-        ReceiptDate(date)
-        rows.forEach {p -> PaymentRow(p,open={payment=p})}
-    }
-    if(monthly.isEmpty()) Text("本月暂无付款记录",color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.padding(vertical=14.dp))
     }
 }
 
@@ -213,12 +208,100 @@ private data class ReceiptRange(val title:String,val from:LocalDate?,val until:L
     }
 }
 
-@Composable private fun Heading(title:String,subtitle:String) {
+@Composable private fun Heading(title:String) {
     Row(Modifier.fillMaxWidth().padding(top=26.dp,bottom=10.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.SpaceBetween) {
         Text(title,fontSize=20.sp,fontWeight=FontWeight.SemiBold)
-        Text(subtitle,fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
+private val spendingColors=listOf(
+    Color(0xFF637DB5),Color(0xFF80ADA8),Color(0xFFE2B477),Color(0xFFB59BC7),
+    Color(0xFFD78E92),Color(0xFF8DAA73),Color(0xFF88B5D2),Color(0xFFC7A28C)
+)
+private fun spendingColor(index:Int):Color=if(index<spendingColors.size) spendingColors[index]
+    else Color.hsv((index*137.508f)%360f,.38f,.76f)
+
+private data class SpendingSlice(val index:Int,val name:String,val spending:CashSummary,val start:Float,val sweep:Float) {
+    val middle:Double get()=Math.toRadians((start+sweep/2).toDouble())
+    val right:Boolean get()=cos(middle)>=0
+}
+
+// Labels share the pie's own space. Each side is laid out independently to keep small slices readable.
+@Composable private fun SpendingPie(ranking:List<Pair<String,CashSummary>>,total:BigDecimal,showShares:Boolean,onOpen:(String)->Unit) {
+    val positives=ranking.withIndex().filter {it.value.second.known.signum()>0}
+    var angle=-90f
+    val slices=positives.mapIndexed {i,item->
+        val sweep=if(i==positives.lastIndex) 270f-angle else item.value.second.known.divide(total,8,RoundingMode.HALF_UP).toFloat()*360f
+        SpendingSlice(item.index,item.value.first,item.value.second,angle,sweep).also {angle+=sweep}
+    }
+    val labelHeight=56f*LocalDensity.current.fontScale.coerceAtLeast(1f)
+    BoxWithConstraints(Modifier.fillMaxWidth().padding(vertical=8.dp)) {
+        val width=maxWidth.value
+        val radius=(width*.22f).coerceAtMost(90f)
+        val labelWidth=width/2-radius-16f
+        val height=max(240f,max(slices.count {it.right},slices.count {!it.right})*labelHeight+16f)
+        val centers=mutableMapOf<Int,Float>()
+        for(right in listOf(false,true)) {
+            val side=slices.filter {it.right==right}.sortedBy {sin(it.middle)}
+            var previous=8f-labelHeight/2
+            side.forEach {slice->
+                val desired=height/2+sin(slice.middle).toFloat()*(radius+12)
+                val y=max(desired.coerceAtLeast(8+labelHeight/2),previous+labelHeight)
+                centers[slice.index]=y;previous=y
+            }
+            var next=height-8+labelHeight/2
+            side.asReversed().forEach {slice->
+                val y=min(centers.getValue(slice.index),next-labelHeight)
+                centers[slice.index]=y;next=y
+            }
+        }
+        Box(Modifier.fillMaxWidth().height(height.dp)) {
+            Canvas(Modifier.fillMaxSize().testTag("ledger-spending-pie").semantics {
+                contentDescription="净支出饼图，${slices.size}项，已知正向净支出${cash(total)}"
+            }.pointerInput(slices) {
+                detectTapGestures {point->
+                    val dx=point.x-size.width/2f;val dy=point.y-size.height/2f
+                    val r=radius.dp.toPx()
+                    if(dx*dx+dy*dy<=r*r) {
+                        val degrees=(Math.toDegrees(atan2(dy,dx).toDouble()).toFloat()+450f)%360f
+                        slices.firstOrNull {degrees<it.start+90f+it.sweep}?.let {onOpen(it.name)}
+                    }
+                }
+            }) {
+                val center=Offset(size.width/2,size.height/2)
+                val r=radius.dp.toPx()
+                slices.forEach {slice->
+                    val color=spendingColor(slice.index)
+                    drawArc(color,slice.start,slice.sweep,true,topLeft=center-Offset(r,r),size=Size(r*2,r*2))
+                    val vx=cos(slice.middle).toFloat();val vy=sin(slice.middle).toFloat()
+                    val start=center+Offset(vx*r*.96f,vy*r*.96f)
+                    val bend=center+Offset(vx*(r+6.dp.toPx()),vy*(r+6.dp.toPx()))
+                    val y=centers.getValue(slice.index).dp.toPx()
+                    val outside=center.x+(if(slice.right) 1 else -1)*(r+10.dp.toPx())
+                    val end=if(slice.right) size.width-labelWidth.dp.toPx()-3.dp.toPx() else labelWidth.dp.toPx()+3.dp.toPx()
+                    drawPath(Path().apply {moveTo(start.x,start.y);lineTo(bend.x,bend.y);lineTo(outside,y);lineTo(end,y)},color.copy(alpha=.8f),style=Stroke(1.dp.toPx()))
+                }
+            }
+            slices.forEach {slice->
+                val share=if(showShares) slice.spending.known.multiply(BigDecimal(100)).divide(total,1,RoundingMode.HALF_UP).toPlainString() else null
+                Column(Modifier.offset(x=if(slice.right) (width-labelWidth).dp else 0.dp,y=(centers.getValue(slice.index)-labelHeight/2).dp)
+                    .width(labelWidth.dp).height(labelHeight.dp).clickable {onOpen(slice.name)}.semantics {
+                        contentDescription="${slice.name}，支出${cash(slice.spending.known)}"+(share?.let {"，占比$it%"} ?: "，净支出")+"，待补录${slice.spending.missing}笔"
+                    },verticalArrangement=Arrangement.Center,horizontalAlignment=if(slice.right) Alignment.Start else Alignment.End) {
+                    Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically,
+                        horizontalArrangement=Arrangement.spacedBy(4.dp,if(slice.right) Alignment.Start else Alignment.End)) {
+                        ServiceIcon(slice.name,size=16.dp)
+                        Text(slice.name,fontSize=12.sp,lineHeight=16.sp,fontWeight=FontWeight.SemiBold,maxLines=1,overflow=TextOverflow.Ellipsis,
+                            textAlign=if(slice.right) TextAlign.Start else TextAlign.End,modifier=Modifier.weight(1f,fill=false))
+                    }
+                    Text(cash(slice.spending.known),fontSize=11.sp,lineHeight=15.sp,maxLines=1,overflow=TextOverflow.Ellipsis,color=spendingColor(slice.index))
+                    if(share!=null) Text("$share%",fontSize=10.sp,lineHeight=13.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                    else if(slice.spending.missing>0) Text("待补录 ${slice.spending.missing} 笔",fontSize=10.sp,lineHeight=13.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        }
+    }
+}
+
 @Composable private fun TrendBars(buckets:List<CashBucket>,selectedFrom:LocalDate?,scroll:ScrollState,open:(CashBucket)->Unit) {
     val maximum=buckets.maxOf { it.summary.known.abs() }.max(BigDecimal.ONE)
     val hasNegative=buckets.any { it.summary.known.signum()<0 }

@@ -35,9 +35,9 @@ class AssetsDeviceTest {
     private fun await(predicate:(Ledger)->Boolean):Ledger {
         compose.waitUntil(10000) {predicate(runBlocking {app.repository.read()})};compose.waitForIdle();return runBlocking {app.repository.read()}
     }
-    private fun manage() {
+    private fun addAccount() {
         compose.onNodeWithContentDescription("资产管理菜单").performScrollTo().performClick()
-        compose.onNodeWithText("账户管理",substring=false).performClick();compose.waitForIdle()
+        compose.onNodeWithText("新增账户",substring=false).performClick();compose.waitForIdle()
     }
     private fun seed(accounts:List<AssetAccount>) {
         runBlocking {app.repository.restore(Backup(data=Ledger(assets=AssetBook(accounts=accounts))))}
@@ -55,8 +55,8 @@ class AssetsDeviceTest {
         val bitmap=androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()
         java.io.File(app.filesDir,"$name.png").outputStream().use {bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG,100,it)};bitmap.recycle()
     }
-    @Test fun manualBalanceCorrectionArchiveAndTrendPreserveActualTotalsWithoutExpenses() {
-        compose.onNodeWithContentDescription("添加账户").performClick()
+    @Test fun manualBalanceCorrectionAndConfirmedDeletionPreserveHistoryWithoutExpenses() {
+        addAccount()
         screenshot("assets-type-picker")
         click("银行卡")
         screenshot("assets-bank-picker")
@@ -66,31 +66,33 @@ class AssetsDeviceTest {
         screenshot("assets-add-account")
         click("保存账户")
         await {it.assets.accounts.singleOrNull()?.balance=="5000"}
-        click("更新余额");fill("新的当前余额","5300")
-        screenshot("assets-balance-sheet");click("保存余额")
+        click("编辑");fill("当前余额","5300")
+        screenshot("assets-edit-balance");click("保存账户")
         await {it.assets.accounts.singleOrNull()?.balance=="5300"}
-        click("更新余额");fill("新的当前余额","5200")
-        click("纠正上次录入");click("保存余额")
+        click("编辑");fill("当前余额","5200")
+        click("纠正上次录入");click("保存账户")
         val corrected=await {it.assets.accounts.singleOrNull()?.balance=="5200"}
         assertEquals(2,corrected.assets.accounts.single().history.size);assertTrue(corrected.payments.isEmpty())
         assertEquals("余额校正",corrected.assets.history.last().reason)
         screenshot("assets-account-detail")
-        back();compose.onNodeWithContentDescription("添加账户").performScrollTo().performClick()
+        back();addAccount()
         click("银行卡");click("招商银行")
         compose.onNodeWithText("账户详情",substring=false).assertExists()
         assertEquals(corrected,runBlocking {app.repository.read()})
-        click("账户设置");compose.onNodeWithContentDescription("归档账户开关").performScrollTo().performClick();click("保存账户")
-        val archived=await {it.assets.accounts.singleOrNull()?.archived==true}
-        assertEquals(0,BigDecimal("5200").compareTo(Assets.totals(archived).net))
-        back();compose.onNodeWithText("招商银行").assertDoesNotExist()
-        manage();compose.onNodeWithText("归档账户",substring=false).assertExists()
-        compose.onNodeWithText("招商银行").performScrollTo().assertIsDisplayed()
-        back();click("查看趋势");compose.onNodeWithText("净资产变化").assertExists();screenshot("assets-trend")
-        back();compose.onNodeWithContentDescription("隐藏资产金额").performClick()
-        compose.onAllNodesWithText("¥5,200.00").assertCountEquals(0)
+        click("编辑");compose.onNodeWithContentDescription("归档账户开关").assertDoesNotExist()
+        back();click("删除账户")
+        compose.onNodeWithText("删除账户？",substring=false).assertExists()
+        compose.onNodeWithText("取消").performClick();compose.waitForIdle();assertEquals(corrected,runBlocking {app.repository.read()})
+        click("删除账户");compose.onNodeWithText("删除",substring=false).performClick()
+        val deleted=await {it.assets.accounts.isEmpty()}
+        assertEquals(corrected.assets.history,deleted.assets.history.take(corrected.assets.history.size))
+        assertTrue(deleted.payments.isEmpty());assertEquals(0,Assets.totals(deleted).net.signum())
+        compose.onNodeWithText("查看趋势").assertDoesNotExist()
+        compose.onNodeWithText("排序").assertDoesNotExist()
+
     }
     @Test fun invalidAccountStaysEditableAndPrepaidSwitchControlsNetWorth() {
-        compose.onNodeWithContentDescription("添加账户").performClick()
+        addAccount()
         click("饭卡")
         compose.onNodeWithContentDescription("计入净资产开关").assertIsOn()
         back();click("其他充值")
@@ -106,23 +108,72 @@ class AssetsDeviceTest {
         click("保存账户")
         val saved=await {it.assets.accounts.singleOrNull()?.balance=="200"}
         assertEquals(0,BigDecimal("200").compareTo(Assets.totals(saved).net))
-        click("账户设置");compose.onNodeWithContentDescription("计入净资产开关").performScrollTo().performClick();click("保存账户")
+        click("编辑");compose.onNodeWithContentDescription("计入净资产开关").performScrollTo().performClick();click("保存账户")
         val excluded=await {it.assets.accounts.singleOrNull()?.included==false}
         assertEquals(0,Assets.totals(excluded).net.signum());assertTrue(excluded.payments.isEmpty())
     }
 
     @Test fun selectingExistingAppTypeKeepsItsBalanceAndHistory() {
-        compose.onNodeWithContentDescription("添加账户").performClick();click("微信")
+        addAccount();click("微信")
         compose.onNode(hasText("账户名称") and hasSetTextAction()).assertDoesNotExist()
         fill("当前余额","100");click("保存账户")
         await {it.assets.accounts.singleOrNull()?.name=="微信"}
-        click("更新余额");fill("新的当前余额","125");click("保存余额")
+        click("编辑");fill("当前余额","125");click("保存账户")
         val before=await {it.assets.accounts.singleOrNull()?.balance=="125"}
         assertEquals(2,before.assets.accounts.single().history.size)
-        back();compose.onNodeWithContentDescription("添加账户").performScrollTo().performClick();click("微信")
+        back();addAccount();click("微信")
         compose.onNodeWithText("账户详情",substring=false).assertExists()
         compose.onNodeWithText("保存账户",substring=false).assertDoesNotExist()
         assertEquals(before,runBlocking {app.repository.read()})
+    }
+
+    @Test fun unifiedEditorChangesNameTypeCurrencyBalanceAndMetadataTogether() {
+        seed(listOf(
+            AssetAccount(id="wallet",name="微信",category=AssetCategory.CASH,subtype="微信",balance="100",history=listOf(AssetBalanceRecord(balance="100",date=java.time.LocalDate.now().minusDays(1).toString()))),
+            AssetAccount(id="cash",name="现金",category=AssetCategory.CASH,subtype="现金",balance="150")))
+        click("微信")
+        compose.onNodeWithText("更新余额",substring=false).assertDoesNotExist()
+        compose.onNodeWithText("账户设置",substring=false).assertDoesNotExist()
+        click("编辑")
+        fill("账户名称","自用会员卡")
+        compose.onNodeWithContentDescription("编辑账户类型").performScrollTo().performClick()
+        click("会员卡")
+        fill("当前余额","123")
+        compose.onNodeWithContentDescription("选择币种").performScrollTo().performClick()
+        compose.onNodeWithText("美元 $",substring=false).performClick()
+        fill("折算汇率（1 USD = ? CNY）","7.2")
+        fill("备注","本地编辑测试")
+        compose.onNodeWithContentDescription("计入净资产开关").performScrollTo().performClick()
+        click("保存账户")
+        val saved=await {it.assets.accounts.first {a->a.id=="wallet"}.name=="自用会员卡"}
+        val account=saved.assets.accounts.first {it.id=="wallet"}
+        assertEquals(AssetCategory.PREPAID,account.category);assertEquals("会员卡",account.subtype)
+        assertEquals("USD",account.currency);assertEquals("123",account.balance);assertEquals("7.2",account.cnyRate)
+        assertEquals("本地编辑测试",account.note);assertFalse(account.included)
+        assertEquals(0,Assets.totals(saved).net.compareTo(BigDecimal("150")))
+        compose.onNodeWithText("¥100.00",substring=false).performScrollTo().assertExists()
+        click("编辑")
+        compose.onNode(hasText("账户名称") and hasSetTextAction()).performScrollTo()
+        screenshot("assets-unified-editor")
+        click("保存账户");compose.waitForIdle()
+        assertEquals(saved,runBlocking {app.repository.read()})
+        click("编辑");fill("账户名称","未保存名称");back()
+        assertEquals(saved,runBlocking {app.repository.read()})
+    }
+
+    @Test fun tuitionAccountCanBeEditedLocallyWithoutDownloading() {
+        val snapshot=TuitionSnapshot(publishedAt="2026-10-15T08:00:00Z",students=listOf(TuitionStudent("edit-student","示例学生","active",120000,true)))
+        runBlocking {app.repository.restore(Backup(data=Assets.importTuition(Ledger(),snapshot,setOf("edit-student"),"2026-10-15T09:00:00Z")))}
+        compose.waitForIdle();click("查看学生");click("示例学生");click("编辑")
+        fill("账户名称","学生别名");fill("当前余额","900");fill("备注","手动核对")
+        compose.onNodeWithText("学费 · 人民币 CNY",substring=false).assertExists()
+        compose.onNodeWithContentDescription("编辑账户类型").assertDoesNotExist()
+        click("保存账户")
+        val saved=await {it.assets.accounts.single().balance=="900"}
+        assertEquals("edit-student",saved.assets.accounts.single().studentId)
+        assertEquals("学生别名",saved.assets.accounts.single().name)
+        assertEquals("手动核对",saved.assets.accounts.single().note)
+        assertEquals("2026-10-15T08:00:00Z",saved.assets.tuitionPublishedAt)
     }
 
     @Test fun rechargeGroupHasOnlyActualTotalAndHidingCoversAllAmounts() {
@@ -133,7 +184,7 @@ class AssetsDeviceTest {
         compose.onNodeWithContentDescription("收起充值").assertTextContains("¥340.74")
         compose.onAllNodesWithText("其中计入",substring=true).assertCountEquals(0)
         assertEquals(0,Assets.totals(runBlocking {app.repository.read()}).net.compareTo(BigDecimal("240.74")))
-        compose.onNodeWithText("不计入",substring=false).assertExists()
+        compose.onNodeWithText("不计入",substring=false).assertDoesNotExist()
         compose.onNodeWithContentDescription("隐藏资产金额").performScrollTo().performClick()
         listOf("¥340.74","¥240.74","¥100.00","其中计入净资产 ¥240.74").forEach {
             compose.onAllNodesWithText(it,substring=true).assertCountEquals(0)
@@ -149,12 +200,26 @@ class AssetsDeviceTest {
             AssetAccount(name="微信",category=AssetCategory.CASH,subtype="微信",balance="300"),
             AssetAccount(name="示例饭卡",category=AssetCategory.PREPAID,subtype="饭卡",balance="200")
         ))
+        val cashRow=compose.onNodeWithText("现金",substring=false).performScrollTo().fetchSemanticsNode().boundsInRoot
+        val wechat=compose.onNodeWithText("微信",substring=false).performScrollTo()
+        val from=wechat.fetchSemanticsNode().boundsInRoot
+        wechat.performTouchInput {
+            down(center);advanceEventTime(650)
+            moveTo(center.copy(y=center.y+cashRow.center.y-from.center.y),delayMillis=500);up()
+        }
+        compose.waitForIdle()
+        assertTrue(compose.onNodeWithText("微信").fetchSemanticsNode().positionInRoot.y<compose.onNodeWithText("现金").fetchSemanticsNode().positionInRoot.y)
         compose.onNodeWithContentDescription("收起资金账户").performScrollTo().performClick()
         compose.onNodeWithContentDescription("收起充值").performScrollTo().performClick()
-        click("排序")
-        repeat(4) {compose.onNodeWithContentDescription("上移充值").performScrollTo().performClick();compose.waitForIdle()}
-        compose.onNodeWithContentDescription("上移账户微信").performScrollTo().performClick();compose.waitForIdle()
-        back()
+        compose.waitForIdle()
+        val cashHeader=compose.onNodeWithContentDescription("展开资金账户").fetchSemanticsNode().boundsInRoot
+        val prepaidHeader=compose.onNodeWithContentDescription("展开充值")
+        val prepaidFrom=prepaidHeader.fetchSemanticsNode().boundsInRoot
+        prepaidHeader.performTouchInput {
+            down(center);advanceEventTime(650)
+            moveTo(center.copy(y=center.y+cashHeader.center.y-prepaidFrom.center.y),delayMillis=500);up()
+        }
+        compose.waitForIdle()
         compose.activityRule.scenario.recreate();compose.waitForIdle()
         compose.waitUntil(10000) {compose.onAllNodesWithContentDescription("展开充值").fetchSemanticsNodes().isNotEmpty()}
         val prepaid=compose.onNodeWithContentDescription("展开充值").fetchSemanticsNode().positionInRoot.y
@@ -167,6 +232,80 @@ class AssetsDeviceTest {
         assertTrue("Account order within 资金账户 must also persist",wechatTop<cashTop)
         compose.onNodeWithContentDescription("展开充值").performScrollTo().performClick()
         compose.onNodeWithText("示例饭卡").assertExists()
+    }
+
+    @Test fun borrowingSummaryOpensAccountsAndToggleExcludesLoansPersistently() {
+        seed(listOf(
+            AssetAccount(name="现金",category=AssetCategory.CASH,subtype="现金",balance="1000"),
+            AssetAccount(name="朋友借款",category=AssetCategory.DEBT,subtype="借入款",balance="100"),
+            AssetAccount(name="借给朋友",category=AssetCategory.RECEIVABLE,subtype="借出款",balance="300"),
+            AssetAccount(name="信用卡",category=AssetCategory.DEBT,subtype="信用卡",balance="200"),
+            AssetAccount(name="租房押金",category=AssetCategory.RECEIVABLE,subtype="可退押金",balance="50")
+        ))
+        compose.onNodeWithText("朋友借款").assertDoesNotExist()
+        compose.onNodeWithText("借给朋友").assertDoesNotExist()
+        compose.onNodeWithText("¥1,050.00").assertExists()
+        click("总借入");click("朋友借款")
+        compose.onNodeWithText("编辑").assertExists();back();back()
+        click("总借出");click("借给朋友");click("编辑")
+        fill("当前余额","350");click("保存账户")
+        await {it.assets.accounts.any {a->a.name=="借给朋友" && a.balance=="350"}}
+        back();back()
+        compose.onNodeWithContentDescription("资产管理菜单").performScrollTo().performClick()
+        compose.onNodeWithText("显示借入借出").performClick()
+        val off=await {!it.assets.showBorrowing}
+        assertEquals(5,off.assets.accounts.size);assertTrue(off.assets.accounts.all {it.included})
+        assertEquals(0,Assets.totals(off).net.compareTo(BigDecimal("850")))
+        compose.onNodeWithText("总借入").assertDoesNotExist();compose.onNodeWithText("总借出").assertDoesNotExist()
+        compose.onNodeWithText("¥850.00").assertExists()
+        compose.onNodeWithText("信用卡").assertExists();compose.onNodeWithText("租房押金").assertExists()
+        screenshot("assets-borrowing-hidden")
+        compose.activityRule.scenario.recreate();compose.waitForIdle()
+        compose.onNodeWithText("总借入").assertDoesNotExist()
+        assertFalse(runBlocking {app.repository.read()}.assets.showBorrowing)
+        compose.onNodeWithContentDescription("资产管理菜单").performScrollTo().performClick()
+        compose.onNodeWithText("显示借入借出").performClick()
+        val on=await {it.assets.showBorrowing}
+        assertEquals(0,Assets.totals(on).net.compareTo(BigDecimal("1100")))
+        compose.onNodeWithText("总借入").assertExists();compose.onNodeWithText("总借出").assertExists()
+        compose.onNodeWithText("朋友借款").assertDoesNotExist();compose.onNodeWithText("借给朋友").assertDoesNotExist()
+        screenshot("assets-borrowing-shown")
+    }
+
+    @Test fun studentAccountsAlsoSupportLongPressSorting() {
+        val students=listOf(
+            AssetAccount(id="student-first",name="示例学生甲",category=AssetCategory.TUITION,studentId="a",balance="1200"),
+            AssetAccount(id="student-second",name="示例学生乙",category=AssetCategory.TUITION,studentId="b",balance="500"))
+        runBlocking {app.repository.restore(Backup(data=Ledger(assets=AssetBook(accounts=students))))}
+        compose.waitForIdle();click("查看学生")
+        val first=compose.onNodeWithText("示例学生甲").performScrollTo().fetchSemanticsNode().boundsInRoot
+        val second=compose.onNodeWithText("示例学生乙").performScrollTo()
+        val from=second.fetchSemanticsNode().boundsInRoot
+        second.performTouchInput {
+            down(center);advanceEventTime(650)
+            moveTo(center.copy(y=center.y+first.center.y-from.center.y),delayMillis=500);up()
+        }
+        compose.waitForIdle()
+        assertTrue(compose.onNodeWithText("示例学生乙").fetchSemanticsNode().positionInRoot.y<compose.onNodeWithText("示例学生甲").fetchSemanticsNode().positionInRoot.y)
+        assertEquals(students,runBlocking {app.repository.read()}.assets.accounts)
+    }
+
+    @Test fun draggingCategoryAtBottomScrollsToTheNextOffscreenGroup() {
+        seed((1..8).map {AssetAccount(name="测试账户$it",category=AssetCategory.CASH,balance="100")}+
+            AssetAccount(name="饭卡",category=AssetCategory.PREPAID,subtype="饭卡",balance="200"))
+        val header=compose.onNodeWithContentDescription("收起资金账户").performScrollTo()
+        val bounds=header.fetchSemanticsNode().boundsInRoot
+        val viewport=compose.onNode(hasScrollAction()).fetchSemanticsNode().boundsInRoot
+        header.performTouchInput {
+            down(center);advanceEventTime(650)
+            moveTo(center.copy(y=viewport.bottom-bounds.top-12),delayMillis=300)
+            repeat(30) {moveBy(androidx.compose.ui.geometry.Offset(0f,0f),delayMillis=64)}
+            up()
+        }
+        compose.waitForIdle()
+        val saved=app.getSharedPreferences("asset-display",0).getString("groups","")!!.split(",")
+        assertTrue("Dragging at the edge must reach and reorder the initially offscreen recharge group",saved.indexOf("PREPAID")>=0 && saved.indexOf("PREPAID")<saved.indexOf("CASH"))
+        compose.onNodeWithText("账户详情",substring=false).assertDoesNotExist()
     }
 
     @Test fun referenceStyleOverviewShowsBrandsAndOnlyPendingLessonsWithoutDroppingReceivables() {
@@ -192,7 +331,8 @@ class AssetsDeviceTest {
         }
         compose.onNodeWithText("查看学生",substring=false).performScrollTo()
         compose.onNodeWithText("学费",substring=false).assertIsDisplayed()
-        compose.onNodeWithText("待上课",substring=false).assertIsDisplayed()
+        compose.onNodeWithText("尚未同步",substring=true).assertDoesNotExist()
+        compose.onNodeWithText("待上课",substring=false).performScrollTo().assertIsDisplayed()
         compose.onAllNodesWithText("待收款",substring=true).assertCountEquals(0)
         compose.onNodeWithText("示例学生甲").assertDoesNotExist()
         compose.onAllNodesWithText("其中计入",substring=true).assertCountEquals(0)

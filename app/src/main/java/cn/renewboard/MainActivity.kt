@@ -29,6 +29,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.unit.Density
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.contentDescription
@@ -53,7 +55,15 @@ private val Amber = Color(0xFFAD501F)
 private val Palette = lightColorScheme(primary=Leaf, onPrimary=Color.White, background=Paper, surface=Paper, surfaceVariant=Color(0xFFE8EEF9), secondary=Amber, onBackground=Ink,onSurface=Ink, primaryContainer=Color(0xFFE2EBFF),onPrimaryContainer=Ink,secondaryContainer=Color(0xFFE2EBFF),onSecondaryContainer=Ink,tertiary=Amber,tertiaryContainer=Color(0xFFF1E7D2),onTertiaryContainer=Ink,surfaceTint=Leaf,surfaceContainer=Color(0xFFF0F3FA),surfaceContainerHigh=Color(0xFFEAF0FB),surfaceContainerHighest=Color(0xFFE2EAF8),surfaceContainerLow=Color(0xFFF4F6FC),surfaceContainerLowest=Paper)
 class MainActivity: ComponentActivity() {
     private var incoming by mutableStateOf<Intent?>(null)
-    override fun onCreate(savedInstanceState: Bundle?) { super.onCreate(savedInstanceState); incoming=intent; setContent { MaterialTheme(colorScheme=Palette) { RenewBoard(incoming) {incoming=null;intent?.apply {removeExtra("planId");removeExtra("subscriptionAction");data=null}} } } }
+    override fun onCreate(savedInstanceState: Bundle?) { super.onCreate(savedInstanceState); incoming=intent; setContent {
+        val systemDensity=LocalDensity.current
+        // Apply the same compact scale to every page while retaining the system font preference.
+        val compactScale=.9f
+        CompositionLocalProvider(LocalDensity provides Density(systemDensity.density*compactScale,systemDensity.fontScale),
+            LocalMinimumInteractiveComponentSize provides (48/compactScale).dp) {
+            MaterialTheme(colorScheme=Palette) { RenewBoard(incoming) {incoming=null;intent?.apply {removeExtra("planId");removeExtra("subscriptionAction");data=null}} }
+        }
+    } }
     override fun onNewIntent(intent:Intent) {super.onNewIntent(intent);setIntent(intent);incoming=intent}
 }
 @Composable private fun Title(text: String, sub: String? = null, action:(()->Unit)? = null) {
@@ -288,8 +298,8 @@ private fun money(totals: Map<String,BigDecimal>) = if(totals.isEmpty()) "暂无
             }
             1 -> pageStates.SaveableStateProvider("assets") {
                 Box(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding).imePadding()) {
-                    AssetsScreen(ledger,save={repo.update(it)},openPlan=::openPlan,
-                        tuitionContent={refresh,consumed,students->TuitionSyncScreen(ledger,refreshOnOpen=refresh,onRefreshConsumed=consumed,studentContent=students)},onSubpageChange={subpage=it})
+                    AssetsScreen(ledger,save={repo.update(it)},
+                        tuitionContent={refresh,consumed,scroll,students->TuitionSyncScreen(ledger,refreshOnOpen=refresh,onRefreshConsumed=consumed,studentContent=students,scrollState=scroll)},onSubpageChange={subpage=it})
                 }
             }
             2 -> pageStates.SaveableStateProvider("ledger") {

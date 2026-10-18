@@ -8,6 +8,24 @@ import org.junit.Test
 import java.math.BigDecimal
 
 class AssetPresentationTest {
+    @Test fun borrowingSummaryIncludesLoansAndKeepsCurrenciesSeparate() {
+        val accounts=listOf(
+            AssetAccount(name="借入款",category=AssetCategory.DEBT,subtype="借入款",balance="100"),
+            AssetAccount(name="不计入的借入",category=AssetCategory.DEBT,subtype="借入款",balance="50",included=false),
+            AssetAccount(name="美元借入",category=AssetCategory.DEBT,subtype="借入款",balance="12",currency="USD"),
+            AssetAccount(name="已归档借入",category=AssetCategory.DEBT,subtype="借入款",balance="500",archived=true),
+            AssetAccount(name="信用卡",category=AssetCategory.DEBT,subtype="信用卡",balance="900"),
+            AssetAccount(name="贷款",category=AssetCategory.DEBT,subtype="贷款",balance="1000"),
+            AssetAccount(name="借出款",category=AssetCategory.RECEIVABLE,subtype="借出款",balance="200"),
+            AssetAccount(name="押金",category=AssetCategory.RECEIVABLE,subtype="可退押金",balance="400"),
+            AssetAccount(name="待上课",category=AssetCategory.TUITION,subtype="借入款",balance="600"))
+        assertEquals(BorrowingBalances("¥650.00\nUSD 12.00","¥200.00"),assetBorrowingBalances(accounts))
+    }
+
+    @Test fun borrowingSummaryWithoutLoansShowsZeroInBothDirections() {
+        assertEquals(BorrowingBalances("¥0.00","¥0.00"),assetBorrowingBalances(emptyList()))
+    }
+
     @Test fun groupBalancesIncludeExcludedBalancesWithoutMixingCurrencies() {
         val accounts=listOf(
             AssetAccount(name="饭卡",category=AssetCategory.PREPAID,balance="200"),

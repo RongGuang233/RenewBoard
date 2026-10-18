@@ -125,7 +125,7 @@ class TuitionSyncDeviceTest {
         assertEquals(1,downloads.get())
         assertEquals("5000",read().assets.accounts.first {it.id=="bank"}.balance)
         // Saving another account and recreating must not replay the original refresh action.
-        runBlocking {app.repository.update {Assets.updateBalance(it,"bank","5100",java.time.LocalDate.now().toString(),false)}}
+        runBlocking {app.repository.update {val bank=it.assets.accounts.first {a->a.id=="bank"};Assets.edit(it,bank,bank.copy(balance="5100",asOf=java.time.LocalDate.now().toString()))}}
         compose.waitForIdle();compose.activityRule.scenario.recreate();compose.waitForIdle()
         waitFor {compose.onAllNodesWithText("示例学生",substring=false).fetchSemanticsNodes().isNotEmpty()}
         assertEquals(1,downloads.get())
