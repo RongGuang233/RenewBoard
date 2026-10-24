@@ -120,7 +120,7 @@ import java.time.Instant
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("选择要导入的学生", style = MaterialTheme.typography.titleMedium)
-                    Text("已关联账户会更新。新学生默认选择在读学生；归档且未结清的余额仍列出。")
+                    Text("已关联的未归档账户会更新，新学生默认选择在读学生。已归档学生保留原余额。")
                     candidates.forEach { student ->
                         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                             Checkbox(student.id in selected, onCheckedChange = { checked ->

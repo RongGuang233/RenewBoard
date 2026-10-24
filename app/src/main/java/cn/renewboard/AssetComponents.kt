@@ -66,8 +66,8 @@ import java.math.BigDecimal
     }
 }
 
-internal fun tuitionBalanceLabel(balance:String)=when(BigDecimal(balance).signum()) {
-    1->"待上课"; -1->"待收款"; else->"已结清"
+internal fun tuitionBalanceLabel(balance:String,archived:Boolean=false)=when(BigDecimal(balance).signum()) {
+    1->if(archived) "剩余学费" else "待上课"; -1->"待收款"; else->"已结清"
 }
 
 // Group balances represent actual account balances, not the amount eligible for net worth.
@@ -125,7 +125,7 @@ internal fun assetBorrowingBalances(accounts:List<AssetAccount>):BorrowingBalanc
         }
         Column(horizontalAlignment=Alignment.End,modifier=Modifier.widthIn(max=180.dp)) {
             Text(if(hidden) "••••" else assetMoney(if(a.category==AssetCategory.TUITION) BigDecimal(a.balance).abs() else BigDecimal(a.balance),a.currency),style=MaterialTheme.typography.bodyLarge)
-            if(a.category==AssetCategory.TUITION) Text(tuitionBalanceLabel(a.balance),style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+            if(a.category==AssetCategory.TUITION) Text(tuitionBalanceLabel(a.balance,a.archived),style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
@@ -152,7 +152,7 @@ internal fun assetBorrowingBalances(accounts:List<AssetAccount>):BorrowingBalanc
 }
 
 @Composable internal fun TuitionOverview(ledger:Ledger,accounts:List<AssetAccount>,hidden:Boolean,onRefresh:()->Unit,onStudents:()->Unit,headerModifier:Modifier=Modifier) {
-    val prepaid=accounts.filter {it.verified && BigDecimal(it.balance).signum()>0}.fold(BigDecimal.ZERO) {sum,a->sum+BigDecimal(a.balance)}
+    val prepaid=accounts.filter {!it.archived && it.verified && BigDecimal(it.balance).signum()>0}.fold(BigDecimal.ZERO) {sum,a->sum+BigDecimal(a.balance)}
     val issues=accounts.count {Assets.value(ledger,it).pendingReason!=null}
     AssetCard {
         Row(headerModifier.fillMaxWidth().padding(start=16.dp,end=4.dp),verticalAlignment=Alignment.CenterVertically) {

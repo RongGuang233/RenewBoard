@@ -161,14 +161,54 @@ class AssetsTest {
         assertEquals(2,Assets.importTuition(repeated,s,setOf("s2"),"2024-03-01T08:03:00Z").assets.accounts.size)
         assertThrows(IllegalArgumentException::class.java) {Assets.importTuition(l,s.copy(publishedAt="2024-02-29T08:00:00Z"),emptySet(),"2024-03-01T08:03:00Z")}
     }
+    @Test fun archivedTuitionFreezesBalanceHistoryAndInclusionWithoutChangingNetWorth() {
+        val first=Assets.importTuition(ledger(account()),snapshot(students=arrayOf(student(),student("s2",-5000))),setOf("s1","s2"),"2024-03-01T08:01:00Z")
+        val old=first.assets.accounts.first {it.studentId=="s1"}.copy(name="原有称呼",included=false)
+        val before=Assets.put(first,old)
+        val incoming=snapshot("2024-03-02T08:00:00Z",student(balance=0,verified=false).copy(status="archived"),student("s2",99999).copy(status="archived"))
+        val after=Assets.observe(before,Assets.importTuition(before,incoming,emptySet(),"2024-03-02T08:01:00Z"))
+        after.assets.accounts.filter {it.studentId!=null}.forEach {a->
+            val prior=before.assets.accounts.single {it.id==a.id}
+            assertTrue(a.archived);assertEquals(prior.balance,a.balance);assertEquals(prior.asOf,a.asOf)
+            assertEquals(prior.history,a.history);assertEquals(prior.verified,a.verified);assertEquals(prior.included,a.included)
+        }
+        assertEquals(Assets.totals(before),Assets.totals(after));assertEquals(before.assets.history,after.assets.history)
+        assertEquals("原有称呼",after.assets.accounts.first {it.studentId=="s1"}.name)
+        assertTrue(Assets.accounts(after).first {it.studentId=="s1"}.archived)
+        val later=Assets.importTuition(after,incoming.copy(publishedAt="2024-03-03T08:00:00Z"),emptySet(),"2024-03-03T08:01:00Z")
+        assertEquals(after.assets.accounts,later.assets.accounts)
+        val absent=Assets.importTuition(later,snapshot("2024-03-04T08:00:00Z"),emptySet(),"2024-03-04T08:01:00Z")
+        assertEquals(later.assets.accounts,absent.assets.accounts)
+        assertEquals(after,Book.decode(Book.encode(after)).data)
+    }
+
+    @Test fun repeatedSnapshotCanRecognizeArchiveAndUnarchivedStudentResumesOnNewPublication() {
+        val archived=student(balance=0).copy(status="archived")
+        val source=snapshot(students=arrayOf(archived))
+        // Model an older app which already consumed this snapshot without retaining its status.
+        val old=ledger(account("tuition","123",AssetCategory.TUITION).copy(studentId="s1")).let {
+            it.copy(assets=it.assets.copy(tuitionPublishedAt=source.publishedAt))
+        }
+        val updated=Assets.importTuition(old,source,emptySet(),"2024-03-01T08:02:00Z")
+        assertTrue(updated.assets.accounts.single().archived)
+        assertEquals("123",updated.assets.accounts.single().balance)
+        assertTrue(updated.assets.accounts.single().history.isEmpty())
+        assertEquals(listOf("s2"),Assets.newTuitionStudents(updated,snapshot(students=arrayOf(archived,student("s2"),student("old").copy(status="archived")))).map {it.id})
+        val empty=Assets.importTuition(Ledger(),source,emptySet(),"2024-03-01T08:02:00Z")
+        assertTrue(empty.assets.accounts.isEmpty())
+        val resumed=Assets.importTuition(updated,snapshot("2024-03-02T08:00:00Z",student(balance=10000)),emptySet(),"2024-03-02T08:01:00Z")
+        assertFalse(resumed.assets.accounts.single().archived);assertEquals("100.00",resumed.assets.accounts.single().balance)
+        assertEquals(1,resumed.assets.accounts.single().history.size)
+    }
+
     @Test fun tuitionMissingAndUnverifiedPreserveConfirmedAmountAliasAndSettings() {
         val first=Assets.importTuition(Ledger(),snapshot(students=arrayOf(student())),setOf("s1"),"2024-03-01T08:01:00Z")
-        val a=first.assets.accounts.single().copy(name="我的称呼",included=false,archived=true)
+        val a=first.assets.accounts.single().copy(name="我的称呼",included=false)
         val l=Assets.put(first,a)
         val missing=Assets.importTuition(l,snapshot("2024-03-02T08:00:00Z"),emptySet(),"2024-03-02T08:01:00Z")
         assertTrue(missing.assets.accounts.single().sourceMissing);assertEquals(a.balance,missing.assets.accounts.single().balance)
         val uncertain=Assets.importTuition(missing,snapshot("2024-03-03T08:00:00Z",student(balance=10000,verified=false)),emptySet(),"2024-03-03T08:01:00Z")
-        val kept=uncertain.assets.accounts.single();assertEquals(a.balance,kept.balance);assertEquals("我的称呼",kept.name);assertFalse(kept.included);assertTrue(kept.archived);assertTrue(kept.sourceUnverified);assertTrue(kept.verified)
+        val kept=uncertain.assets.accounts.single();assertEquals(a.balance,kept.balance);assertEquals("我的称呼",kept.name);assertFalse(kept.included);assertFalse(kept.archived);assertTrue(kept.sourceUnverified);assertTrue(kept.verified)
     }
     @Test fun historyOnlyTracksRelevantChangesAndCorrectionIsDistinctFromNewObservation() {
         val a=account().copy(history=listOf(AssetBalanceRecord(balance="5000",date=date,kind="初始余额")))

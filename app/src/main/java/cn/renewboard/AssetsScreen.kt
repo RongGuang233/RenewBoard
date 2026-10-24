@@ -2,6 +2,7 @@ package cn.renewboard
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.gestures.scrollBy
+import androidx.compose.foundation.clickable
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -62,6 +63,7 @@ internal fun assetIcon(category:AssetCategory)=when(category) {
     var createCategory by rememberSaveable {mutableStateOf(AssetCategory.CASH.name)}
     var createType by rememberSaveable {mutableStateOf("银行卡")}
     var refreshTuition by rememberSaveable {mutableStateOf(false)}
+    var archivedStudentsExpanded by rememberSaveable {mutableStateOf(false)}
     var menu by remember {mutableStateOf(false)}
     var savingBorrowing by remember {mutableStateOf(false)}
     var error by remember {mutableStateOf<String?>(null)}
@@ -140,13 +142,32 @@ internal fun assetIcon(category:AssetCategory)=when(category) {
             "tuition" -> Column(Modifier.fillMaxSize().onGloballyPositioned {viewport=it.boundsInRoot()}.padding(horizontal=16.dp)) {
                 tuitionContent(refreshTuition,{refreshTuition=false},tuitionScroll) {
                     val students=accounts.filter {it.category==AssetCategory.TUITION}
-                    if(students.isNotEmpty()) AssetCard {
+                    val current=students.filterNot {it.archived}
+                    val archived=students.filter {it.archived}
+                    if(current.isNotEmpty()) AssetCard {
                         Text("学生账户",fontWeight=FontWeight.SemiBold,modifier=Modifier.padding(16.dp))
-                        students.forEach {a->key(a.id) {
+                        current.forEach {a->key(a.id) {
                             AssetReorderItem(reorder,"account:${a.id}",AssetCategory.TUITION.name) {handle->
                                 AssetAccountRow(ledger,a,hidden,onClick={detail(a)},modifier=handle)
                             }
                         }}
+                    }
+                    if(archived.isNotEmpty()) AssetCard {
+                        Row(Modifier.fillMaxWidth().clickable {archivedStudentsExpanded=!archivedStudentsExpanded}
+                            .semantics {contentDescription=if(archivedStudentsExpanded) "收起已归档学生" else "展开已归档学生"}
+                            .padding(16.dp),verticalAlignment=Alignment.CenterVertically) {
+                            Text("已归档（${archived.size}）",fontWeight=FontWeight.SemiBold,modifier=Modifier.weight(1f))
+                            Icon(if(archivedStudentsExpanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore,null)
+                        }
+                        if(archivedStudentsExpanded) {
+                            Text("停止同步余额，净资产计入设置保留",style=MaterialTheme.typography.bodySmall,
+                                color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.padding(horizontal=16.dp).padding(bottom=8.dp))
+                            archived.forEach {a->key(a.id) {
+                                AssetReorderItem(reorder,"account:${a.id}","archived-students") {handle->
+                                    AssetAccountRow(ledger,a,hidden,onClick={detail(a)},modifier=handle)
+                                }
+                            }}
+                        }
                     }
                 }
             }
@@ -235,7 +256,8 @@ internal fun assetIcon(category:AssetCategory)=when(category) {
         Text(if(hidden) "••••••" else assetMoney(if(a.category==AssetCategory.TUITION) BigDecimal(a.balance).abs() else BigDecimal(a.balance),a.currency),fontSize=32.sp,fontWeight=FontWeight.Bold,color=MaterialTheme.colorScheme.primary)
         Text("更新于 ${a.asOf} · "+(if(Assets.includedInTotals(l,a)) "计入净资产" else "不计入净资产"),style=MaterialTheme.typography.bodyMedium)
         Assets.value(l,a).pendingReason?.let {Hint(it)}
-        if(a.category==AssetCategory.TUITION) Text(tuitionBalanceLabel(a.balance)+if(a.included) (if(BigDecimal(a.balance).signum()>0) " · 计入负债" else if(BigDecimal(a.balance).signum()<0) " · 计入资产" else "") else " · 不计入净资产")
+        if(a.category==AssetCategory.TUITION) Text(tuitionBalanceLabel(a.balance,a.archived)+if(a.included) (if(BigDecimal(a.balance).signum()>0) " · 计入负债" else if(BigDecimal(a.balance).signum()<0) " · 计入资产" else "") else " · 不计入净资产")
+        if(a.studentId!=null && a.archived) Hint("学生已归档，保留最后余额，不再随学费同步更新。")
         a.cnyRate?.let {Hint("折算依据：1 ${a.currency} = $it CNY")}
         if(a.note.isNotBlank()) Text(a.note)
         Button(onClick=onEdit,modifier=Modifier.fillMaxWidth()) {Text("编辑")}

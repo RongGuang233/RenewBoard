@@ -85,6 +85,39 @@ class TuitionSyncDeviceTest {
         assertEquals(1,read().assets.accounts.size)
     }
 
+    @Test fun archivedStudentsStopUpdatingAndRemainInCollapsedHistory() {
+        app.tuitionConnection.save(connection)
+        val initial=TuitionSnapshot(publishedAt="2026-10-15T08:00:00Z",students=listOf(
+            TuitionStudent("current","在读示例","active",50000,true),
+            TuitionStudent("former","归档示例","active",20000,true)))
+        runBlocking {app.repository.update {Assets.importTuition(it,initial,setOf("current","former"),"2026-10-15T09:00:00Z")}}
+        val old=read().assets.accounts.single {it.studentId=="former"}
+        val calls=AtomicInteger()
+        app.tuitionQuery=TuitionQuery {calls.incrementAndGet(); initial.copy(publishedAt="2026-10-16T08:00:00Z",students=listOf(
+            initial.students.first(),initial.students.last().copy(status="archived",balanceCents=99999),
+            TuitionStudent("not-imported","归档未导入","archived",10000,true)))}
+        open();click("刷新学费余额")
+        waitFor {read().assets.accounts.any {it.studentId=="former" && it.archived}}
+        compose.onNodeWithText("选择要导入的学生").assertDoesNotExist()
+        compose.onNodeWithText("在读示例",substring=false).assertExists()
+        compose.onNodeWithText("归档示例",substring=false).assertDoesNotExist()
+        compose.onNodeWithContentDescription("展开已归档学生").performScrollTo().assertIsDisplayed()
+        screenshot("tuition-archived-collapsed")
+        compose.onNodeWithContentDescription("展开已归档学生").performClick()
+        compose.onNodeWithText("归档示例",substring=false).performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("剩余学费",substring=false).assertExists()
+        screenshot("tuition-archived-expanded")
+        compose.activityRule.scenario.recreate();compose.waitForIdle()
+        compose.onNodeWithText("归档示例",substring=false).assertExists()
+        click("归档示例")
+        compose.onNodeWithText("学生已归档，保留最后余额，不再随学费同步更新。").assertExists()
+        val current=read().assets.accounts.single {it.studentId=="former"}
+        assertEquals(old.balance,current.balance);assertEquals(old.history,current.history)
+        assertEquals(old.included,current.included);assertEquals(3,read().assets.accounts.size)
+        assertEquals(0,Assets.totals(read()).net.compareTo(java.math.BigDecimal("4300")))
+        assertEquals(1,calls.get())
+    }
+
     @Test fun encryptedConnectionIsNotInBusinessBackupAndDisconnectPreservesAccounts() {
         app.tuitionConnection.save(connection)
         assertEquals(connection,app.tuitionConnection.read())

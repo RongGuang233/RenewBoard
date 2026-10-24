@@ -34,7 +34,7 @@ object Assets {
     fun includedInTotals(l:Ledger,a:AssetAccount) = a.included && a.planId==null && (l.assets.showBorrowing || !isBorrowing(a))
     fun accounts(l:Ledger):List<AssetAccount> = l.assets.accounts
         .filter {it.planId==null}
-        .map {if(it.archived) it.copy(archived=false) else it}
+        .map {if(it.archived && it.studentId==null) it.copy(archived=false) else it}
     fun value(l:Ledger,a:AssetAccount):AssetValue {
         val raw=BigDecimal(a.balance)
         val tuition=a.category==AssetCategory.TUITION
@@ -111,7 +111,7 @@ object Assets {
     fun newTuitionStudents(l:Ledger,snapshot:TuitionSnapshot):List<TuitionStudent> {
         validateSnapshot(snapshot)
         val ids=l.assets.accounts.mapNotNull {it.studentId}.toSet()
-        return snapshot.students.filter {it.id !in ids}
+        return snapshot.students.filter {it.id !in ids && it.status!="archived"}
     }
     fun importTuition(l:Ledger,snapshot:TuitionSnapshot,selectedNewStudentIds:Set<String>,fetchedAt:String):Ledger {
         validateSnapshot(snapshot);Instant.parse(fetchedAt)
@@ -120,16 +120,21 @@ object Assets {
         require(previous==null || incoming>=previous) {"这是较早发布的余额，已保留当前数据"}
         val byId=snapshot.students.associateBy {it.id}
         require(selectedNewStudentIds.all {it in byId}) {"所选学生不在本次数据中"}
+        require(selectedNewStudentIds.all {byId.getValue(it).status!="archived"}) {"已归档学生无需导入"}
         val existing=l.assets.accounts.mapNotNull {it.studentId}.toSet()
         val updated=l.assets.accounts.map {a->
-            if(a.studentId==null || previous==incoming) a else {
+            if(a.studentId==null) a else {
                 val s=byId[a.studentId]
-                if(s==null) a.copy(sourceMissing=true)
-                else if(!s.verified && a.verified) a.copy(sourceMissing=false,sourceUnverified=true,sourceName=s.name) // retain last confirmed value
+                // Archive status must also be read from a repeated snapshot after upgrading the app.
+                // Freezing preserves the last balance, its date/history and the user's inclusion setting.
+                if(s==null) if(a.archived || previous==incoming) a else a.copy(sourceMissing=true)
+                else if(s.status=="archived") a.copy(archived=true,sourceMissing=false,sourceUnverified=false,sourceName=s.name)
+                else if(previous==incoming) a.copy(archived=false)
+                else if(!s.verified && a.verified) a.copy(archived=false,sourceMissing=false,sourceUnverified=true,sourceName=s.name) // retain last confirmed value
                 else {
                     val amount=BigDecimal.valueOf(s.balanceCents,2).toPlainString()
                     val history=if(a.balance==amount && a.verified==s.verified) a.history else a.history+AssetBalanceRecord(balance=amount,date=incoming.atZone(java.time.ZoneId.systemDefault()).toLocalDate().toString(),kind="学费同步",currency="CNY")
-                    a.copy(balance=amount,asOf=incoming.atZone(java.time.ZoneId.systemDefault()).toLocalDate().toString(),verified=s.verified,sourceMissing=false,sourceUnverified=false,sourceName=s.name,history=history)
+                    a.copy(archived=false,balance=amount,asOf=incoming.atZone(java.time.ZoneId.systemDefault()).toLocalDate().toString(),verified=s.verified,sourceMissing=false,sourceUnverified=false,sourceName=s.name,history=history)
                 }
             }
         }
