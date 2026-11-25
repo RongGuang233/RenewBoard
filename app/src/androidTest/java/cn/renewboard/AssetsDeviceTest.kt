@@ -14,6 +14,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.math.BigDecimal
+import java.time.LocalDate
 
 @RunWith(AndroidJUnit4::class)
 class AssetsDeviceTest {
@@ -125,6 +126,31 @@ class AssetsDeviceTest {
         compose.onNodeWithText("账户详情",substring=false).assertExists()
         compose.onNodeWithText("保存账户",substring=false).assertDoesNotExist()
         assertEquals(before,runBlocking {app.repository.read()})
+    }
+
+    @Test fun balanceDateDefaultsToTodayAndKeepsManualDates() {
+        val today=LocalDate.now()
+        val originalDate=today.minusDays(3).toString()
+        val yesterday=today.minusDays(1).toString()
+        val initial=AssetBalanceRecord(balance="100",date=originalDate)
+        seed(listOf(AssetAccount(name="现金",category=AssetCategory.CASH,balance="100",asOf=originalDate,history=listOf(initial))))
+
+        click("现金");click("编辑")
+        compose.onNode(hasText("余额日期") and hasSetTextAction()).performScrollTo().performClick().assertTextContains(today.toString())
+        fill("备注","仅更新备注");click("保存账户")
+        val metadata=await {it.assets.accounts.single().note=="仅更新备注"}.assets.accounts.single()
+        assertEquals(originalDate,metadata.asOf)
+        assertEquals(listOf(initial),metadata.history)
+
+        click("编辑");fill("余额日期",yesterday);fill("当前余额","110");click("保存账户")
+        val manual=await {it.assets.accounts.single().balance=="110"}.assets.accounts.single()
+        assertEquals(yesterday,manual.asOf)
+        assertEquals(yesterday,manual.history.last().date)
+
+        click("编辑");fill("当前余额","120");click("保存账户")
+        val updated=await {it.assets.accounts.single().balance=="120"}.assets.accounts.single()
+        assertEquals(today.toString(),updated.asOf)
+        assertEquals(listOf(originalDate,yesterday,today.toString()),updated.history.map {it.date})
     }
 
     @Test fun unifiedEditorChangesNameTypeCurrencyBalanceAndMetadataTogether() {

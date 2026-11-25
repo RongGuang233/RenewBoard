@@ -285,7 +285,8 @@ internal fun assetIcon(category:AssetCategory)=when(category) {
     var subtype by rememberSaveable {mutableStateOf(original?.subtype ?: initialType)}
     var balance by rememberSaveable {mutableStateOf(original?.balance ?: "")}
     var currency by rememberSaveable {mutableStateOf(original?.currency ?: "CNY")}
-    var asOf by rememberSaveable {mutableStateOf(original?.asOf ?: LocalDate.now().toString())}
+    val today=rememberSaveable {LocalDate.now().toString()}
+    var selectedDate by rememberSaveable {mutableStateOf<String?>(null)}
     var included by rememberSaveable {mutableStateOf(original?.included ?: Assets.defaultIncluded(initialCategory,initialType))}
     var rate by rememberSaveable {mutableStateOf(original?.cnyRate.orEmpty())}
     var note by rememberSaveable {mutableStateOf(original?.note.orEmpty())}
@@ -318,7 +319,7 @@ internal fun assetIcon(category:AssetCategory)=when(category) {
                 supportingText=if(synced) "正数为待上课，负数为待收款；新一期同步数据会更新此余额。" else null)
             if(synced) Text("学费 · 人民币 CNY",style=MaterialTheme.typography.bodyMedium,color=MaterialTheme.colorScheme.onSurfaceVariant)
             else CurrencyPicker(currency) {if(currency!=it) rate="";currency=it}
-            Field("余额日期",asOf,{asOf=it},dateField=true)
+            Field("余额日期",selectedDate ?: today,{selectedDate=it},dateField=true)
             if(currency!="CNY") MoneyField("折算汇率（1 $currency = ? CNY）",rate,{rate=it},supportingText="留空保留原币余额，列为待折算账户")
             Row(verticalAlignment=Alignment.CenterVertically,modifier=Modifier.fillMaxWidth()) {Text("计入净资产",modifier=Modifier.weight(1f));Switch(included,{included=it},modifier=Modifier.semantics {contentDescription="计入净资产开关"})}
             Field("备注",note,{note=it})
@@ -331,6 +332,9 @@ internal fun assetIcon(category:AssetCategory)=when(category) {
                 busy=true;error=null
                 scope.launch {
                     try {
+                        // A metadata-only edit keeps the date of the last balance observation.
+                        val asOf=selectedDate ?: if(original!=null && currency==original.currency &&
+                            balance.trim().toBigDecimal().compareTo(original.balance.toBigDecimal())==0) original.asOf else today
                         val draft=(original ?: AssetAccount(name=name,category=cat)).copy(name=name.trim(),category=cat,subtype=subtype,balance=balance.trim(),currency=currency,
                             asOf=asOf,included=included,cnyRate=rate.trim().ifBlank {null},note=note.trim())
                         var savedId=draft.id
