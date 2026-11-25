@@ -30,7 +30,8 @@ import java.time.LocalDate
     val id:String, val prepaid:Boolean, val balance:String, val balanceDate:String, val deductionDay:String,
     val name:String, val amount:String, val currency:String, val cycle:Cycle, val interval:String,
     val auto:Boolean, val anchor:String, val note:String, val paid:Boolean, val cnyAmount:String,
-    val benefits:List<Benefit>, val following:Set<String>, val usage:Boolean=false
+    val benefits:List<Benefit>, val following:Set<String>, val usage:Boolean=false,
+    val installmentPeriods:String?=null, val installmentPaid:String="0"
 ) {
     companion object {
         fun create(l:Ledger,p:Plan?):SubscriptionDraft {
@@ -38,7 +39,8 @@ import java.time.LocalDate
             val benefits=l.benefits.filter {it.planId==id}.ifEmpty {listOf(Benefit(planId=id,name="",anchor=anchor,renewals=1))}
             return SubscriptionDraft(id,p?.balanceAccount!=null,p?.usageBalance?.balance ?: p?.balanceAccount?.let {Prepaid.balance(p,LocalDate.now()).toPlainString()} ?: "",p?.usageBalance?.asOf ?: today,
                 p?.billingAnchor?.let {LocalDate.parse(it).dayOfMonth.toString()} ?: "1",p?.name ?: "",p?.amount ?: "",p?.currency ?: "CNY",p?.cycle ?: Cycle.MONTH,
-                (p?.interval ?: 1).toString(),p?.autoRenew ?: true,anchor,p?.note ?: "",p==null,"",benefits,benefits.filter{it.anchor==anchor && it.renewals>0}.map{it.id}.toSet(),p?.usageBalance!=null)
+                (p?.interval ?: 1).toString(),p?.autoRenew ?: true,anchor,p?.note ?: "",p==null,"",benefits,benefits.filter{it.anchor==anchor && it.renewals>0}.map{it.id}.toSet(),p?.usageBalance!=null,
+                installmentPeriods=p?.installmentPeriods?.toString(),installmentPaid=p?.takeIf {it.installmentPeriods!=null}?.paidCycles?.toString() ?: "0")
         }
     }
 }
@@ -53,6 +55,9 @@ import java.time.LocalDate
     val id=initial.id;val today=LocalDate.now()
     var prepaid by rememberSaveable { mutableStateOf(initial.prepaid) }
     var usage by rememberSaveable {mutableStateOf(initial.usage)}
+    var installmentPeriods by rememberSaveable {mutableStateOf(initial.installmentPeriods)}
+    var installmentPaid by rememberSaveable {mutableStateOf(initial.installmentPaid)}
+    val installment=installmentPeriods!=null
     var balance by rememberSaveable { mutableStateOf(initial.balance) }
     var balanceDate by rememberSaveable { mutableStateOf(initial.balanceDate) }
     var deductionDay by rememberSaveable { mutableStateOf(initial.deductionDay) }
@@ -76,7 +81,7 @@ import java.time.LocalDate
     var restored by rememberSaveable {mutableStateOf(loaded!=null)}
     var error by remember {mutableStateOf("")};var busy by remember {mutableStateOf(false)}
     val scope=rememberCoroutineScope()
-    val draft=SubscriptionDraft(id,prepaid,balance,balanceDate,deductionDay,name,amount,currency,cycle,interval,auto,anchor,note,paid,cnyAmount,benefits,following,usage)
+    val draft=SubscriptionDraft(id,prepaid,balance,balanceDate,deductionDay,name,amount,currency,cycle,interval,auto,anchor,note,paid,cnyAmount,benefits,following,usage,installmentPeriods,installmentPaid)
     val dirty=draft!=baseline
     LaunchedEffect(draft) {if(dirty) store.write(draftKey,Book.json.encodeToString(draft)) else store.remove(draftKey)}
     fun back() {if(busy) return;if(picker && name.isNotBlank()) picker=false else if(dirty) confirmExit=true else close()}
@@ -87,7 +92,27 @@ import java.time.LocalDate
     fun displayedExpiry(b:Benefit):String = runCatching {
         Book.expiry(resolvedBenefit(b),if(b.id in following) previewPlan else existing ?: previewPlan).toString()
     }.getOrDefault(b.anchor)
-    fun submit() {try {
+    fun persist(p:Plan,bs:List<Benefit>,receipt:Payment?) {
+        Book.validate(l.copy(plans=l.plans.filterNot { it.id==id }+p,benefits=l.benefits.filterNot { it.planId==id }+bs,payments=l.payments+listOfNotNull(receipt)))
+        busy=true
+        scope.launch {
+            try {save(p,bs,receipt);store.remove(draftKey);close()}
+            catch(e:Exception) {error=e.message ?: "未能保存，请重试"}
+            finally {busy=false}
+        }
+    }
+    fun submit() {if(busy) return
+    try {
+        if(installment) {
+            val total=requireNotNull(installmentPeriods?.toIntOrNull()?.takeIf {it in 1..10000}) {"总期数请填写 1 至 10000 的整数"}
+            val completed=existing?.paidCycles ?: requireNotNull(installmentPaid.toIntOrNull()) {"请填写整数已还期数"}
+            require(completed in 0..total) {"已还期数应在 0 至总期数之间"}
+            require(name.isNotBlank()) {"请填写分期名称"}
+            val plan=Plan(id=id,name=name.trim(),amount=amount.trim(),autoRenew=true,billingAnchor=anchor,
+                paidCycles=completed,archived=existing?.archived ?: false,note=note,installmentPeriods=total)
+            persist(plan,emptyList(),null)
+            return
+        }
         if(prepaid || usage) {
             require(LocalDate.parse(balanceDate)<=today) { "余额查询日期不能晚于今天" }
             existing?.usageBalance?.let {require(LocalDate.parse(balanceDate)>=LocalDate.parse(it.asOf)) {"余额查询日期不能早于最近余额记录 ${it.asOf}"}}
@@ -95,7 +120,7 @@ import java.time.LocalDate
         }
         val billingAnchor=if(prepaid) {
             val day=deductionDay.toIntOrNull()
-            require(day!=null && day in 1..31) { "每月扣费日请填写 1–31" }
+            require(day!=null && day in 1..31) { "每月扣费日请填写 1-31" }
             if(existing?.balanceAccount!=null && LocalDate.parse(existing.billingAnchor).dayOfMonth==day) existing.billingAnchor
             else LocalDate.of(LocalDate.parse(balanceDate).year,1,day).toString()
         } else if(usage) balanceDate else anchor
@@ -121,21 +146,25 @@ import java.time.LocalDate
         if(prepaid && existing?.balanceAccount!=null && amount.toBigDecimal().compareTo(existing.amount.toBigDecimal())!=0) {
             p=p.copy(balanceAccount=p.balanceAccount?.copy(pendingFee=null))
         }
-        Book.validate(l.copy(plans=l.plans.filterNot { it.id==id }+p,benefits=l.benefits.filterNot { it.planId==id }+bs,payments=l.payments+listOfNotNull(receipt)))
-        busy=true
-        scope.launch {
-            try {save(p,bs,receipt);store.remove(draftKey);close()}
-            catch(e:Exception) {error=e.message ?: "未能保存，请重试"}
-            finally {busy=false}
-        }
+        persist(p,bs,receipt)
     } catch(e:Exception) {error=when(e) {
         is NumberFormatException -> "金额和周期请填写数字"
         is java.time.format.DateTimeParseException -> "请检查日期，使用 YYYY-MM-DD 格式"
         else -> e.message ?: "请检查输入"
     }} }
-    Scaffold(modifier=Modifier.imePadding(),contentWindowInsets=WindowInsets(0,0,0,0),topBar={TopAppBar(title={Text(if(picker) "选择会员" else if(existing==null) "记一笔订阅" else "编辑订阅",fontSize=21.sp)},navigationIcon={PageBack(back=::back)},windowInsets=WindowInsets(0,0,0,0))},
-        bottomBar={if(!picker) Surface {Button(onClick=::submit,enabled=!busy,modifier=Modifier.fillMaxWidth().padding(horizontal=20.dp,vertical=10.dp).heightIn(min=48.dp)) {Text(if(busy) "保存中…" else "保存订阅")}}}) {padding ->
-        if(picker) ServiceSelection(l,Modifier.padding(padding),custom={picker=false}) {preset ->
+    val title=when {
+        picker -> "选择会员"
+        installment -> if(existing==null) "新增分期" else "编辑分期"
+        existing==null -> "记一笔订阅"
+        else -> "编辑订阅"
+    }
+    Scaffold(modifier=Modifier.imePadding(),contentWindowInsets=WindowInsets(0,0,0,0),topBar={TopAppBar(title={Text(title,fontSize=21.sp)},navigationIcon={PageBack(back=::back)},windowInsets=WindowInsets(0,0,0,0))},
+        bottomBar={if(!picker) Surface {Button(onClick=::submit,enabled=!busy,modifier=Modifier.fillMaxWidth().padding(horizontal=20.dp,vertical=10.dp).heightIn(min=48.dp)) {Text(if(busy) "保存中…" else if(installment) "保存分期" else "保存订阅")}}}) {padding ->
+        if(picker) ServiceSelection(l,Modifier.padding(padding),custom={installmentPeriods=null;picker=false},installment={
+            if(!installment) installmentPeriods=""
+            prepaid=false;usage=false;picker=false
+        }) {preset ->
+            installmentPeriods=null
             name=preset.name;currency=preset.currency;usage=preset.usageBalance;cycle=preset.defaultCycle;prepaid=preset.name in listOf("中国电信","中国移动","中国联通")
             if(prepaid) anchor=today.withDayOfMonth(1).plusMonths(1).toString()
             benefits=benefits.mapIndexed {i,b->if(i==0) b.copy(name=preset.name) else b};picker=false
@@ -144,11 +173,19 @@ import java.time.LocalDate
         Text("已恢复草稿",style=MaterialTheme.typography.bodySmall,modifier=Modifier.weight(1f))
         TextButton(onClick={confirmExit=true}) {Text("放弃修改")}
     }
-    if(existing==null) TextButton(onClick={picker=true}) {Text("更换会员")}
+    if(existing==null) TextButton(onClick={picker=true}) {Text(if(installment) "更换类型" else "更换会员")}
     Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(10.dp)) {
-        if(name.isNotBlank()) ServiceIcon(name,size=36.dp)
-        Field("订阅 / 套餐名称",name,{name=it},Modifier.weight(1f))
+        if(installment || name.isNotBlank()) ServiceIcon(if(installment) "分期付款" else name,size=36.dp)
+        Field(if(installment) "分期名称" else "订阅 / 套餐名称",name,{name=it},Modifier.weight(1f))
     }
+    if(installment) {
+        MoneyField("每期还款金额（元）",amount,{amount=it})
+        Field("总期数",installmentPeriods.orEmpty(),{installmentPeriods=it},keyboardType=KeyboardType.Number)
+        if(existing==null) Field("已还期数",installmentPaid,{installmentPaid=it},keyboardType=KeyboardType.Number,
+            supportingText="中途开始记录时，填入此前已还期数。历史还款仅计入进度。")
+        else Text("已还 ${existing.paidCycles} 期",style=MaterialTheme.typography.bodyMedium)
+        Field("首期还款日",anchor,{anchor=it},dateField=true,supportingText="此后按月还款，遇短月取该月最后一天。")
+    } else {
     Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
         FilterChip(!prepaid && !usage,{prepaid=false;usage=false},label={Text("周期订阅")},enabled=existing?.usageBalance==null)
         FilterChip(prepaid,{
@@ -219,6 +256,7 @@ import java.time.LocalDate
     if(existing==null) Row(verticalAlignment=Alignment.CenterVertically) { Checkbox(paid,{paid=it}); Text("同时记录首次付款") }
     if(existing==null && paid && currency!="CNY") { MoneyField("人民币实付金额",cnyAmount,{cnyAmount=it}); Hint("填写付款当天的人民币金额，保存后固定。") }
     }
+    }
     TextButton(onClick={moreExpanded=!moreExpanded}) {Text("更多选项"); Icon(if(moreExpanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore,null)}
     if(moreExpanded) Field("备注",note,{note=it})
     if(error.isNotBlank()) Text(error,color=MaterialTheme.colorScheme.error)
@@ -230,13 +268,14 @@ import java.time.LocalDate
 }
 
 @OptIn(ExperimentalLayoutApi::class)
-@Composable private fun ServiceSelection(l:Ledger,modifier:Modifier=Modifier,custom:()->Unit,select:(ServicePreset)->Unit) {
+@Composable private fun ServiceSelection(l:Ledger,modifier:Modifier=Modifier,custom:()->Unit,installment:()->Unit,select:(ServicePreset)->Unit) {
     var query by rememberSaveable {mutableStateOf("")};var category by rememberSaveable {mutableStateOf("全部")}
     Column(modifier.fillMaxSize().padding(horizontal=20.dp,vertical=8.dp)) {
         Field("搜索会员",query,{query=it})
         Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically) {
             Text("选择常见会员",fontWeight=FontWeight.SemiBold,modifier=Modifier.weight(1f))
             TextButton(onClick=custom) {Text("自定义订阅")}
+            TextButton(onClick=installment) {Text("分期付款")}
         }
         FlowRow(horizontalArrangement=Arrangement.spacedBy(6.dp)) {
             (listOf("全部")+servicePresets.map{it.category}.distinct()).forEach {item->FilterChip(category==item,{category=item},label={Text(item,fontSize=12.sp)})}

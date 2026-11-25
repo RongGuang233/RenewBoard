@@ -10,6 +10,7 @@ import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -21,6 +22,7 @@ import androidx.compose.ui.unit.sp
 import java.time.LocalDate
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
+import kotlinx.serialization.encodeToString
 
 /** The parent supplies navigation; payment stays reachable while reading long bundles. */
 @Composable internal fun SubscriptionDetailScreen(
@@ -32,45 +34,61 @@ import kotlinx.coroutines.launch
     var more by remember(p.id) { mutableStateOf(false) }
     var benefitMenu by remember(p.id) { mutableStateOf<String?>(null) }
     var giftId by remember(p.id) { mutableStateOf<String?>(null) }
-    var snoozed by remember(p.id) { mutableStateOf(false) }
+    var snoozed by remember(p.id,p.paidCycles) { mutableStateOf(false) }
+    val total=p.installmentPeriods
+    val nextRepayment=if(total!=null) Book.installmentDue(p) else null
+    var confirmingPlan by rememberSaveable(p.id,stateSaver=Saver<Plan?,String>(
+        save={selected->selected?.let {Book.json.encodeToString(it)}},restore={Book.json.decodeFromString<Plan>(it)}
+    )) {mutableStateOf<Plan?>(null)}
     val context=LocalContext.current
     val benefits=l.benefits.filter {it.planId==p.id}
     val history=l.payments.filter {it.planId==p.id}.sortedByDescending {it.date}
     Scaffold(containerColor=MaterialTheme.colorScheme.background,contentWindowInsets=WindowInsets(0,0,0,0),bottomBar={
-        Surface(color=MaterialTheme.colorScheme.background) {
+        if(p.archived || total==null || nextRepayment!=null) Surface(color=MaterialTheme.colorScheme.background) {
             Button(onClick={
                 if(p.archived) change {ledger->ledger.copy(plans=ledger.plans.map {if(it.id==p.id) it.copy(archived=false) else it})}
+                else if(total!=null) confirmingPlan=p
                 else recordPayment(false)
             },modifier=Modifier.fillMaxWidth().padding(horizontal=20.dp,vertical=12.dp).heightIn(min=48.dp)) {
-                Text(if(p.archived) "恢复使用" else "记录付款 / 提前续费")
+                Text(if(p.archived) "恢复使用" else if(total!=null) "确认还一期" else "记录付款 / 提前续费")
             }
         }
     }) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(horizontal=20.dp)) {
             Row(Modifier.padding(top=8.dp,bottom=4.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(12.dp)) {
-                ServiceIcon(p.name,size=40.dp)
+                ServiceIcon(if(total!=null) "分期付款" else p.name,size=40.dp)
                 Column(Modifier.weight(1f)) {
                     Text(p.name,fontSize=24.sp,fontWeight=FontWeight.Bold)
-                    Text("${displayMoney(p.currency,p.amount)} / ${p.interval} ${p.cycle.label}",color=MaterialTheme.colorScheme.onSurfaceVariant)
+                    val price=displayMoney(p.currency,p.amount)
+                    Text(if(total!=null) "每月还款 $price" else "$price / ${p.interval} ${p.cycle.label}",color=MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 Box {
-                    IconButton(onClick={more=true}) {Icon(Icons.Outlined.MoreVert,"订阅更多操作")}
+                    IconButton(onClick={more=true}) {Icon(Icons.Outlined.MoreVert,if(total!=null) "分期更多操作" else "订阅更多操作")}
                     DropdownMenu(more,{more=false}) {
-                        DropdownMenuItem(text={Text("编辑订阅与到期日")},onClick={more=false;onEdit()})
-                        DropdownMenuItem(text={Text("仅补记付款")},onClick={more=false;recordPayment(true)})
+                        DropdownMenuItem(text={Text(if(total!=null) "编辑分期" else "编辑订阅与到期日")},onClick={more=false;onEdit()})
+                        if(total==null) DropdownMenuItem(text={Text("仅补记付款")},onClick={more=false;recordPayment(true)})
                         if(!p.archived) {
-                            DropdownMenuItem(text={Text("明天提醒")},onClick={more=false;Jobs.snooze(context,p.id,l);snoozed=true})
-                            DropdownMenuItem(text={Text("归档订阅")},onClick={more=false;change {ledger->ledger.copy(plans=ledger.plans.map {if(it.id==p.id) it.copy(archived=true) else it})}})
+                            if(total==null || nextRepayment!=null) DropdownMenuItem(text={Text("明天提醒")},onClick={more=false;Jobs.snooze(context,p.id,l);snoozed=true})
+                            DropdownMenuItem(text={Text(if(total!=null) "归档分期" else "归档订阅")},onClick={more=false;change {ledger->ledger.copy(plans=ledger.plans.map {if(it.id==p.id) it.copy(archived=true) else it})}})
                         }
-                        DropdownMenuItem(text={Text("删除订阅",color=MaterialTheme.colorScheme.error)},onClick={more=false;deleting=true})
+                        DropdownMenuItem(text={Text(if(total!=null) "删除分期" else "删除订阅",color=MaterialTheme.colorScheme.error)},onClick={more=false;deleting=true})
                     }
                 }
             }
             if(p.archived) Text("已归档",color=MaterialTheme.colorScheme.primary,fontWeight=FontWeight.SemiBold,modifier=Modifier.padding(vertical=12.dp))
-            else {
-                Hint(if(p.autoRenew) "下次预计扣款 ${Book.nextCharge(p,LocalDate.now())}" else "已标记关闭自动续费 · 有效期提醒仍保留")
-                if(snoozed) Hint("已安排明天提醒")
-            }
+            if(total!=null) Card(Modifier.fillMaxWidth().padding(vertical=8.dp)) {
+                Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(6.dp)) {
+                    Text("已还 ${p.paidCycles} / $total 期",fontWeight=FontWeight.SemiBold)
+                    val remaining=total-p.paidCycles
+                    if(remaining==0) Text("已结清",color=MaterialTheme.colorScheme.primary)
+                    else {
+                        val balance=p.amount.toBigDecimal()*remaining.toBigDecimal()
+                        Text("剩余 $remaining 期 · 待还 ${displayMoney(p.currency,balance.toPlainString())}")
+                        if(nextRepayment!=null) Text("第 ${p.paidCycles+1} 期还款日 $nextRepayment")
+                    }
+                }
+            } else if(!p.archived) Hint(if(p.autoRenew) "下次预计扣款 ${Book.nextCharge(p,LocalDate.now())}" else "已标记关闭自动续费 · 有效期提醒仍保留")
+            if(snoozed && !p.archived) Hint("已安排明天提醒")
             if(benefits.isNotEmpty()) Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(horizontal=16.dp)) {
                     benefits.forEachIndexed {index,b->
@@ -93,7 +111,7 @@ import kotlinx.coroutines.launch
             val missing=history.filter {it.currency!="CNY" && it.cnyAmount==null}
             if(missing.isNotEmpty()) OutlinedButton(onClick={openPayment(missing.first().id)},modifier=Modifier.fillMaxWidth().padding(top=8.dp)) {Text("补录人民币（${missing.size} 笔）")}
             else if(p.currency!="CNY" && history.none {it.cnyAmount!=null}) OutlinedButton(onClick={recordPayment(true)},modifier=Modifier.fillMaxWidth().padding(top=8.dp)) {Text("补记付款与人民币金额")}
-            if(!p.archived) TextButton(onClick={change {ledger->ledger.copy(plans=ledger.plans.map {if(it.id==p.id) it.copy(autoRenew=!it.autoRenew) else it})}},modifier=Modifier.fillMaxWidth()) {Text(if(p.autoRenew) "标记已关闭自动续费" else "标记已开启自动续费")}
+            if(!p.archived && total==null) TextButton(onClick={change {ledger->ledger.copy(plans=ledger.plans.map {if(it.id==p.id) it.copy(autoRenew=!it.autoRenew) else it})}},modifier=Modifier.fillMaxWidth()) {Text(if(p.autoRenew) "标记已关闭自动续费" else "标记已开启自动续费")}
             if(p.note.isNotBlank()) Hint(p.note)
             Row(Modifier.fillMaxWidth().padding(top=12.dp),verticalAlignment=Alignment.CenterVertically) {
                 Text("最近付款",fontSize=19.sp,fontWeight=FontWeight.SemiBold,modifier=Modifier.weight(1f))
@@ -116,9 +134,55 @@ import kotlinx.coroutines.launch
         }
     }
     if(deleting) DeletePlanDialog(l,p,{deleting=false}) {include->change {Book.delete(it,p.id,include)};deleting=false;onDeleted()}
+    confirmingPlan?.let {selected->
+        InstallmentRepaymentDialog(selected,selected.paidCycles+1,requireNotNull(Book.installmentDue(selected)),
+            close={confirmingPlan=null},save=save)
+    }
     benefits.find {it.id==giftId}?.let {benefit->
         GiftDurationDialog(p,benefit,close={giftId=null},save=save)
     }
+}
+
+@Composable private fun InstallmentRepaymentDialog(
+    plan:Plan,period:Int,due:LocalDate,close:()->Unit,save:suspend ((Ledger)->Ledger)->Unit
+) {
+    var date by rememberSaveable {mutableStateOf(LocalDate.now().toString())}
+    var saving by remember {mutableStateOf(false)}
+    var error by remember {mutableStateOf<String?>(null)}
+    val scope=rememberCoroutineScope()
+
+    fun confirm() {
+        if(saving) return
+        val paidOn=runCatching {LocalDate.parse(date)}.getOrNull()
+        if(paidOn==null || paidOn>LocalDate.now()) {
+            error="请填写今天或更早的实际还款日期"
+            return
+        }
+        saving=true
+        scope.launch {
+            try {
+                save {ledger->
+                    val current=ledger.plans.find {it.id==plan.id}
+                    require(current!=null && !current.archived && current.installmentPeriods==plan.installmentPeriods &&
+                        current.paidCycles+1==period && current.amount==plan.amount && Book.installmentDue(current)==due) {
+                        "分期已更新，请返回查看最新还款进度"
+                    }
+                    Book.payInstallment(ledger,plan.id,paidOn)
+                }
+                close()
+            } catch(e:CancellationException) {throw e}
+            catch(e:Exception) {error=e.message ?: "保存失败，请重试";saving=false}
+        }
+    }
+    AlertDialog(onDismissRequest={if(!saving) close()},title={Text("确认还款")},text={
+        Column(verticalArrangement=Arrangement.spacedBy(8.dp)) {
+            Text("${plan.name} · 第 $period 期",fontWeight=FontWeight.SemiBold)
+            Text("应还日 $due · 本次记账 ${displayMoney(plan.currency,plan.amount)}")
+            Field("实际还款日",date,{date=it;error=null},dateField=true)
+            error?.let {Text(it,color=MaterialTheme.colorScheme.error)}
+        }
+    },confirmButton={TextButton(::confirm,enabled=!saving) {Text(if(saving) "保存中…" else "确认记账")}},
+        dismissButton={TextButton(close,enabled=!saving) {Text("取消")}})
 }
 
 @Composable internal fun GiftDurationDialog(

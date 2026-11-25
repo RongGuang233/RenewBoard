@@ -186,11 +186,19 @@ class ReminderWorker(c: Context, p: WorkerParameters): CoroutineWorker(c,p) {
             if (dao.claim(ReminderRow(key, today.toString())) != -1L) {
                 try {
                     val builder = NotificationCompat.Builder(c, EXPIRY_CHANNEL_ID).setSmallIcon(R.drawable.ic_launcher)
-                        .setContentTitle(if (event.balance) "${event.name} 余额提醒" else "${event.name} 即将到期")
-                        .setContentText(if (event.balance) "预计 ${event.date} 余额不足，请及时充值" else "${event.date} · ${event.planName}")
+                        .setContentTitle(when {
+                            event.balance -> "${event.name} 余额提醒"
+                            event.installmentNumber != null -> "${event.name} 分期还款提醒"
+                            else -> "${event.name} 即将到期"
+                        })
+                        .setContentText(when {
+                            event.balance -> "预计 ${event.date} 余额不足，请及时充值"
+                            event.installmentNumber != null -> "${event.date} 应还第 ${event.installmentNumber} 期"
+                            else -> "${event.date} · ${event.planName}"
+                        })
                         .setContentIntent(Jobs.detailIntent(c, event.planId)).setExtras(eventExtras(listOf(event)))
                         .setAutoCancel(true)
-                    if (!event.balance) builder.addAction(0, "确认已扣款", Jobs.detailIntent(c, event.planId, "pay"))
+                    if (!event.balance && event.installmentNumber == null) builder.addAction(0, "确认已扣款", Jobs.detailIntent(c, event.planId, "pay"))
                     builder.addAction(0, "明天提醒", Jobs.detailIntent(c, event.planId, "snooze"))
                     nm.notify(key, 0, builder.build())
                 } catch (_: SecurityException) { dao.release(key) }

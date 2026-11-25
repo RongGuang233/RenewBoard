@@ -67,6 +67,29 @@ class SubscriptionDraftDeviceTest {
         assertTrue(l.plans.isEmpty());assertTrue(l.benefits.isEmpty());assertTrue(l.payments.isEmpty())
     }
 
+    @Test fun installmentCreatedMidwayCanBePaidOffFromHome() {
+        add()
+        compose.onNodeWithText("分期付款",substring=false).performClick()
+        fill("分期名称","相机分期示例")
+        fill("每期还款金额（元）","210")
+        fill("总期数","3")
+        fill("已还期数","2")
+        fill("首期还款日",LocalDate.now().minusMonths(3).toString())
+        compose.onNodeWithText("保存分期",substring=false).performClick()
+        awaitNode(hasText("相机分期示例"))
+        assertTrue(runBlocking {app.repository.read().payments.isEmpty()})
+        compose.onNodeWithText("待还款",substring=false).assertExists()
+        clickForm("相机分期示例")
+        compose.onNodeWithText("确认还一期",substring=false).performClick()
+        compose.onNodeWithText("确认记账",substring=false).performClick()
+        awaitNode(hasText("已结清",substring=true))
+        compose.onNodeWithText("确认还一期",substring=false).assertDoesNotExist()
+        assertEquals("210",runBlocking {app.repository.read().payments.single().amount})
+        back()
+        awaitNode(hasText("最近到期"))
+        compose.onNodeWithText("相机分期示例",substring=false).assertDoesNotExist()
+    }
+
     @Test fun completeJointSubscriptionDraftSurvivesExitAndRecreateThenSavesAccurately() {
         custom()
         val anchor=LocalDate.now().minusDays(21)

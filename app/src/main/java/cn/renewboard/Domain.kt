@@ -23,7 +23,8 @@ fun newId() = UUID.randomUUID().toString()
     val cycle: Cycle = Cycle.MONTH, val interval: Int = 1, val autoRenew: Boolean = true,
     val billingAnchor: String, val paidCycles: Int = 1, val archived: Boolean = false, val note: String = "",
     val balanceAccount: BalanceAccount? = null,
-    @EncodeDefault(EncodeDefault.Mode.NEVER) val usageBalance: UsageBalance? = null
+    @EncodeDefault(EncodeDefault.Mode.NEVER) val usageBalance: UsageBalance? = null,
+    @EncodeDefault(EncodeDefault.Mode.NEVER) val installmentPeriods: Int? = null
 )
 @Serializable data class Benefit(
     val id: String = newId(), val planId: String, val name: String,
@@ -60,13 +61,30 @@ object Book {
         Cycle.YEAR -> anchor.plusYears(n)
     }
     fun expiry(b: Benefit, p: Plan): LocalDate = advance(LocalDate.parse(b.anchor), p.cycle, b.renewals.toLong() * p.interval).plusDays(b.giftDays.toLong())
-    fun nextCharge(p: Plan, today: LocalDate): LocalDate {
-        val anchor = LocalDate.parse(p.billingAnchor)
-        var i = p.paidCycles.toLong()
-        var date = advance(anchor, p.cycle, i * p.interval)
-        while (date < today) { i++; date = advance(anchor, p.cycle, i * p.interval) }
-        return date
+    fun installmentDue(p: Plan): LocalDate? {
+        val total = p.installmentPeriods ?: return null
+        if (p.paidCycles >= total) return null
+        return LocalDate.parse(p.billingAnchor).plusMonths(p.paidCycles.toLong())
     }
+
+    fun payInstallment(l: Ledger, planId: String, date: LocalDate): Ledger {
+        val plan = l.plans.single { it.id == planId }
+        require(!plan.archived && installmentDue(plan) != null) { "当前没有待还分期" }
+        val number = plan.paidCycles + 1
+        val payment = receipt(plan, plan.amount, date, "分期还款 第${number}期", null)
+        return l.copy(
+            plans = l.plans.map { if (it.id == planId) it.copy(paidCycles = number) else it },
+            payments = l.payments + payment
+        ).also(::validate)
+    }
+    private fun chargeDates(p: Plan): Sequence<LocalDate> {
+        val anchor = LocalDate.parse(p.billingAnchor)
+        val end = p.installmentPeriods?.toLong() ?: Long.MAX_VALUE
+        return (p.paidCycles.toLong() until end).asSequence().map { index ->
+            advance(anchor, p.cycle, index * p.interval)
+        }
+    }
+    fun nextCharge(p: Plan, today: LocalDate): LocalDate? = chargeDates(p).firstOrNull { it >= today }
     // All forecast views share these events and the latest recorded settlement ratio.
     fun forecastCharges(l: Ledger, from: LocalDate, until: LocalDate): List<ForecastCharge> {
         if(until<=from) return emptyList()
@@ -97,13 +115,10 @@ object Book {
                     date=Prepaid.nextDeduction(plan,date)
                 }
             } else {
-                val anchor=LocalDate.parse(plan.billingAnchor)
-                var index=plan.paidCycles.toLong()
-                var date=advance(anchor,plan.cycle,index*plan.interval)
-                while(date<from) { index++;date=advance(anchor,plan.cycle,index*plan.interval) }
-                while(date<until) {
-                    add(date,BigDecimal(plan.amount))
-                    index++;date=advance(anchor,plan.cycle,index*plan.interval)
+                val amount = BigDecimal(plan.amount)
+                for (date in chargeDates(plan)) {
+                    if (date >= until) break
+                    if (date >= from) add(date, amount)
                 }
             }
         }
@@ -230,7 +245,13 @@ object Book {
         l.benefits.forEach { b -> require(b.name.isNotBlank() && b.name.length <= 100 && l.plans.any { it.id == b.planId }); date(b.anchor); require(b.renewals in 0..10000 && b.giftDays in 0..36500); require(expiry(b, l.plans.single { it.id == b.planId }).year <= 2200) }
         l.plans.forEach { p ->
             require(p.balanceAccount==null || p.usageBalance==null) { "话费账户和平台余额不能同时启用" }
-            if(p.usageBalance!=null) {
+            if (p.installmentPeriods != null) {
+                require(p.balanceAccount == null && p.usageBalance == null && l.benefits.none { it.planId == p.id }) { "分期付款不能包含余额账户或订阅权益" }
+                require(p.cycle == Cycle.MONTH && p.interval == 1 && p.currency == "CNY" && p.autoRenew) { "分期按月以人民币还款" }
+                require(BigDecimal(p.amount).signum() > 0) { "每期金额须大于 0" }
+                require(p.installmentPeriods in 1..10000 && p.paidCycles in 0..p.installmentPeriods) { "已还期数不能超过总期数" }
+                require(LocalDate.parse(p.billingAnchor).plusMonths(p.installmentPeriods - 1L).year <= 2200) { "末期日期不能晚于 2200 年" }
+            } else if(p.usageBalance!=null) {
                 val account=p.usageBalance
                 require(BigDecimal(p.amount).signum()==0 && !p.autoRenew) { "平台余额不设置周期扣款或自动续费" }
                 require(l.benefits.none { it.planId==p.id }) { "平台余额不设置到期权益" }
@@ -271,7 +292,16 @@ object Book {
         require(l.settings.reminderDays.distinct().size == l.settings.reminderDays.size && l.settings.reminderDays.all { it in 0..365 }) { "提醒天数应为0至365且不能重复" }
         l.settings.rates.forEach { (c, r) -> currency(c); money(r); require(BigDecimal(r) > BigDecimal.ZERO) }
     }
-    fun encode(l: Ledger): String { validate(l); return json.encodeToString(Backup(version=if(l.assets!=AssetBook()) 3 else if(l.plans.any {it.usageBalance!=null}) 2 else 1,data = l)) }
+    fun encode(l: Ledger): String {
+        validate(l)
+        val version = when {
+            l.plans.any { it.installmentPeriods != null } -> 4
+            l.assets != AssetBook() -> 3
+            l.plans.any { it.usageBalance != null } -> 2
+            else -> 1
+        }
+        return json.encodeToString(Backup(version = version, data = l))
+    }
     fun decode(s: String): Backup {
         require(s.toByteArray().size <= 16 * 1024 * 1024) { "备份超过16MB" }
         val root = json.parseToJsonElement(s).jsonObject
@@ -284,10 +314,11 @@ object Book {
         data.getValue("benefits").jsonArray.forEach { fields(it.jsonObject,"id,planId,name,anchor,renewals,giftDays") }
         data.getValue("payments").jsonArray.forEach { fields(it.jsonObject,"id,planId,planName,amount,currency,date,note,benefitIds") }
         return json.decodeFromString<Backup>(s).also {
-            require(it.version in 1..3) { "不支持的备份版本" }
+            require(it.version in 1..4) { "不支持的备份版本" }
+            require(it.version >= 4 || it.data.plans.none { p -> p.installmentPeriods != null }) { "分期付款需使用新版备份格式" }
             require(it.version!=1 || it.data.plans.none {p -> p.usageBalance!=null}) { "平台余额需使用新版备份格式" }
             require(it.version>=3 || "assets" !in data) { "资产需使用新版备份格式" }
-            if(it.version==3) {
+            if(it.version==3 || "assets" in data) {
                 fields(data,"assets")
                 val assets=data.getValue("assets").jsonObject
                 fields(assets,"accounts,history")

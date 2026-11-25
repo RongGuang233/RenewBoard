@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.AccountBalanceWallet
+import androidx.compose.material.icons.rounded.CreditCard
 import androidx.compose.material.icons.rounded.SportsEsports
 import androidx.compose.material.icons.rounded.Subscriptions
 import androidx.compose.material3.Icon
@@ -126,7 +127,8 @@ fun servicePresetFor(name: String): ServicePreset? {
 fun ServiceIcon(name: String, modifier: Modifier = Modifier, size: Dp = 48.dp) {
     val preset = servicePresetFor(name)
     val iconRes = preset?.iconRes
-    val generic = when (preset?.name) {
+    val generic = when (preset?.name ?: name) {
+        "分期付款" -> Icons.Rounded.CreditCard
         "游戏加速器（自定义）" -> Icons.Rounded.SportsEsports
         else -> if (preset?.usageBalance == true) Icons.Rounded.AccountBalanceWallet else Icons.Rounded.Subscriptions
     }

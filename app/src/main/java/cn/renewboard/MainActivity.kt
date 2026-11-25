@@ -175,7 +175,8 @@ private fun money(totals: Map<String,BigDecimal>) = if(totals.isEmpty()) "暂无
             if(ledger.plans.any {it.id==id}) {
                 creating=false;editId=null;receiptId=null;forecastOpen=false;accountHistoryId=null;servicesOpen=false;detailId=id;tab=0
                 paymentOnlyRecord=false;balanceAction=null;usageAction=null;platformConnectionOpen=false
-                paymentPlanId=if(intent.getStringExtra("subscriptionAction")=="pay" && ledger.plans.single{it.id==id}.balanceAccount==null) id else null
+                val target = ledger.plans.single { it.id == id }
+                paymentPlanId=if(intent.getStringExtra("subscriptionAction")=="pay" && target.balanceAccount==null && target.installmentPeriods==null) id else null
                 when(intent.getStringExtra("subscriptionAction")) {
                     "snooze" -> {Jobs.snooze(c,id,ledger);message("已安排明天提醒")}
                 }
@@ -227,7 +228,13 @@ private fun money(totals: Map<String,BigDecimal>) = if(totals.isEmpty()) "暂无
         } else if(creating || editId!=null) {
             Box(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding).systemBarsPadding()) {
                 key(editId ?: "new") {SubscriptionEditor(ledger,ledger.plans.find{it.id==editId},close={creating=false;editId=null}) {p,bs,initial ->
-                    repo.update {old->old.copy(plans=old.plans.filterNot{it.id==p.id}+p,benefits=old.benefits.filterNot{it.planId==p.id}+bs,payments=old.payments+listOfNotNull(initial))}
+                    repo.update {old->
+                        val plan = if (editId != null && p.installmentPeriods != null) {
+                            val current = old.plans.single { it.id == p.id }
+                            p.copy(paidCycles = current.paidCycles)
+                        } else p
+                        old.copy(plans=old.plans.filterNot{it.id==plan.id}+plan,benefits=old.benefits.filterNot{it.planId==plan.id}+bs,payments=old.payments+listOfNotNull(initial))
+                    }
                     detailId=null;message("已保存")
                 }}
             }
@@ -312,10 +319,10 @@ private fun money(totals: Map<String,BigDecimal>) = if(totals.isEmpty()) "暂无
 
 @Composable private fun Overview(l: Ledger, onAdd:()->Unit, openForecast:()->Unit, open: (String)->Unit, refreshingBalances:Boolean, refreshBalances:()->Unit) {
     val today=LocalDate.now()
-    val upcoming=l.benefits.filter { b->l.plans.any { it.id==b.planId && !it.archived && it.balanceAccount==null && it.usageBalance==null } }.sortedBy { Book.expiry(it,l.plans.single { p->p.id==it.planId }) }
+    val upcoming = ReminderPolicy.dueItems(l).sortedBy { it.date }
     var showExpired by rememberSaveable { mutableStateOf(false) }
     val forecast=Book.forecastSummary(l,today,today.plusDays(30))
-    val soon=upcoming.count { ChronoUnit.DAYS.between(today,Book.expiry(it,l.plans.single { p->p.id==it.planId })) in 0..7 }
+    val soon = upcoming.count { ChronoUnit.DAYS.between(today, it.date) in 0..7 }
     Row(Modifier.fillMaxWidth().padding(vertical=10.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(12.dp)) {
         Text("订阅簿",fontSize=28.sp,fontWeight=FontWeight.Bold,modifier=Modifier.weight(1f))
         Text("${today.monthValue} 月 ${today.dayOfMonth} 日",fontSize=14.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
@@ -348,19 +355,31 @@ private fun money(totals: Map<String,BigDecimal>) = if(totals.isEmpty()) "暂无
     }
     if(upcoming.isEmpty()) { Text("还没有需要记挂的到期日",fontWeight=FontWeight.SemiBold); Hint("添加订阅，开始记录。") }
     }
-    val expired=upcoming.filter { Book.expiry(it,l.plans.single {p->p.id==it.planId})<today }
+    val expired = upcoming.filter { it.date < today && it.installmentNumber == null }
     if(expired.isNotEmpty()) TextButton(onClick={showExpired=!showExpired}) {Text("已过期 ${expired.size} 项");Icon(if(showExpired) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore,null)}
-    upcoming.filter {showExpired || it !in expired}.forEach { benefit ->
-        val plan=l.plans.single { it.id==benefit.planId }; val date=Book.expiry(benefit,plan); val days=ChronoUnit.DAYS.between(today,date)
-        Card(onClick={open(plan.id)},colors=CardDefaults.cardColors(containerColor=Color.White),shape=RoundedCornerShape(20.dp),modifier=Modifier.fillMaxWidth().padding(bottom=10.dp)) {
+    upcoming.filter {showExpired || it !in expired}.forEach { event ->
+        val date = event.date
+        val days = ChronoUnit.DAYS.between(today,date)
+        Card(onClick={open(event.planId)},colors=CardDefaults.cardColors(containerColor=Color.White),shape=RoundedCornerShape(20.dp),modifier=Modifier.fillMaxWidth().padding(bottom=10.dp)) {
             Row(Modifier.padding(12.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(12.dp)) {
-                ServiceIcon(benefit.name,size=36.dp)
+                ServiceIcon(if (event.installmentNumber != null) "分期付款" else event.name,size=36.dp)
                 Column(Modifier.weight(1f)) {
-                    Text(benefit.name,fontSize=17.sp,fontWeight=FontWeight.SemiBold)
-                    Text("${date.monthValue} 月 ${date.dayOfMonth} 日" + if(benefit.name!=plan.name) " · ${plan.name}" else "",fontSize=14.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.padding(top=4.dp))
+                    Text(event.name,fontSize=17.sp,fontWeight=FontWeight.SemiBold)
+                    val suffix = when {
+                        event.installmentNumber != null -> " · 第 ${event.installmentNumber} 期还款"
+                        event.name != event.planName -> " · ${event.planName}"
+                        else -> ""
+                    }
+                    Text("${date.monthValue} 月 ${date.dayOfMonth} 日$suffix",fontSize=14.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.padding(top=4.dp))
                 }
                 Column(horizontalAlignment=Alignment.End) {
-                    Text(if(days<0) "已到期" else if(days==0L) "今天" else "$days",fontSize=if(days>0) 26.sp else 18.sp,fontWeight=FontWeight.Bold,color=if(days<=7) Amber else Leaf)
+                    val status = when {
+                        days < 0 && event.installmentNumber != null -> "待还款"
+                        days < 0 -> "已到期"
+                        days == 0L -> "今天"
+                        else -> days.toString()
+                    }
+                    Text(status,fontSize=if(days>0) 26.sp else 18.sp,fontWeight=FontWeight.Bold,color=if(days<=7) Amber else Leaf)
                     if(days>0) Text("天后",fontSize=14.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
@@ -418,11 +437,15 @@ private fun money(totals: Map<String,BigDecimal>) = if(totals.isEmpty()) "暂无
         Text("预计金额，仅用于比较",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.weight(1f))
         TextButton(onClick={costHelp=true}) {Text("折算说明")}
     }
-    val filtered=l.plans.filter { it.archived==archived && SubscriptionList.matches(l,it,query) && (renewalFilter=="全部" || it.autoRenew==(renewalFilter=="自动续费")) }
+    val filtered=l.plans.filter { it.archived==archived && SubscriptionList.matches(l,it,query) && (renewalFilter=="全部" || (it.installmentPeriods==null && it.autoRenew==(renewalFilter=="自动续费"))) }
     val plans=when(sort) {
         "名称" -> filtered.sortedBy{it.name}
         "单次金额","折合月费" -> SubscriptionList.sortByCost(l,filtered,sort=="折合月费",today)
-        else -> filtered.sortedBy {p->if(p.balanceAccount!=null) Prepaid.rechargeDate(p) ?: LocalDate.MAX else l.benefits.filter{it.planId==p.id}.minOfOrNull{Book.expiry(it,p)} ?: LocalDate.MAX}
+        else -> filtered.sortedBy {p->when {
+            p.balanceAccount!=null -> Prepaid.rechargeDate(p)
+            p.installmentPeriods!=null -> Book.installmentDue(p)
+            else -> l.benefits.filter{it.planId==p.id}.minOfOrNull{Book.expiry(it,p)}
+        } ?: LocalDate.MAX}
     }
     if(plans.isEmpty()) Hint(if(query.isNotBlank() || renewalFilter!="全部") "没有匹配的订阅" else if(archived) "没有归档的订阅" else "添加你的第一项会员。")
     plans.forEach { plan ->
@@ -436,6 +459,7 @@ private fun money(totals: Map<String,BigDecimal>) = if(totals.isEmpty()) "暂无
         val caption=when {
             comparing && (plan.currency!="CNY" || (sort=="折合月费" && (plan.cycle!=Cycle.MONTH || plan.interval!=1) && plan.balanceAccount==null)) -> "$original / $period"
             plan.balanceAccount!=null -> "每月月费"
+            plan.installmentPeriods!=null -> "每期还款"
             else -> "每$period"+if(plan.autoRenew) "" else " · 手动"
         }
         if(plan.balanceAccount!=null) { BalanceCard(plan,comparison=if(comparing) amountText to caption else null) {open(plan.id)};return@forEach }
@@ -443,11 +467,14 @@ private fun money(totals: Map<String,BigDecimal>) = if(totals.isEmpty()) "暂无
         val expiry=l.benefits.filter { it.planId==plan.id }.minOfOrNull { Book.expiry(it,plan) }
         Card(onClick={open(plan.id)},modifier=Modifier.fillMaxWidth().padding(vertical=6.dp),shape=RoundedCornerShape(20.dp),colors=CardDefaults.cardColors(containerColor=Color.White)) {
             Row(Modifier.padding(16.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(12.dp)) {
-                ServiceIcon(plan.name)
+                ServiceIcon(if (plan.installmentPeriods != null) "分期付款" else plan.name)
                 Column(Modifier.weight(1f)) {
                     Text(plan.name,fontSize=17.sp,fontWeight=FontWeight.SemiBold)
                     if(matching.isNotEmpty()) Text("包含：${matching.first()}"+if(matching.size>1) "等${matching.size}项" else "",fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,maxLines=1,overflow=TextOverflow.Ellipsis)
-                    Text(expiry?.let { "${it.monthValue} 月 ${it.dayOfMonth} 日到期" } ?: "",fontSize=14.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.padding(top=4.dp))
+                    val subtitle = if (plan.installmentPeriods != null) {
+                        if (plan.paidCycles == plan.installmentPeriods) "已结清" else "已还 ${plan.paidCycles} / ${plan.installmentPeriods} 期"
+                    } else expiry?.let { "${it.monthValue} 月 ${it.dayOfMonth} 日到期" }.orEmpty()
+                    Text(subtitle,fontSize=14.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.padding(top=4.dp))
                 }
                 Column(horizontalAlignment=Alignment.End) {
                     Text(amountText,fontSize=17.sp,fontWeight=FontWeight.Bold)

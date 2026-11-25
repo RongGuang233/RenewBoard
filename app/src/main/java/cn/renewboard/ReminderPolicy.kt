@@ -4,7 +4,7 @@ import java.time.LocalDate
 import java.time.temporal.ChronoUnit
 
 data class ReminderEvent(val key: String, val planId: String, val name: String, val planName: String,
-                         val date: LocalDate, val balance: Boolean = false) {
+                         val date: LocalDate, val balance: Boolean = false, val installmentNumber: Int? = null) {
     fun deliveryKey(today: LocalDate) = "$key:$today"
     val catchUpKey get() = "$key:catchup"
 }
@@ -12,15 +12,26 @@ data class ReminderEvent(val key: String, val planId: String, val name: String, 
 object ReminderPolicy {
     const val CATCH_UP_DAYS = 7L
 
-    fun events(l: Ledger): List<ReminderEvent> = l.plans.filterNot { it.archived || it.usageBalance!=null }.flatMap { p ->
-        if (p.balanceAccount != null) listOfNotNull(Prepaid.rechargeDate(p)?.let {
-            ReminderEvent("balance:${p.id}:$it", p.id, p.name, p.name, it, balance = true)
-        }) else l.benefits.filter { it.planId == p.id }.map { b ->
+    fun dueItems(l: Ledger): List<ReminderEvent> {
+        val active = l.plans.filter { !it.archived && it.balanceAccount == null && it.usageBalance == null }
+        val plans = active.associateBy { it.id }
+        val expiries = l.benefits.mapNotNull { b ->
+            val p = plans[b.planId] ?: return@mapNotNull null
             val date = Book.expiry(b, p)
             ReminderEvent("${b.id}:$date", p.id, b.name, p.name, date)
         }
+        val installments = active.mapNotNull { p ->
+            val date = Book.installmentDue(p) ?: return@mapNotNull null
+            ReminderEvent("installment:${p.id}:${p.paidCycles}:$date", p.id, p.name, p.name, date,
+                installmentNumber = p.paidCycles + 1)
+        }
+        return expiries + installments
     }
 
+    fun events(l: Ledger): List<ReminderEvent> = dueItems(l) + l.plans.mapNotNull { p ->
+        if (p.archived || p.balanceAccount == null) return@mapNotNull null
+        Prepaid.rechargeDate(p)?.let { ReminderEvent("balance:${p.id}:$it", p.id, p.name, p.name, it, balance = true) }
+    }
     fun scheduled(l: Ledger, today: LocalDate) = events(l).filter {
         ChronoUnit.DAYS.between(today, it.date).toInt() in l.settings.reminderDays
     }
@@ -58,6 +69,10 @@ object ReminderPolicy {
         }
     }
     fun summary(events: List<ReminderEvent>) = events.joinToString("；") {
-        if (it.balance) "${it.name} · 预计 ${it.date} 余额不足" else "${it.name} · ${it.date} 到期"
+        when {
+            it.balance -> "${it.name} · 预计 ${it.date} 余额不足"
+            it.installmentNumber != null -> "${it.name} · ${it.date} 应还第 ${it.installmentNumber} 期"
+            else -> "${it.name} · ${it.date} 到期"
+        }
     }
 }
