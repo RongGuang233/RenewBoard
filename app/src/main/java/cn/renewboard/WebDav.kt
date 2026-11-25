@@ -14,6 +14,14 @@ import java.util.concurrent.TimeUnit
 import javax.xml.parsers.DocumentBuilderFactory
 import org.w3c.dom.Element
 
+internal fun validateWebDavAccount(url: String, user: String) {
+    val parsed = runCatching { java.net.URI(url) }.getOrNull()
+    require(parsed?.scheme == "https" && parsed.host != null && parsed.userInfo == null && parsed.query == null && parsed.fragment == null) {
+        "请输入不含账号信息的 HTTPS WebDAV 地址"
+    }
+    require(user.isNotBlank()) { "请填写账号" }
+}
+
 class DavException(message: String): IOException(message)
 data class CloudBackup(val name: String, val automatic: Boolean, val time: Instant?)
 class WebDav(base: String, user: String, password: String, private val client: OkHttpClient = OkHttpClient.Builder().connectTimeout(20,TimeUnit.SECONDS).readTimeout(30,TimeUnit.SECONDS).callTimeout(60,TimeUnit.SECONDS).followRedirects(false).build()) {
@@ -34,16 +42,18 @@ class WebDav(base: String, user: String, password: String, private val client: O
         return client.newCall(builder.method(method, requestBody).build()).execute()
     }
     private fun check(r: Response, allowed: Set<Int> = setOf(200,201,204)) { if(r.code !in allowed) throw DavException("WebDAV 返回 HTTP ${r.code}，请检查地址、应用密码与网络") }
-    fun list(): List<CloudBackup> {
-        val files = listFiles()
+    fun list(): List<CloudBackup> = successfulBackups(listFiles())
+    private fun cleanAbandonedUploads(files: List<RemoteFile>) {
         val cutoff = Instant.now().minusSeconds(86400)
         files.map { it.name }.filter { name ->
             val match = pending.matchEntire(name)
             match != null && runCatching { Instant.from(timestamp.parse(match.groupValues[1])) < cutoff }.getOrDefault(false)
         }.sorted().take(20).forEach { name ->
-            // An interrupted upload is disposable; failed cleanup is retried by the next normal listing.
+            // Failed cleanup can be retried after a later upload.
             try { remove(name) } catch (_: IOException) { }
         }
+    }
+    private fun successfulBackups(files: List<RemoteFile>): List<CloudBackup> {
         return files.filter { automatic.matches(it.name) || manual.matches(it.name) }
             .map { file ->
                 val auto = automatic.matchEntire(file.name)
@@ -107,9 +117,10 @@ class WebDav(base: String, user: String, password: String, private val client: O
             try { remove(temporary) } catch (cleanup: Exception) { failure.addSuppressed(cleanup) }
             throw failure
         }
-        val successful = list()
+        val files = listFiles()
+        cleanAbandonedUploads(files)
         // Retention follows the automatic backup's creation stamp, independently of display/server modification order.
-        if(auto) successful.filter { it.automatic }.map { it.name }.sortedDescending().drop(10).forEach(::remove)
+        if(auto) successfulBackups(files).filter { it.automatic }.map { it.name }.sortedDescending().drop(10).forEach(::remove)
         return name
     }
 }

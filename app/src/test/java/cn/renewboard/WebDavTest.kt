@@ -115,11 +115,14 @@ class WebDavTest {
 
     @Test fun propfindReturnsRecognizedFilesAndDownloadDecodesStoredBackup() {
         val name = manual(1)
+        val abandoned = pending(Instant.now().minusSeconds(2 * 86400), 1)
+        files[abandoned] = "incomplete"
         files[name] = Book.encode(ledger)
         files["unrelated.json"] = "{}"
         assertEquals(listOf(name), dav.list().map { it.name })
         assertEquals(ledger, dav.download(name).data)
         assertEquals(listOf("PROPFIND", "GET"), calls.map { it.first })
+        assertTrue(files.containsKey(abandoned))
     }
 
     @Test fun listingOrdersManualAndAutomaticBackupsByServerTimeWithoutDownloads() {
@@ -220,17 +223,17 @@ class WebDavTest {
         (2..10).forEach { assertTrue(files.containsKey(automatic(it))) }
     }
 
-    @Test fun normalListingCleansOldPendingFilesInBoundedBatchesOnly() {
+    @Test fun uploadsCleanOldPendingFilesInBoundedBatchesOnly() {
         val old = Instant.now().minusSeconds(2 * 86400)
         (1..23).forEach { files[pending(old, it)] = "incomplete" }
         val recent = pending(Instant.now(), 24)
         files[recent] = "active upload"
         files[manual(1)] = Book.encode(ledger)
         files["pending-user-document.json"] = "unrelated"
-        assertEquals(listOf(manual(1)), dav.list().map { it.name })
+        dav.upload(ledger, auto = false)
         assertEquals(20, calls.count { it.first == "DELETE" })
         assertEquals(4, files.keys.count { it.startsWith("pending-") && it != "pending-user-document.json" })
-        assertEquals(listOf(manual(1)), dav.list().map { it.name })
+        dav.upload(ledger, auto = true)
         assertEquals(23, calls.count { it.first == "DELETE" })
         assertTrue(files.containsKey(recent))
         assertTrue(files.containsKey("pending-user-document.json"))

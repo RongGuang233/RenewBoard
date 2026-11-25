@@ -30,6 +30,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -47,13 +48,14 @@ internal fun reminderNotificationSettingsIntent(context: Context): Intent =
 
 private enum class SettingsPage(val title: String) {
     HOME("设置"), REMINDERS("到期提醒"), BACKUP("本地备份"), WEBDAV("云端备份"),
-    CONNECTION("连接设置"), REMOTE("备份记录"), TUITION("学费同步"), UPDATES("版本更新"), ABOUT("关于订阅簿"), LICENSES("开源许可证")
+    CONNECTION("连接设置"), REMOTE("选择云端备份"), TUITION("学费同步"), UPDATES("版本更新"), ABOUT("关于订阅簿"), LICENSES("开源许可证")
 }
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable internal fun SettingsScreen(
     l: Ledger,
     message: (String) -> Unit,
+    oneTimeWebDav: (String, String, String) -> WebDav = { url, user, password -> WebDav(url, user, password) },
     onSubpageChange: (Boolean) -> Unit = {}
 ) {
     val c = LocalContext.current
@@ -91,7 +93,7 @@ private enum class SettingsPage(val title: String) {
     var status by remember { mutableStateOf(config.status) }
     var success by remember { mutableStateOf(config.lastSuccess) }
     var preview by remember { mutableStateOf<Backup?>(null) }
-    var remote by remember { mutableStateOf<List<CloudBackup>?>(null) }
+    var oneTimeClient by remember { mutableStateOf<WebDav?>(null) }
     var disconnect by remember { mutableStateOf(false) }
     var licenseText by remember { mutableStateOf<String?>(null) }
     var notificationsEnabled by remember { mutableStateOf(notificationsAllowed(c)) }
@@ -116,9 +118,12 @@ private enum class SettingsPage(val title: String) {
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
-    LaunchedEffect(page) { refreshStatus() }
-    fun operation(block: suspend () -> Unit) {
-        scope.launch {
+    LaunchedEffect(page) {
+        refreshStatus()
+        if (page != SettingsPage.REMOTE) oneTimeClient = null
+    }
+    fun operation(operationScope: CoroutineScope = scope, block: suspend () -> Unit) {
+        operationScope.launch {
             busy = true
             try { block() }
             catch (e: Exception) {
@@ -277,6 +282,18 @@ private enum class SettingsPage(val title: String) {
                                         navigate(SettingsPage.WEBDAV)
                                     } catch (e: Exception) { message(e.message ?: "配置无效") }
                                 }, enabled = !busy, modifier = Modifier.fillMaxWidth()) { Text("保存并启用自动备份") }
+                                if (!configured) {
+                                    OutlinedButton({
+                                        try {
+                                            validateWebDavAccount(url.trim(), user.trim())
+                                            require(password.isNotBlank()) { "请填写专用应用密码" }
+                                            oneTimeClient = oneTimeWebDav(url.trim(), user.trim(), password)
+                                            password = ""
+                                            navigate(SettingsPage.REMOTE)
+                                        } catch (e: IllegalArgumentException) { message(e.message ?: "配置无效") }
+                                    }, enabled = !busy, modifier = Modifier.fillMaxWidth()) { Text("从云端恢复备份") }
+                                    SettingsNote("单次恢复仅使用本次填写的连接信息。")
+                                }
                             }
                             if (configured) TextButton({ disconnect = true }, enabled = !busy) {
                                 Text("断开 WebDAV", color = MaterialTheme.colorScheme.error)
@@ -297,10 +314,7 @@ private enum class SettingsPage(val title: String) {
                             }
                             Surface(shape=RoundedCornerShape(14.dp),color=Color.White) {
                                 Column {
-                                SettingsLink("备份记录", "", Icons.Outlined.History,enabled=!busy) {
-                                    navigate(SettingsPage.REMOTE)
-                                    operation { remote = withContext(Dispatchers.IO) { config.client().list() } }
-                                }
+                                SettingsLink("从云端恢复备份", "", Icons.Outlined.CloudDownload,enabled=!busy) { navigate(SettingsPage.REMOTE) }
                                 SettingsDivider()
                                 SettingsLink("连接设置", "", Icons.Outlined.Settings,enabled=!busy) {
                                     url = config.url; user = config.user; password = ""
@@ -311,16 +325,26 @@ private enum class SettingsPage(val title: String) {
                         }
                     }
                     SettingsPage.REMOTE -> {
+                        val pickerScope = rememberCoroutineScope()
+                        var remote by remember { mutableStateOf<List<CloudBackup>?>(null) }
+                        fun client() = oneTimeClient ?: config.client()
+                        fun loadBackups() {
+                            operation(pickerScope) { remote = withContext(Dispatchers.IO) { client().list() } }
+                        }
+                        LaunchedEffect(Unit) {
+                            if (oneTimeClient == null && !configured) navigate(SettingsPage.WEBDAV)
+                            else loadBackups()
+                        }
                         SettingsNote("选择备份后预览，确认后恢复。")
                         if (remote.isNullOrEmpty() && !busy) {
                             SettingsPanel {
                                 Text(if (remote == null) "尚未读取云端备份" else "专用目录中没有备份")
-                                OutlinedButton({ operation { remote = withContext(Dispatchers.IO) { config.client().list() } } }, enabled = !busy) { Text("重新读取") }
+                                OutlinedButton(::loadBackups, enabled = !busy) { Text("重新读取") }
                             }
                         }
                         remote?.forEach { backup ->
                             Surface(shape = RoundedCornerShape(16.dp), color = Color.White) {
-                                TextButton({ operation { preview = withContext(Dispatchers.IO) { config.client().download(backup.name) } } }, enabled = !busy, modifier = Modifier.fillMaxWidth().padding(8.dp)) {
+                                TextButton({ operation(pickerScope) { preview = withContext(Dispatchers.IO) { client().download(backup.name) } } }, enabled = !busy, modifier = Modifier.fillMaxWidth().padding(8.dp)) {
                                     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                         Text(backup.time?.let { settingsDisplayTime(it.toString()) } ?: "时间未知", style = MaterialTheme.typography.titleMedium)
                                         Text(if (backup.automatic) "自动备份" else "手动备份", style = MaterialTheme.typography.bodyMedium)
@@ -360,7 +384,7 @@ private enum class SettingsPage(val title: String) {
     if (disconnect) AlertDialog(onDismissRequest = { disconnect = false }, title = { Text("断开 WebDAV？") }, text = {
         Text("删除本机保存的账号和应用密码，停止后续自动备份。本机账本和远端备份不删除。")
     }, confirmButton = { TextButton({
-        config.disconnect(); password = ""; user = ""; remote = null; disconnect = false
+        config.disconnect(); password = ""; user = ""; disconnect = false
         status = config.status; success = config.lastSuccess; configured = config.configured
         url = config.url; navigate(SettingsPage.WEBDAV)
         message("已断开")

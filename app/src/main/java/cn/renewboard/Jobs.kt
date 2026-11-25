@@ -41,9 +41,7 @@ class CredentialsStore(private val c: Context) {
         }.generateKey()
     }
     fun save(url: String, user: String, password: String) {
-        val parsed = java.net.URI(url)
-        require(parsed.scheme == "https" && parsed.host != null && parsed.userInfo == null && parsed.query == null && parsed.fragment == null) { "请输入不含账号信息的 HTTPS WebDAV 地址" }
-        require(user.isNotBlank()) { "请填写账号" }
+        validateWebDavAccount(url, user)
         if(password.isBlank()) require(configured && this.url == url && this.user == user) { "请填写专用应用密码" }
         val edit = prefs.edit().putString("url",url).putString("user",user)
         if(this.url != url || this.user != user) edit.remove("backed")

@@ -142,6 +142,9 @@ class SettingsNavigationDeviceTest {
 
         compose.onNodeWithText("云端备份").performScrollTo().performClick()
         compose.onNode(hasText("WebDAV 地址") and hasSetTextAction()).assertExists()
+        compose.onNodeWithText("从云端恢复备份").performScrollTo().performClick()
+        compose.onNodeWithText("请填写账号").assertExists()
+        assertFalse(CredentialsStore(compose.activity).configured)
         compose.onNodeWithText("返回", substring = false).assertIsDisplayed()
         listOf("到期","账本","设备","设置").forEach {compose.onNode(hasText(it,substring=false) and hasClickAction()).assertDoesNotExist()}
         back()
@@ -245,14 +248,18 @@ class SettingsNavigationDeviceTest {
         val keys=listOf("url","user","secret","status","success")
         val previous=keys.associateWith { prefs.getString(it,null) }
         try {
-            // A non-decryptable marker is sufficient for layout; no client or backup is invoked.
+            // This marker cannot be decrypted, so opening the picker cannot reach the network.
             prefs.edit().putString("url","https://example.invalid/dav/").putString("user","layout-fixture")
                 .putString("secret","layout-only").putString("status","备份成功")
                 .putString("success","2026-09-08T00:00:00Z").commit()
             compose.onNodeWithText("设置",substring=false).performClick()
             compose.onNodeWithText("云端备份",substring=false).performClick()
             compose.onNodeWithText("立即备份",substring=false).assertIsDisplayed()
-            compose.onNodeWithText("备份记录",substring=false).assertIsDisplayed()
+            compose.onNodeWithText("从云端恢复备份",substring=false).performScrollTo().performClick()
+            compose.onNodeWithText("选择云端备份",substring=false).assertIsDisplayed()
+            compose.waitUntil(10_000) { compose.onAllNodesWithText("重新读取").fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithText("重新读取",substring=false).performScrollTo().assertIsDisplayed()
+            back()
             compose.onNodeWithText("WebDAV 地址").assertDoesNotExist()
             compose.onNodeWithText("断开 WebDAV").assertDoesNotExist()
             compose.onNodeWithText("连接设置",substring=false).performScrollTo().performClick()
